@@ -12,7 +12,6 @@ import (
 	"github.com/KevinGong2013/apkgo/cmd/fir"
 	"github.com/KevinGong2013/apkgo/cmd/huawei"
 	"github.com/KevinGong2013/apkgo/cmd/pgyer"
-	"github.com/KevinGong2013/apkgo/cmd/plugin"
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/KevinGong2013/apkgo/cmd/vivo"
 	"github.com/KevinGong2013/apkgo/cmd/xiaomi"
@@ -74,7 +73,7 @@ func InitialPublishers(filter []string) error {
 					return err
 				}
 
-				p, err := plugin.NewClient(&plugin.Config{
+				p, err := NewPluginPublisher(&PluginConfig{
 					Name:             k,
 					Path:             v["path"],
 					ProtocolVersion:  uint(version),

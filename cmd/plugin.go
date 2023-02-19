@@ -1,4 +1,4 @@
-package plugin
+package cmd
 
 import (
 	"os/exec"
@@ -7,11 +7,7 @@ import (
 	"github.com/hashicorp/go-plugin"
 )
 
-type Client struct {
-	rawPublisher shared.Publisher
-}
-
-type Config struct {
+type PluginConfig struct {
 	ProtocolVersion  uint   `json:"version"`
 	MagicCookieKey   string `json:"magic_cookie_key"`
 	MagicCookieValue string `json:"magic_cookie_value"`
@@ -19,7 +15,7 @@ type Config struct {
 	Name             string `json:"name"`
 }
 
-func NewClient(pc *Config) (*Client, error) {
+func NewPluginPublisher(pc *PluginConfig) (shared.Publisher, error) {
 
 	c := plugin.NewClient(&plugin.ClientConfig{
 		HandshakeConfig: plugin.HandshakeConfig{
@@ -43,15 +39,5 @@ func NewClient(pc *Config) (*Client, error) {
 		return nil, err
 	}
 
-	return &Client{
-		rawPublisher: raw.(shared.Publisher),
-	}, nil
-}
-
-func (c *Client) Name() string {
-	return c.rawPublisher.Name()
-}
-
-func (c *Client) Do(req shared.PublishRequest) error {
-	return c.rawPublisher.Do(req)
+	return raw.(shared.Publisher), nil
 }
