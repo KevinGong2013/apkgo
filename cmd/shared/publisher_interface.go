@@ -6,6 +6,20 @@ import (
 	"github.com/hashicorp/go-plugin"
 )
 
+type PublishRequest struct {
+	AppName     string
+	PackageName string
+	VersionCode int32
+	VersionName string
+
+	ApkFile       string
+	SecondApkFile string
+	UpdateDesc    string
+
+	// synchroType 更新类型：0=新增，1=更新包，2=内容更新
+	SynchroType int
+}
+
 type Publisher interface {
 	Do(req PublishRequest) error
 	Name() string
@@ -17,16 +31,16 @@ type PublisherRPC struct {
 }
 
 func (p *PublisherRPC) Name() string {
-	var name string
-	err := p.client.Call("Publisher.Name", new(interface{}), &name)
+	var resp string
+	err := p.client.Call("Plugin.Name", new(interface{}), &resp)
 	if err != nil {
 		panic(err)
 	}
-	return name
+	return resp
 }
 
 func (p *PublisherRPC) Do(req PublishRequest) error {
-	return p.client.Call("Publisher.Do", req, nil)
+	return p.client.Call("Plugin.Do", req, nil)
 }
 
 // /////////////////////////////
@@ -41,8 +55,8 @@ func (s *PublisherRPCServer) Name(args interface{}, resp *string) error {
 	return nil
 }
 
-func (s *PublisherRPCServer) Do(req *PublishRequest, resp interface{}) error {
-	return s.Impl.Do(*req)
+func (s *PublisherRPCServer) Do(req PublishRequest, resp interface{}) error {
+	return s.Impl.Do(req)
 }
 
 type PublisherPlugin struct {
@@ -54,5 +68,5 @@ func (p *PublisherPlugin) Server(*plugin.MuxBroker) (interface{}, error) {
 }
 
 func (PublisherPlugin) Client(b *plugin.MuxBroker, c *rpc.Client) (interface{}, error) {
-	return PublisherRPC{client: c}, nil
+	return &PublisherRPC{client: c}, nil
 }

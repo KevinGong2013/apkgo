@@ -40,7 +40,7 @@ var rootCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfgFile = "/Users/gix/Documents/GitHub/apkgo/.apkgo.json"
 
-		err := InitialPublishers([]string{"fir", "pgyer", "xiaomi", "vivo"})
+		err := InitialPublishers([]string{"cams", "apkgo_demo"})
 		if err != nil {
 			fmt.Println(err)
 			return

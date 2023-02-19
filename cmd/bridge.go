@@ -203,33 +203,9 @@ func trackPublish(pw progress.Writer, publisher shared.Publisher) *progress.Trac
 	pw.AppendTracker(&tracker)
 
 	return &tracker
-	// ticker := time.Tick(time.Millisecond * 500)
-	// updateTicker := time.Tick(time.Millisecond * 250)
-	// for !tracker.IsDone() {
-	// 	select {
-	// 	case <-ticker:
-	// 		tracker.Increment(incrementPerCycle)
-	// 		if idx == int64(*flagNumTrackers) && tracker.Value() >= total {
-	// 			tracker.MarkAsDone()
-	// 		} else if *flagRandomFail && rand.Float64() < 0.1 {
-	// 			tracker.MarkAsErrored()
-	// 		}
-	// 		pw.SetPinnedMessages(
-	// 			fmt.Sprintf(">> Current Time: %-32s", time.Now().Format(time.RFC3339)),
-	// 			fmt.Sprintf(">>   Total Time: %-32s", time.Now().Sub(timeStart).Round(time.Millisecond)),
-	// 		)
-	// 	case <-updateTicker:
-	// 		if updateMessage {
-	// 			rndIdx := rand.Intn(len(messageColors))
-	// 			if rndIdx == len(messageColors) {
-	// 				rndIdx--
-	// 			}
-	// 			tracker.UpdateMessage(messageColors[rndIdx].Sprint(message))
-	// 		}
-	// 	}
-	// }
 }
 
+// 一下代码主要是测试的时候使用
 type mockPublisher struct {
 	real shared.Publisher
 }
