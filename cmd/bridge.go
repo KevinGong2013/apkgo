@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/KevinGong2013/apkgo/cmd/fir"
 	"github.com/KevinGong2013/apkgo/cmd/huawei"
 	"github.com/KevinGong2013/apkgo/cmd/pgyer"
+	"github.com/KevinGong2013/apkgo/cmd/plugin"
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/KevinGong2013/apkgo/cmd/vivo"
 	"github.com/KevinGong2013/apkgo/cmd/xiaomi"
@@ -35,31 +38,55 @@ func InitialPublishers(filter []string) error {
 		return err
 	}
 
-	for _, f := range filter {
-		if v, ok := config.Publishers[f]; ok {
-			switch f {
-			case "xiaomi":
-				xm, err := xiaomi.NewClient(v["username"], v["private_key"])
+	// filters := strings.Join(filter, " ")
+	for _, k := range filter {
+		v := config.Publishers[k]
+
+		switch k {
+		case "xiaomi":
+			xm, err := xiaomi.NewClient(v["username"], v["private_key"])
+			if err != nil {
+				return err
+			}
+			publishers[k] = xm
+		case "vivo":
+			vv, err := vivo.NewClient(v["access_key"], v["access_secret"])
+			if err != nil {
+				return err
+			}
+			publishers[k] = vv
+		case "huawei":
+			hw, err := huawei.NewClient(v["client_id"], v["client_secret"])
+			if err != nil {
+				return err
+			}
+			publishers[k] = hw
+		case "pgyer":
+			publishers[k] = pgyer.NewClient(v["api_key"])
+		case "fir":
+			publishers[k] = fir.NewClient(v["api_token"])
+		default:
+			// 看看是不是支持的plugin
+			if v["magic_cookie_key"] != "" && v["magic_cookie_value"] != "" {
+
+				version, err := strconv.Atoi(v["version"])
 				if err != nil {
 					return err
 				}
-				publishers[f] = xm
-			case "vivo":
-				vv, err := vivo.NewClient(v["access_key"], v["access_secret"])
+
+				p, err := plugin.NewClient(&plugin.Config{
+					Name:             k,
+					Path:             v["path"],
+					ProtocolVersion:  uint(version),
+					MagicCookieKey:   v["magic_cookie_key"],
+					MagicCookieValue: v["magic_cookie_value"],
+				})
 				if err != nil {
-					return err
+					return nil
 				}
-				publishers[f] = vv
-			case "huawei":
-				hw, err := huawei.NewClient(v["client_id"], v["client_secret"])
-				if err != nil {
-					return err
-				}
-				publishers[f] = hw
-			case "pgyer":
-				publishers[f] = pgyer.NewClient(v["api_key"])
-			case "fir":
-				publishers[f] = fir.NewClient(v["api_token"])
+				publishers[k] = p
+			} else {
+				return fmt.Errorf("unsupported market. [%s]", k)
 			}
 		}
 	}
@@ -145,7 +172,7 @@ func Do(updateDesc string, apkFile ...string) error {
 		p := publishers[k]
 		go func() {
 			tracker := trackPublish(pw, p)
-			err := shared.NewMockPublisher(p).Do(req)
+			err := newMockPublisher(p).Do(req)
 			if err == nil {
 				tracker.MarkAsDone()
 				resultTable.AppendRow(table.Row{p.Name(), text.FgGreen.Sprint("Succeed"), "👌"})
@@ -201,4 +228,30 @@ func trackPublish(pw progress.Writer, publisher shared.Publisher) *progress.Trac
 	// 		}
 	// 	}
 	// }
+}
+
+type mockPublisher struct {
+	real shared.Publisher
+}
+
+func newMockPublisher(r shared.Publisher) *mockPublisher {
+	return &mockPublisher{
+		real: r,
+	}
+}
+
+func (mp *mockPublisher) Name() string {
+	return "mock-" + mp.real.Name()
+}
+
+func (mp *mockPublisher) Do(req shared.PublishRequest) error {
+
+	r := rand.Intn(10)
+	time.Sleep(time.Second * time.Duration(10+r))
+
+	if r%2 == 0 {
+		return errors.New("mock publish failed")
+	}
+
+	return nil
 }
