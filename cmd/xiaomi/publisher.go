@@ -6,6 +6,10 @@ import (
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 )
 
+func (c *Client) Name() string {
+	return "小米开放平台"
+}
+
 func (c *Client) Do(req shared.PublishRequest) error {
 
 	// 1.  先查一下具体情况

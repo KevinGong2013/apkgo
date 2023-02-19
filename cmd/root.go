@@ -16,18 +16,39 @@ limitations under the License.
 package cmd
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	homedir "github.com/mitchellh/go-homedir"
 )
 
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print the version number of apkgo",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("v0.9.0")
+	},
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "apkgo",
-	Short: "上传你的apk到 华为、小米、vivo、蒲公英、fir.im、七牛",
+	Short: "一键上传apk到 华为、小米、vivo、蒲公英、fir.im等",
 	// Long:  ``,
-	// Run: run,
+	Run: func(cmd *cobra.Command, args []string) {
+		cfgFile = "/Users/gix/Documents/GitHub/apkgo/.apkgo.json"
+
+		err := InitialPublishers([]string{"fir", "pgyer", "xiaomi", "vivo"})
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		Do("1. 提升稳定性\n2.优化性能", "/Users/gix/Documents/aster/build/app/outputs/flutter-apk/app-release.apk")
+
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -40,10 +61,22 @@ func Execute() {
 }
 
 var cfgFile string
+var apkFile string
+var apk32File string
+var apk64File string
+
+// var updateDesc string
 
 func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.apkgo.yaml)")
+	rootCmd.PersistentFlags().StringVar(&apkFile, "apk", "", "单包apk文件路径")
+	rootCmd.PersistentFlags().StringVar(&apk32File, "apk32", "", "32位apk文件路径")
+	rootCmd.PersistentFlags().StringVar(&apk64File, "apk64", "", "64位apk文件路径")
+	rootCmd.Flag("e")
+	// rootCmd.PersistentFlags().StringArray()
+
+	rootCmd.AddCommand(versionCmd)
 }
 
 type Config struct {
@@ -56,6 +89,6 @@ func initConfig() {
 		if err != nil {
 			panic(err)
 		}
-		cfgFile = home + ".apkgo.json"
+		cfgFile = filepath.Join(home, ".apkgo.json")
 	}
 }

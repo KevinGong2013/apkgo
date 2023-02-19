@@ -8,6 +8,10 @@ import (
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 )
 
+func (c *Client) Name() string {
+	return "蒲公英应用分发平台"
+}
+
 func (c *Client) Do(req shared.PublishRequest) error {
 
 	resp, err := c.getCosToken(req.UpdateDesc)

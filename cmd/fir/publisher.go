@@ -7,6 +7,10 @@ import (
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 )
 
+func (c *Client) Name() string {
+	return "fir.im"
+}
+
 func (c *Client) Do(req shared.PublishRequest) error {
 
 	resp, err := c.getUploadToken(req.PackageName)

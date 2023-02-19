@@ -6,6 +6,10 @@ import (
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 )
 
+func (c *Client) Name() string {
+	return "vivo应用商店"
+}
+
 func (c *Client) Do(req shared.PublishRequest) error {
 
 	updateReq := updateAppRequest{

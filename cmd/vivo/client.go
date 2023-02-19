@@ -63,14 +63,15 @@ func (c *Client) upload(method, packageName, apkFilepath string) (*appInfoRespon
 		Data    *appInfoResponse
 	}
 
-	resp, err := c.restyClient.R().
+	_, err = c.restyClient.R().
 		SetFile("file", apkFilepath).
 		SetQueryParams(params).
 		SetResult(&r).
 		Post("")
 
-	fmt.Println(err)
-	fmt.Println(string(resp.Body()))
+	if err != nil {
+		return nil, err
+	}
 
 	if r.Code != 0 {
 		return nil, fmt.Errorf("upload apk failed. %s", r.Message)
