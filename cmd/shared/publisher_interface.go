@@ -1,23 +1,26 @@
 package shared
 
 import (
+	"fmt"
 	"net/rpc"
 
 	"github.com/hashicorp/go-plugin"
 )
 
 type PublishRequest struct {
-	AppName     string
-	PackageName string
-	VersionCode int32
-	VersionName string
-
-	ApkFile       string
-	SecondApkFile string
-	UpdateDesc    string
-
+	AppName       string `json:"appName"`
+	PackageName   string `json:"packageName"`
+	VersionCode   int32  `json:"versionCode"`
+	VersionName   string `json:"versionName"`
+	ApkFile       string `json:"apkFile"`
+	SecondApkFile string `json:"secondApkFile"`
+	UpdateDesc    string `json:"updateDesc"`
 	// synchroType 更新类型：0=新增，1=更新包，2=内容更新
-	SynchroType int
+	SynchroType int `json:"synchroType"`
+}
+
+func (r PublishRequest) Version() string {
+	return fmt.Sprintf("%s+%d", r.VersionName, r.VersionCode)
 }
 
 type Publisher interface {

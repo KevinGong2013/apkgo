@@ -7,10 +7,12 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/KevinGong2013/apkgo/cmd/fir"
 	"github.com/KevinGong2013/apkgo/cmd/huawei"
+	"github.com/KevinGong2013/apkgo/cmd/notifiers"
 	"github.com/KevinGong2013/apkgo/cmd/pgyer"
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/KevinGong2013/apkgo/cmd/vivo"
@@ -25,15 +27,15 @@ import (
 
 var publishers = make(map[string]shared.Publisher)
 
+var config Config
+
 func InitialPublishers(filter []string) error {
 	cfgFileBytes, err := os.ReadFile(cfgFile)
 	if err != nil {
 		return err
 	}
 
-	config := new(Config)
-
-	if err = json.Unmarshal(cfgFileBytes, config); err != nil {
+	if err = json.Unmarshal(cfgFileBytes, &config); err != nil {
 		return err
 	}
 
@@ -167,17 +169,23 @@ func Do(updateDesc string, apkFile ...string) error {
 	resultTable.SetOutputMirror(os.Stdout)
 	resultTable.AppendHeader(table.Row{"Name", "Result", "Reason"})
 
+	result := make(map[string]string)
+
 	for k := range publishers {
 		p := publishers[k]
+		name := p.Name()
 		go func() {
 			tracker := trackPublish(pw, p)
 			err := newMockPublisher(p).Do(req)
+
 			if err == nil {
 				tracker.MarkAsDone()
-				resultTable.AppendRow(table.Row{p.Name(), text.FgGreen.Sprint("Succeed"), "👌"})
+				resultTable.AppendRow(table.Row{name, text.FgGreen.Sprint("Succeed"), "👌"})
+				result[name] = ""
 			} else {
 				tracker.MarkAsErrored()
-				resultTable.AppendRow(table.Row{p.Name(), text.FgHiRed.Sprint("Failed"), err.Error()})
+				resultTable.AppendRow(table.Row{name, text.FgHiRed.Sprint("Failed"), err.Error()})
+				result[name] = err.Error()
 			}
 		}()
 	}
@@ -189,6 +197,11 @@ func Do(updateDesc string, apkFile ...string) error {
 
 	fmt.Println()
 	resultTable.Render()
+
+	// 通知各个渠道
+	if err := notify(req, result); err != nil {
+		fmt.Println(text.FgHiRed.Sprint(err.Error()))
+	}
 
 	// 统计数据
 
@@ -202,6 +215,46 @@ func trackPublish(pw progress.Writer, publisher shared.Publisher) *progress.Trac
 	pw.AppendTracker(&tracker)
 
 	return &tracker
+}
+
+func notify(req shared.PublishRequest, result map[string]string) error {
+
+	builder := new(strings.Builder)
+	var failed []string
+	for k, v := range result {
+		if len(v) == 0 {
+			builder.WriteString(fmt.Sprintf("👌%s上传成功\n", k))
+		} else {
+			builder.WriteString(fmt.Sprintf("❌%s err: %s\n", k, v))
+			failed = append(failed, k)
+		}
+	}
+	if len(failed) == 0 {
+		builder.WriteString("👏👏👏 所有平台上传成功")
+	} else if len(failed) == len(result) {
+		builder.WriteString("😢😢😢 所有平台上传失败")
+	} else {
+		builder.WriteString(fmt.Sprintf("%s 上传失败，请检查", strings.Join(failed, ",")))
+	}
+
+	if config.Notifiers.Lark != nil {
+		l := &notifiers.LarkNotifier{
+			Key:         config.Notifiers.Lark.Key,
+			SecretToken: config.Notifiers.Lark.SecretToken,
+		}
+		if err := l.Notify(l.BuildAppPubishedMessage(req, builder.String(), "customMsg")); err != nil {
+			return err
+		}
+	}
+	if config.Notifiers.WebHook != nil {
+		w := notifiers.Webhook{Url: config.Notifiers.WebHook.Url}
+		if err := w.Notify(req, result); err != nil {
+			return err
+		}
+	}
+	fmt.Println(builder.String())
+
+	return nil
 }
 
 // 一下代码主要是测试的时候使用
@@ -222,7 +275,7 @@ func (mp *mockPublisher) Name() string {
 func (mp *mockPublisher) Do(req shared.PublishRequest) error {
 
 	r := rand.Intn(10)
-	time.Sleep(time.Second * time.Duration(10+r))
+	time.Sleep(time.Second * time.Duration(r))
 
 	if r%2 == 0 {
 		return errors.New("mock publish failed")

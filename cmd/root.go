@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/KevinGong2013/apkgo/cmd/notifiers"
 	"github.com/spf13/cobra"
 
 	homedir "github.com/mitchellh/go-homedir"
@@ -81,6 +82,14 @@ func init() {
 
 type Config struct {
 	Publishers map[string]map[string]string `json:"publishers"`
+	Notifiers  struct {
+		Lark     *notifiers.LarkNotifier     `json:"lark,omitempty"`
+		DingTalk *notifiers.DingTalkNotifier `json:"dingtalk,omitempty"`
+		WeCom    *notifiers.WeComNotifier    `json:"wecom,omitempty"`
+		WebHook  *struct {
+			Url string `json:"url"`
+		}
+	} `json:"notifiers,omitempty"`
 }
 
 func initConfig() {
