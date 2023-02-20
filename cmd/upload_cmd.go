@@ -19,6 +19,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -102,6 +103,7 @@ func init() {
 
 	// 是否需要禁用二次确认
 	uploadCmd.Flags().BoolVar(&disableDoubleCheck, "disable-double-confirmation", false, "取消二次确认")
+
 }
 
 func run(cmd *cobra.Command, args []string) {
@@ -165,7 +167,7 @@ func run(cmd *cobra.Command, args []string) {
 
 	// 初始化所有商店的 Publisher
 	if err := initialPublishers(); err != nil {
-		fmt.Printf("%s\n", text.FgRed.Sprintf("初始化应用商店上传组件失败。err: %s", err.Error()))
+		fmt.Printf("%s\n", text.FgRed.Sprintf("初始化应用商店上传组件失败 err: %s", err.Error()))
 		os.Exit(5)
 	}
 
@@ -173,7 +175,17 @@ func run(cmd *cobra.Command, args []string) {
 	fmt.Println()
 	result := publish(req)
 
-	notify(req, result)
+	// 通知
+	if err := notify(req, result); err != nil {
+		fmt.Printf("%s\n", text.FgRed.Sprintf("上传结果通知失败 err: %s", err.Error()))
+		os.Exit(6)
+	}
+
+	// 记录节省时间
+	// 商店数 * 5 分钟
+	http.Post("https://central.rainbowbridge.top/api/apkgo/", "text/plain", strings.NewReader(strings.Join(stores, ",")))
+
+	fmt.Println(text.FgYellow.Sprint("Finished 🚀🚀"))
 }
 
 func validateApkFile(f string) error {
