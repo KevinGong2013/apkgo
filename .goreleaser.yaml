@@ -48,7 +48,7 @@ brews:
     goamd64: v3
     tap:
       owner: KevinGong2013
-      name: homebrew-repo
+      name: homebrew-apkgo
       branch: main
     commit_author:
       name: kevin.gong
@@ -56,4 +56,11 @@ brews:
     folder: Formula
     homepage: https://apkgo.com.cn
     description: upload apk to anywhere
+    license: Apache License
+aurs:
+  - name: apkgo-bin
+    homepage: https://apkgo.com.cn
+    description: upload apk to anywhere
+    maintainers:
+      - "Kevin<aoxianglele@icloud.com>"
     license: Apache License
