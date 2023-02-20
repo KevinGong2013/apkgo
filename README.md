@@ -102,12 +102,12 @@ apkgo帮助我们快速将apk包更新到各个平台。
 
 ``` shell
 
-apkgo upload -f /path/to/release_flat_apk.go -store all
+apkgo upload -f /path/to/release_flat_apk.go --store all
 
 ```
 
 - `-f`: 将要上传的apk文件路径
-- `-store all`: `all`指配置文件中的所有商店， 当然也可以指定某几个商店例如这样：`-store cams,xiaomi,huawei`
+- `-store all`: `all`指配置文件中的所有商店， 当然也可以指定某几个商店例如这样：`--store cams,xiaomi,huawei`
 
 #### Example 2
 
@@ -117,7 +117,7 @@ apkgo upload --file32 /path/to/release_apk_32.apk --file64 /path/to/release_apk_
 
 ```
 
-- `--file32`、`--file64`: 分包上传。 注意不是所有的商店都支持分包上传建议可以配合`-store`使用
+- `--file32`、`--file64`: 分包上传。 注意不是所有的商店都支持分包上传建议可以配合`--store`使用
 - `--release-notes`: 更新日志
 
 #### Example 3
