@@ -17,6 +17,8 @@ type PublishRequest struct {
 	UpdateDesc    string `json:"updateDesc"`
 	// synchroType 更新类型：0=新增，1=更新包，2=内容更新
 	SynchroType int `json:"synchroType"`
+	// 要上传的所有商店
+	Stores string `json:"stores"`
 }
 
 func (r PublishRequest) Version() string {

@@ -16,6 +16,7 @@ import (
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/KevinGong2013/apkgo/cmd/vivo"
 	"github.com/KevinGong2013/apkgo/cmd/xiaomi"
+	"github.com/shogo82148/androidbinary/apk"
 
 	"github.com/jedib0t/go-pretty/v6/progress"
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -24,11 +25,42 @@ import (
 
 var publishers = make(map[string]shared.Publisher)
 
-func initialPublishers() error {
+func assemblePublishRequest() shared.PublishRequest {
+	apkFile := file
+	splitPackage := false
+	if len(apkFile) == 0 {
+		apkFile = file32
+		splitPackage = true
+	}
 
+	// 解析apk文件
+	pkg, _ := apk.OpenFile(apkFile)
+	defer pkg.Close()
+
+	//
+	req := shared.PublishRequest{
+		AppName:     pkg.Manifest().App.Label.MustString(),
+		PackageName: pkg.PackageName(),
+		VersionCode: pkg.Manifest().VersionCode.MustInt32(),
+		VersionName: pkg.Manifest().VersionName.MustString(),
+
+		ApkFile:       file,
+		SecondApkFile: file64,
+		UpdateDesc:    releaseNots,
+		// 更新
+		SynchroType: 1,
+		Stores:      strings.Join(stores, ","),
+	}
+	if splitPackage {
+		req.ApkFile = file32
+	}
+
+	return req
+}
+
+func initialPublishers() error {
 	for _, k := range stores {
 		v := config.Publishers[k]
-
 		switch k {
 		case "xiaomi":
 			xm, err := xiaomi.NewClient(v["username"], v["private_key"])

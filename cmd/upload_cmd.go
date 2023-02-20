@@ -22,7 +22,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/shogo82148/androidbinary/apk"
@@ -107,33 +106,7 @@ func init() {
 
 func run(cmd *cobra.Command, args []string) {
 
-	apkFile := file
-	splitPackage := false
-	if len(apkFile) == 0 {
-		apkFile = file32
-		splitPackage = true
-	}
-
-	// 解析apk文件
-	pkg, _ := apk.OpenFile(apkFile)
-	defer pkg.Close()
-
-	//
-	req := shared.PublishRequest{
-		AppName:     pkg.Manifest().App.Label.MustString(),
-		PackageName: pkg.PackageName(),
-		VersionCode: pkg.Manifest().VersionCode.MustInt32(),
-		VersionName: pkg.Manifest().VersionName.MustString(),
-
-		ApkFile:       file,
-		SecondApkFile: file64,
-		UpdateDesc:    releaseNots,
-		// 更新
-		SynchroType: 1,
-	}
-	if splitPackage {
-		req.ApkFile = file32
-	}
+	req := assemblePublishRequest()
 
 	fmt.Println()
 	t := table.NewWriter()
@@ -143,8 +116,8 @@ func run(cmd *cobra.Command, args []string) {
 			text.FgGreen.Sprint(req.AppName),
 			text.FgGreen.Sprintf("%s+%d", req.VersionName, req.VersionCode),
 			text.FgGreen.Sprint(req.PackageName),
-			text.FgGreen.Sprint(releaseNots),
-			text.FgYellow.Sprint(strings.Join(stores, ",")),
+			text.FgGreen.Sprint(req.UpdateDesc),
+			text.FgYellow.Sprint(req.Stores),
 		),
 	})
 	ns := []string{}
