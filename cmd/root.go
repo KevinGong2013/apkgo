@@ -16,14 +16,15 @@ limitations under the License.
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/KevinGong2013/apkgo/cmd/notifiers"
+	"github.com/jedib0t/go-pretty/v6/text"
+	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
-
-	homedir "github.com/mitchellh/go-homedir"
 )
 
 var versionCmd = &cobra.Command{
@@ -37,23 +38,8 @@ var versionCmd = &cobra.Command{
 var rootCmd = &cobra.Command{
 	Use:   "apkgo",
 	Short: "一键上传apk到 华为、小米、vivo、蒲公英、fir.im等",
-	// Long:  ``,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfgFile = "/Users/gix/Documents/GitHub/apkgo/.apkgo.json"
-
-		err := InitialPublishers([]string{"cams", "apkgo_demo"})
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-
-		Do("1. 提升稳定性\n2.优化性能", "/Users/gix/Documents/aster/build/app/outputs/flutter-apk/app-release.apk")
-
-	},
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
@@ -61,27 +47,18 @@ func Execute() {
 	}
 }
 
-var cfgFile string
-var apkFile string
-var apk32File string
-var apk64File string
-
-// var updateDesc string
+var cfgFilePath string
 
 func init() {
 	cobra.OnInitialize(initConfig)
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.apkgo.yaml)")
-	rootCmd.PersistentFlags().StringVar(&apkFile, "apk", "", "单包apk文件路径")
-	rootCmd.PersistentFlags().StringVar(&apk32File, "apk32", "", "32位apk文件路径")
-	rootCmd.PersistentFlags().StringVar(&apk64File, "apk64", "", "64位apk文件路径")
-	rootCmd.Flag("e")
-	// rootCmd.PersistentFlags().StringArray()
-
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.PersistentFlags().StringVarP(&cfgFilePath, "config", "c", "", "config file (default is $HOME/.apkgo.json)")
 }
 
+var config Config
+
 type Config struct {
-	Publishers map[string]map[string]string `json:"publishers"`
+	Publishers map[string]map[string]string `json:"stores"`
 	Notifiers  struct {
 		Lark     *notifiers.LarkNotifier     `json:"lark,omitempty"`
 		DingTalk *notifiers.DingTalkNotifier `json:"dingtalk,omitempty"`
@@ -93,11 +70,36 @@ type Config struct {
 }
 
 func initConfig() {
-	if cfgFile == "" {
+
+	if cfgFilePath == "" {
 		home, err := homedir.Dir()
 		if err != nil {
 			panic(err)
 		}
-		cfgFile = filepath.Join(home, ".apkgo.json")
+		cfgFilePath = filepath.Join(home, ".apkgo.json")
 	}
+
+	fmt.Println(text.FgMagenta.Sprintf("config file -> %s", cfgFilePath))
+
+	// 读取config文件
+	cfgFileBytes, err := os.ReadFile(cfgFilePath)
+	if err != nil {
+		fmt.Println(text.FgRed.Sprintf("config文件读取失败 err: %s", err.Error()))
+		os.Exit(1)
+		return
+	}
+
+	// 解析config文件
+	if err = json.Unmarshal(cfgFileBytes, &config); err != nil {
+		fmt.Println(text.FgRed.Sprintf("config文件解析失败 err: %s", err.Error()))
+		os.Exit(2)
+		return
+	}
+
+	// 判断配置是否正确
+	if len(config.Publishers) == 0 {
+		fmt.Println(text.FgYellow.Sprint("没有可用store"))
+		os.Exit(3)
+	}
+
 }

@@ -22,7 +22,7 @@ func NewClient(clientId, clientSecret string) (*Client, error) {
 
 	restyClient := resty.New()
 
-	restyClient.SetDebug(true)
+	// restyClient.SetDebug(true)
 	restyClient.SetBaseURL("https://connect-api.cloud.huawei.com")
 	restyClient.SetHeader("Content-Type", "application/json")
 

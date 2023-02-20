@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -18,8 +17,6 @@ import (
 	"github.com/KevinGong2013/apkgo/cmd/vivo"
 	"github.com/KevinGong2013/apkgo/cmd/xiaomi"
 
-	"github.com/shogo82148/androidbinary/apk"
-
 	"github.com/jedib0t/go-pretty/v6/progress"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -27,20 +24,9 @@ import (
 
 var publishers = make(map[string]shared.Publisher)
 
-var config Config
+func initialPublishers() error {
 
-func InitialPublishers(filter []string) error {
-	cfgFileBytes, err := os.ReadFile(cfgFile)
-	if err != nil {
-		return err
-	}
-
-	if err = json.Unmarshal(cfgFileBytes, &config); err != nil {
-		return err
-	}
-
-	// filters := strings.Join(filter, " ")
-	for _, k := range filter {
+	for _, k := range stores {
 		v := config.Publishers[k]
 
 		switch k {
@@ -95,50 +81,7 @@ func InitialPublishers(filter []string) error {
 	return nil
 }
 
-func Do(updateDesc string, apkFile ...string) error {
-	if len(apkFile) == 0 {
-		return errors.New("请指定apk文件路径")
-	}
-	if len(apkFile) > 2 {
-		return errors.New("仅支持一个 fat apk，或者 32和64的安装包，不支持多个文件")
-	}
-	//
-	pkg, _ := apk.OpenFile(apkFile[0])
-
-	defer pkg.Close()
-
-	secondApkFile := ""
-	if len(apkFile) == 2 {
-		secondApkFile = apkFile[1]
-	}
-	//
-	req := shared.PublishRequest{
-		AppName:     pkg.Manifest().App.Label.MustString(),
-		PackageName: pkg.PackageName(),
-		VersionCode: pkg.Manifest().VersionCode.MustInt32(),
-		VersionName: pkg.Manifest().VersionName.MustString(),
-
-		ApkFile:       apkFile[0],
-		SecondApkFile: secondApkFile,
-		UpdateDesc:    updateDesc,
-		// 更新
-		SynchroType: 1,
-	}
-
-	fmt.Printf("apkgo will upload %s\n%s", req.ApkFile, req.SecondApkFile)
-
-	fmt.Println()
-	t := table.NewWriter()
-	t.SetOutputMirror(os.Stdout)
-	t.AppendRow(table.Row{
-		fmt.Sprintf("Name: %s\nVersion: %s\nApplicationID: %s",
-			text.FgGreen.Sprint(req.AppName),
-			text.FgGreen.Sprintf("%s+%d", req.VersionName, req.VersionCode),
-			text.FgGreen.Sprint(req.PackageName)),
-	})
-	t.Render()
-
-	fmt.Println()
+func publish(req shared.PublishRequest) map[string]string {
 
 	pw := progress.NewWriter()
 	pw.SetAutoStop(true)
@@ -198,14 +141,7 @@ func Do(updateDesc string, apkFile ...string) error {
 	fmt.Println()
 	resultTable.Render()
 
-	// 通知各个渠道
-	if err := notify(req, result); err != nil {
-		fmt.Println(text.FgHiRed.Sprint(err.Error()))
-	}
-
-	// 统计数据
-
-	return nil
+	return result
 }
 
 func trackPublish(pw progress.Writer, publisher shared.Publisher) *progress.Tracker {
@@ -246,12 +182,14 @@ func notify(req shared.PublishRequest, result map[string]string) error {
 			return err
 		}
 	}
+
 	if config.Notifiers.WebHook != nil {
 		w := notifiers.Webhook{Url: config.Notifiers.WebHook.Url}
 		if err := w.Notify(req, result); err != nil {
 			return err
 		}
 	}
+
 	fmt.Println(builder.String())
 
 	return nil

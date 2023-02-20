@@ -4,6 +4,7 @@ import (
 	"os/exec"
 
 	"github.com/KevinGong2013/apkgo/cmd/shared"
+	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
 )
 
@@ -27,6 +28,11 @@ func NewPluginPublisher(pc *PluginConfig) (shared.Publisher, error) {
 		Plugins: map[string]plugin.Plugin{
 			pc.Name: &shared.PublisherPlugin{},
 		},
+		Logger: hclog.New(&hclog.LoggerOptions{
+			Output: hclog.DefaultOutput,
+			Level:  hclog.Error,
+			Name:   "PluginPublisher",
+		}),
 	})
 
 	rpcClient, err := c.Client()
