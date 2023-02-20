@@ -9,6 +9,7 @@ type Client struct {
 	restyClient *resty.Client
 }
 
+// https://www.pgyer.com/doc/view/api#fastUploadApp
 func NewClient(apiKey string) *Client {
 
 	restyClient := resty.New()
