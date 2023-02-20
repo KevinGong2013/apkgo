@@ -42,3 +42,18 @@ changelog:
 # Feel free to remove those if you don't want/use them.
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 # vim: set ts=2 sw=2 tw=0 fo=cnqoj
+brews:
+  - name: apkgo
+    goarm: 6
+    goamd64: v3
+    tap:
+      owner: KevinGong2013
+      name: homebrew-repo
+      branch: main
+    commit_author:
+      name: kevin.gong
+      email: aoxianglele@cloud.com
+    folder: Formula
+    homepage: https://apkgo.com.cn
+    description: upload apk to anywhere
+    license: Apache License
