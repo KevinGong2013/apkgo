@@ -187,30 +187,31 @@ func trackPublish(pw progress.Writer, publisher shared.Publisher) *progress.Trac
 
 func notify(req shared.PublishRequest, result map[string]string) error {
 
-	builder := new(strings.Builder)
-	var failed []string
-	for k, v := range result {
-		if len(v) == 0 {
-			builder.WriteString(fmt.Sprintf("👌%s上传成功\n", k))
-		} else {
-			builder.WriteString(fmt.Sprintf("❌%s err: %s\n", k, v))
-			failed = append(failed, k)
-		}
-	}
-	if len(failed) == 0 {
-		builder.WriteString("👏👏👏 所有平台上传成功")
-	} else if len(failed) == len(result) {
-		builder.WriteString("😢😢😢 所有平台上传失败")
-	} else {
-		builder.WriteString(fmt.Sprintf("%s 上传失败，请检查", strings.Join(failed, ",")))
-	}
-
 	if config.Notifiers.Lark != nil {
 		l := &notifiers.LarkNotifier{
 			Key:         config.Notifiers.Lark.Key,
 			SecretToken: config.Notifiers.Lark.SecretToken,
 		}
-		if err := l.Notify(l.BuildAppPubishedMessage(req, builder.String(), "customMsg")); err != nil {
+		if err := l.Notify(l.BuildAppPubishedMessage(req, result)); err != nil {
+			return err
+		}
+	}
+
+	if config.Notifiers.DingTalk != nil {
+		dt := notifiers.DingTalkNotifier{
+			AccessToken: config.Notifiers.DingTalk.AccessToken,
+			SecretToken: config.Notifiers.DingTalk.SecretToken,
+		}
+		if err := dt.Notify(dt.BuildAppPubishedMessage(req, result)); err != nil {
+			return err
+		}
+	}
+
+	if config.Notifiers.WeCom != nil {
+		w := notifiers.WeComNotifier{
+			Key: config.Notifiers.WeCom.Key,
+		}
+		if err := w.Notify(w.BuildAppPubishedMessage(req, result)); err != nil {
 			return err
 		}
 	}
@@ -221,8 +222,6 @@ func notify(req shared.PublishRequest, result map[string]string) error {
 			return err
 		}
 	}
-
-	fmt.Println(builder.String())
 
 	return nil
 }

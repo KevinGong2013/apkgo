@@ -63,9 +63,7 @@ type Config struct {
 		Lark     *notifiers.LarkNotifier     `json:"lark,omitempty"`
 		DingTalk *notifiers.DingTalkNotifier `json:"dingtalk,omitempty"`
 		WeCom    *notifiers.WeComNotifier    `json:"wecom,omitempty"`
-		WebHook  *struct {
-			Url string `json:"url"`
-		}
+		WebHook  *notifiers.Webhook          `json:"webhook,omitempty"`
 	} `json:"notifiers,omitempty"`
 }
 

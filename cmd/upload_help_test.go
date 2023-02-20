@@ -1,23 +1,24 @@
 package cmd
 
 import (
+	"fmt"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestDo(t *testing.T) {
 
 	cfgFilePath = "/Users/gix/Documents/GitHub/apkgo/.apkgo.json"
-	// initConfig()
+	initConfig()
 
-	stores = []string{"vivo", "cams", "apkgo_demo"}
+	stores = []string{"all"}
 	releaseNots = "1. 提升稳定性\n2.优化性能"
 	file = "/Users/gix/Documents/aster/build/app/outputs/flutter-apk/app-release.apk"
 
-	assert.NoError(t, initialPublishers())
+	initialPublishers()
 
-	// req := assemblePublishRequest()
+	req := assemblePublishRequest()
 
-	// publish(req)
+	err := notify(req, publish(req))
+
+	fmt.Println(err)
 }

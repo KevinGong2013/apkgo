@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/KevinGong2013/apkgo/cmd/shared"
@@ -14,30 +15,50 @@ import (
 // https://open.dingtalk.com/document/group/custom-robot-access
 
 type DingTalkNotifier struct {
-	Key         string
-	SecretToken string
+	AccessToken string `json:"access_token"`
+	SecretToken string `json:"secret_token"`
 }
 
-func (d *DingTalkNotifier) BuildAppPubishedMessage(req *shared.PublishRequest, result, customMsg string) string {
+func (d *DingTalkNotifier) BuildAppPubishedMessage(req shared.PublishRequest, result map[string]string) string {
+
+	builder := new(strings.Builder)
+
+	builder.WriteString("# apkgo应用发布结束\n")
+	builder.WriteString(fmt.Sprintf("**%s(%s)** %s\n\n", req.AppName, req.Version(), req.PackageName))
+
+	var failed []string
+	for k, v := range result {
+		if len(v) == 0 {
+			builder.WriteString(fmt.Sprintf("%s上传成功\n\n", k))
+		} else {
+			builder.WriteString(fmt.Sprintf("❌%s 上传失败 %s\n\n", k, v))
+			failed = append(failed, k)
+		}
+	}
+	if len(failed) == 0 {
+		builder.WriteString("\n所有平台上传成功✅")
+	} else if len(failed) == len(result) {
+		builder.WriteString("\n所有平台上传失败❌")
+	} else {
+		builder.WriteString(fmt.Sprintf("\n\n%s 上传失败，请检查", strings.Join(failed, ",")))
+	}
+
+	builder.WriteString(fmt.Sprintf("\n\n%s", time.Now().Format(time.RFC3339)))
 
 	jsonStr := fmt.Sprintf(`{
 		"msgtype": 'markdown',
 		"markdown": {
 		  "title": "apkgo应用发布结束",
-		  "text": "# %s(%s)\n>%s\n###%s\n####%s\n,%s"
+		  "text": "%s"
 		}
-	  }`,
-		req.AppName,
-		fmt.Sprintf("v%s+%d", req.VersionName, req.VersionCode),
-		result,
-		req.PackageName, time.Now(), customMsg)
+	  }`, builder.String())
 
 	return jsonStr
 }
 
 func (d *DingTalkNotifier) Notify(jsonStr string) error {
 
-	url := fmt.Sprintf("https://oapi.dingtalk.com/robot/send?access_token=%s", d.Key)
+	url := fmt.Sprintf("https://oapi.dingtalk.com/robot/send?access_token=%s", d.AccessToken)
 
 	if d.SecretToken != "" {
 		timestamp := time.Now().UnixMilli()
@@ -56,6 +77,7 @@ func (d *DingTalkNotifier) Notify(jsonStr string) error {
 	if resp.StatusCode() >= 400 {
 		return fmt.Errorf("请求失败 %s, %s", resp.Status(), string(resp.Body()))
 	}
+
 	return nil
 
 }

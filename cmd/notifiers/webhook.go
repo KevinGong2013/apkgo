@@ -8,7 +8,7 @@ import (
 )
 
 type Webhook struct {
-	Url string
+	Url []string
 }
 
 func (w *Webhook) Notify(req shared.PublishRequest, result map[string]string) error {
@@ -16,17 +16,23 @@ func (w *Webhook) Notify(req shared.PublishRequest, result map[string]string) er
 	c := resty.New()
 	c.SetRetryCount(3)
 
-	resp, err := c.R().
-		SetHeader("Content-Type", "application/json").
-		SetHeader("X-APKGO-SIGN", "").
-		SetBody(map[string]interface{}{
-			"appInfo": req,
-			"result":  result,
-		}).
-		Post(w.Url)
-	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-		return fmt.Errorf("err. %d", resp.StatusCode())
+	for _, url := range w.Url {
+		resp, err := c.R().
+			SetHeader("Content-Type", "application/json").
+			SetHeader("X-APKGO-SIGN", "").
+			SetBody(map[string]interface{}{
+				"appInfo": req,
+				"result":  result,
+			}).
+			Post(url)
+		if err != nil {
+			return err
+		}
+
+		if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
+			return fmt.Errorf("err. %d", resp.StatusCode())
+		}
 	}
 
-	return err
+	return nil
 }

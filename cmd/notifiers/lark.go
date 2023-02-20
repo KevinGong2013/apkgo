@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/KevinGong2013/apkgo/cmd/shared"
@@ -18,45 +19,60 @@ type LarkNotifier struct {
 
 // https://open.feishu.cn/document/ukTMukTMukTM/ucTM5YjL3ETO24yNxkjN
 
-func (l *LarkNotifier) BuildAppPubishedMessage(req shared.PublishRequest, result, customMsg string) string {
+func (l *LarkNotifier) BuildAppPubishedMessage(req shared.PublishRequest, result map[string]string) string {
+	builder := new(strings.Builder)
+
+	builder.WriteString(fmt.Sprintf("**%s(%s)** %s\\n\\n", req.AppName, req.Version(), req.PackageName))
+
+	var failed []string
+	for k, v := range result {
+		if len(v) == 0 {
+			builder.WriteString(fmt.Sprintf("👌%s上传成功\\n", k))
+		} else {
+			builder.WriteString(fmt.Sprintf("❌%s err: %s\\n", k, v))
+			failed = append(failed, k)
+		}
+	}
+	if len(failed) == 0 {
+		builder.WriteString("\\n👏👏👏 所有平台上传成功")
+	} else if len(failed) == len(result) {
+		builder.WriteString("\\n😢😢😢 所有平台上传失败")
+	} else {
+		builder.WriteString(fmt.Sprintf("%s 上传失败，请检查", strings.Join(failed, ",")))
+	}
+
 	partialJSON := fmt.Sprintf(`
-		"msg_type": "post",
-		"content": {
-			"post": {
-				"zh_cn": {
-					"title": "apkgo应用发布结束",
-					"content": [
-						[
-							{
-								"tag": "text",
-								"text": "%s(%s) *%s*"
-							}
-						],
-						[
-							{
-								"tag": "text",
-								"text": "%s"
-							}
-						],
-						[
-							{
-								"tag": "text",
-								"text": "%s"
-							}
-						],
-						[
-							{
-								"tag": "text",
-								"text": "%s"
-							}
-						]
-					]
+	"msg_type": "interactive",
+	"card": {
+		"config": {
+			"wide_screen_mode": true
+		},
+		"elements": [
+			{
+			"tag": "markdown",
+			"content": "%s"
+			},
+			{
+			"tag": "note",
+			"elements": [
+				{
+				"tag": "plain_text",
+				"content": "%s"
 				}
+			]
 			}
-		}`, req.AppName, req.Version(),
-		req.PackageName,
+		],
+		"header": {
+			"template": "green",
+			"title": {
+			"content": "apkgo应用发布结束",
+			"tag": "plain_text"
+			}
+		}
+	}
+	`, builder.String(),
 		time.Now().Format(time.RFC3339),
-		"result", customMsg)
+	)
 
 	return partialJSON
 }
@@ -91,6 +107,7 @@ func (l *LarkNotifier) Notify(partialJsonStr string) error {
 	if resp.StatusCode() >= 400 {
 		return fmt.Errorf("请求失败 %s, %s", resp.Status(), string(resp.Body()))
 	}
+
 	return nil
 }
 
