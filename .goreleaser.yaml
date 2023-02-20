@@ -53,7 +53,7 @@ brews:
     commit_author:
       name: kevin.gong
       email: aoxianglele@cloud.com
-    folder: Formula
+    folder: formula
     homepage: https://apkgo.com.cn
     description: upload apk to anywhere
     license: Apache License
