@@ -115,14 +115,14 @@ func initConfig() {
 	// 读取config文件
 	cfgFileBytes, err := os.ReadFile(cfgFilePath)
 	if err != nil {
-		fmt.Println(text.FgRed.Sprintf("config文件读取失败 err: %s", err.Error()))
+		fmt.Println(text.FgRed.Sprint(err.Error()))
 		os.Exit(1)
 		return
 	}
 
 	// 解析config文件
 	if err = json.Unmarshal(cfgFileBytes, &config); err != nil {
-		fmt.Println(text.FgRed.Sprintf("config文件解析失败 err: %s", err.Error()))
+		fmt.Println(text.FgRed.Sprintf("Config文件解析失败 %s", err.Error()))
 		os.Exit(2)
 		return
 	}

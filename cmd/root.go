@@ -25,13 +25,16 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "apkgo",
-	Short: fmt.Sprintf("中国安卓应用分发渠道更新工具。项目主页：%s", text.FgBlue.Sprint("https://apkgo.com.cn")),
+	Short: fmt.Sprintf("中国安卓应用分发渠道更新工具。项目主页：%s", text.FgCyan.Sprint("https://apkgo.com.cn")),
 }
 
 var isDebugMode = true
 
-func Execute(debug bool) {
-	isDebugMode = debug
+func Execute(isRelease bool) {
+	isDebugMode = !isRelease
+	if isDebugMode {
+		fmt.Println(text.FgHiYellow.Sprint("Debug mode will use mock publisher \n"))
+	}
 	err := rootCmd.Execute()
 	if err != nil {
 		os.Exit(1)

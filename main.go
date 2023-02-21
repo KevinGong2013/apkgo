@@ -22,15 +22,14 @@ import (
 )
 
 // write form ldflags
-// go build -ldflags='-s -w -X main.version=1.0.0'
+// go build -ldflags='-s -w -X main.release=true'
 var (
-	summary      = "dev"
-	artifactName = "unknown"
+	artifactName = "dev"
 	date         = "unknown"
-	debug        = "true"
+	release      = "false"
 )
 
 func main() {
-	fmt.Printf("%s %s built at %s\n\n", artifactName, summary, date)
-	cmd.Execute(debug == "false")
+	fmt.Printf("%s built at %s\n\n", artifactName, date)
+	cmd.Execute(release == "true")
 }
