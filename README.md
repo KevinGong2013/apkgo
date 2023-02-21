@@ -12,7 +12,7 @@ brew install kevingong2013/tap/apkgo
 
 > 无`brew`环境请前往[apk releases](https://github.com/KevinGong2013/apkgo/releases)下载对应系统的安装包(*支持windows*)。
 > 
-## 使用指南
+## 配置指南
 
 目前支持的平台
 
