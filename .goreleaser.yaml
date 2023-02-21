@@ -13,7 +13,14 @@ builds:
       - linux
       - windows
       - darwin
-
+    goarch:
+      - amd64
+      - "386"
+      - arm
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: "386"
 archives:
   - format: tar.gz
     # this name template makes the OS and Arch compatible with the results of uname.
@@ -46,7 +53,7 @@ brews:
   - name: apkgo
     homepage: https://apkgo.com.cn
     description: Upload apk to anywhere
-    license: "Apache License 2.0"
+    license: "Apache 2.0"
     tap:
       owner: KevinGong2013
       name: homebrew-tap
@@ -62,4 +69,4 @@ aurs:
     description: Upload apk to anywhere
     maintainers:
       - "Kevin<aoxianglele@icloud.com>"
-    license: "Apache License 2.0"
+    license: "Apache 2.0"
