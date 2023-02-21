@@ -33,4 +33,6 @@ func Execute() {
 	}
 }
 
-func init() {}
+func init() {
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
+}
