@@ -27,7 +27,7 @@ func NewClient(userName string, privateKey string) (*Client, error) {
 
 	restyClient := resty.New()
 
-	restyClient.SetDebug(true)
+	restyClient.SetDebug(false)
 	restyClient.SetDebugBodyLimit(1000)
 	restyClient.SetBaseURL("http://api.developer.xiaomi.com/devupload")
 

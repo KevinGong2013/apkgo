@@ -14,7 +14,7 @@ func NewClient(apiKey string) *Client {
 
 	restyClient := resty.New()
 
-	restyClient.SetDebug(true)
+	restyClient.SetDebug(false)
 	restyClient.SetDebugBodyLimit(1000)
 
 	restyClient.SetBaseURL("https://www.pgyer.com/apiv2")

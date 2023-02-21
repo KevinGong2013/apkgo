@@ -19,7 +19,7 @@ func NewClient(accessKey, accessSecret string) (*Client, error) {
 
 	restyClient := resty.New()
 
-	restyClient.SetDebug(true)
+	// restyClient.SetDebug(true)
 	restyClient.SetDebugBodyLimit(1000)
 
 	restyClient.SetBaseURL("https://developer-api.vivo.com.cn/router/rest")
@@ -59,11 +59,11 @@ func (c *Client) upload(method, packageName, apkFilepath string) (*appInfoRespon
 
 	var r struct {
 		Code    int    `json:"code"`
-		Message string `json:"message"`
+		Message string `json:"msg,omitempty"`
 		Data    *appInfoResponse
 	}
 
-	_, err = c.restyClient.R().
+	response, err := c.restyClient.R().
 		SetFile("file", apkFilepath).
 		SetQueryParams(params).
 		SetResult(&r).
@@ -73,8 +73,12 @@ func (c *Client) upload(method, packageName, apkFilepath string) (*appInfoRespon
 		return nil, err
 	}
 
-	if r.Code != 0 {
+	if r.Code != 0 || len(r.Message) > 0 {
 		return nil, fmt.Errorf("upload apk failed. %s", r.Message)
+	}
+
+	if r.Data == nil {
+		return nil, fmt.Errorf("unknown error. %s", string(response.Body()))
 	}
 
 	return r.Data, nil

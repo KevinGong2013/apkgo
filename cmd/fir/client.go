@@ -13,7 +13,7 @@ func NewClient(apiToken string) *Client {
 
 	restyClient := resty.New()
 
-	restyClient.SetDebug(true)
+	restyClient.SetDebug(false)
 	restyClient.SetDebugBodyLimit(1000)
 
 	restyClient.SetBaseURL("http://api.bq04.com")

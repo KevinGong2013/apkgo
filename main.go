@@ -28,7 +28,7 @@ var (
 	arch    = "intel"
 	version = "dev"
 	date    = "unknown"
-	release = "false"
+	release = "true"
 )
 
 func main() {
