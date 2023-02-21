@@ -17,14 +17,18 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/KevinGong2013/apkgo/cmd/notifiers"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
+	"github.com/mitchellh/go-homedir"
 	"github.com/shogo82148/androidbinary/apk"
 	"github.com/spf13/cobra"
 )
@@ -34,6 +38,9 @@ var uploadCmd = &cobra.Command{
 	Use:   "upload",
 	Short: "上传apk到指定应用商店",
 	Args: func(cmd *cobra.Command, args []string) error {
+
+		initConfig()
+
 		// 确认apk文件不能为空且
 		if len(file) == 0 && len(file32) == 0 && len(file64) == 0 {
 			return errors.New("待上传apk文件不能为空")
@@ -77,8 +84,61 @@ var releaseNots string
 
 var disableDoubleCheck bool
 
+var config Config
+
+type Config struct {
+	Publishers map[string]map[string]string `json:"stores"`
+	Notifiers  struct {
+		Lark     *notifiers.LarkNotifier     `json:"lark,omitempty"`
+		DingTalk *notifiers.DingTalkNotifier `json:"dingtalk,omitempty"`
+		WeCom    *notifiers.WeComNotifier    `json:"wecom,omitempty"`
+		WebHook  *notifiers.Webhook          `json:"webhook,omitempty"`
+	} `json:"notifiers,omitempty"`
+}
+
+var cfgFilePath string
+
+func initConfig() {
+
+	if cfgFilePath == "" {
+		home, err := homedir.Dir()
+		if err != nil {
+			panic(err)
+		}
+		cfgFilePath = filepath.Join(home, ".apkgo.json")
+	}
+
+	fmt.Println(text.FgMagenta.Sprintf("Reading config: %s", cfgFilePath))
+
+	// 读取config文件
+	cfgFileBytes, err := os.ReadFile(cfgFilePath)
+	if err != nil {
+		fmt.Println(text.FgRed.Sprintf("config文件读取失败 err: %s", err.Error()))
+		os.Exit(1)
+		return
+	}
+
+	// 解析config文件
+	if err = json.Unmarshal(cfgFileBytes, &config); err != nil {
+		fmt.Println(text.FgRed.Sprintf("config文件解析失败 err: %s", err.Error()))
+		os.Exit(2)
+		return
+	}
+
+	// 判断配置是否正确
+	if len(config.Publishers) == 0 {
+		fmt.Println(text.FgYellow.Sprint("没有可用store"))
+		os.Exit(3)
+	}
+
+}
+
 func init() {
+
 	rootCmd.AddCommand(uploadCmd)
+
+	// 配置文件
+	uploadCmd.Flags().StringVarP(&cfgFilePath, "config", "c", "", "config file (default is $HOME/.apkgo.json)")
 
 	// 需要上传到哪些商店
 	uploadCmd.Flags().StringSliceVarP(&stores, "store", "s", []string{}, "需要上传到哪些商店。 [-s all] 上传到配置文件中的所有商店")

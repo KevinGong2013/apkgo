@@ -15,8 +15,22 @@ limitations under the License.
 */
 package main
 
-import "github.com/KevinGong2013/apkgo/cmd"
+import (
+	"fmt"
+
+	"github.com/KevinGong2013/apkgo/cmd"
+)
+
+// write form ldflags
+// go build -ldflags='-s -w -X main.version=1.0.0'
+var (
+	version = "dev"
+	date    = "unknown"
+	goOS    = "unknown"
+	goArch  = "unknown"
+)
 
 func main() {
+	fmt.Printf("apkgo %s %s/%s built at %s\n", version, goOS, goArch, date)
 	cmd.Execute()
 }
