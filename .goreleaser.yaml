@@ -65,10 +65,7 @@ brews:
       email: aoxianglele@cloud.com
     install: |-
       bin.install "apkgo"
-aurs:
-  - name: apkgo-bin
-    homepage: https://apkgo.com.cn
-    description: Upload apk to anywhere
-    maintainers:
-      - "Kevin<aoxianglele@icloud.com>"
-    license: "Apache-2.0"
+dockers:
+  - image_templates:
+    - KevinGong2013/apkgo
+
