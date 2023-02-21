@@ -2,10 +2,13 @@
 
 apkgo帮助我们快速将apk包更新到各个平台。
 
-## Get apkgo
+## 快速开始
 
-- [本地机器](https://www.apple.com)
-- [CI/CD](https://www.apple.com)
+``` shell
+
+brew install kevingong2013/tap/apkgo
+
+```
 
 ## 使用指南
 
@@ -105,6 +108,8 @@ apkgo帮助我们快速将apk包更新到各个平台。
 apkgo upload -f /path/to/release_flat_apk.go --store all
 
 ```
+
+> 无`brew`环境请前往[apk releases](https://github.com/KevinGong2013/apkgo/releases)页下载对应系统的可执行文件
 
 - `-f`: 将要上传的apk文件路径
 - `-store all`: `all`指配置文件中的所有商店， 当然也可以指定某几个商店例如这样：`--store cams,xiaomi,huawei`

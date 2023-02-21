@@ -86,14 +86,16 @@ var disableDoubleCheck bool
 
 var config Config
 
+type Notifiers struct {
+	Lark     *notifiers.LarkNotifier     `json:"lark,omitempty"`
+	DingTalk *notifiers.DingTalkNotifier `json:"dingtalk,omitempty"`
+	WeCom    *notifiers.WeComNotifier    `json:"wecom,omitempty"`
+	WebHook  *notifiers.Webhook          `json:"webhook,omitempty"`
+}
+
 type Config struct {
 	Publishers map[string]map[string]string `json:"stores"`
-	Notifiers  struct {
-		Lark     *notifiers.LarkNotifier     `json:"lark,omitempty"`
-		DingTalk *notifiers.DingTalkNotifier `json:"dingtalk,omitempty"`
-		WeCom    *notifiers.WeComNotifier    `json:"wecom,omitempty"`
-		WebHook  *notifiers.Webhook          `json:"webhook,omitempty"`
-	} `json:"notifiers,omitempty"`
+	Notifiers  Notifiers                    `json:"notifiers,omitempty"`
 }
 
 var cfgFilePath string

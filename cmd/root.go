@@ -16,14 +16,16 @@ limitations under the License.
 package cmd
 
 import (
+	"fmt"
 	"os"
 
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "apkgo",
-	Short: "中国大陆安卓应用发布渠道更新助手",
+	Short: fmt.Sprintf("中国安卓应用分发渠道更新工具。项目主页：%s", text.FgBlue.Sprint("https://apkgo.com.cn")),
 }
 
 func Execute() {
