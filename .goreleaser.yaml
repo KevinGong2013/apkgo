@@ -44,8 +44,15 @@ changelog:
 # vim: set ts=2 sw=2 tw=0 fo=cnqoj
 brews:
   - name: apkgo
-    goarm: 6
+    goarm: "7"
     goamd64: v3
+    homepage: https://apkgo.com.cn
+    description: Upload apk to anywhere
+    license: Apache License
+    dependencies:
+      - name: go
+        type: optional
+      - name: git
     tap:
       owner: KevinGong2013
       name: homebrew-tap
@@ -53,9 +60,8 @@ brews:
     commit_author:
       name: kevin.gong
       email: aoxianglele@cloud.com
-    homepage: https://apkgo.com.cn
-    description: Upload apk to anywhere
-    license: Apache License
+    install: |-
+      bin.install "apkgo"
 aurs:
   - name: apkgo-bin
     homepage: https://apkgo.com.cn
