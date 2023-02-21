@@ -151,7 +151,10 @@ func publish(req shared.PublishRequest) map[string]string {
 		name := p.Name()
 		go func() {
 			tracker := trackPublish(pw, p)
-			err := newMockPublisher(p).Do(req)
+			if isDebugMode {
+				p = newMockPublisher(p)
+			}
+			err := p.Do(req)
 
 			if err == nil {
 				tracker.MarkAsDone()
@@ -159,7 +162,7 @@ func publish(req shared.PublishRequest) map[string]string {
 				result[name] = ""
 			} else {
 				tracker.MarkAsErrored()
-				resultTable.AppendRow(table.Row{name, text.FgHiRed.Sprint("Failed"), err.Error()})
+				resultTable.AppendRow(table.Row{name, text.FgRed.Sprint("Failed"), err.Error()})
 				result[name] = err.Error()
 			}
 		}()

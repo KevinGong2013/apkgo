@@ -210,7 +210,7 @@ func run(cmd *cobra.Command, args []string) {
 	if !disableDoubleCheck {
 		for {
 			reader := bufio.NewReader(os.Stdin)
-			fmt.Printf("\n确认👆👆👆👆信息开始上传？(%s)\n", text.FgCyan.Sprint("yes/no"))
+			fmt.Printf("\n确认以上信息开始上传？(%s)\n", text.FgCyan.Sprint("yes/no"))
 			y, err := reader.ReadString('\n')
 			if err != nil {
 				fmt.Println(err)

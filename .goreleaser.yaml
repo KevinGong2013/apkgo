@@ -22,7 +22,7 @@ builds:
       - goos: darwin
         goarch: "386"
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.date={{.Date}} -X main.goOS={{.Runtime.Goos}} -X main.goArch={{.Runtime.Goarch}}
+      - -s -w -X main.summary={{.Summary}} -X main.date={{.Date}} -X main.artifactName={{.ArtifactName}} -X main.debug={{.IsSnapshot}}
 archives:
   - format: tar.gz
     # this name template makes the OS and Arch compatible with the results of uname.

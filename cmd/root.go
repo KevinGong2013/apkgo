@@ -28,7 +28,10 @@ var rootCmd = &cobra.Command{
 	Short: fmt.Sprintf("中国安卓应用分发渠道更新工具。项目主页：%s", text.FgBlue.Sprint("https://apkgo.com.cn")),
 }
 
-func Execute() {
+var isDebugMode = true
+
+func Execute(debug bool) {
+	isDebugMode = debug
 	err := rootCmd.Execute()
 	if err != nil {
 		os.Exit(1)

@@ -24,13 +24,13 @@ import (
 // write form ldflags
 // go build -ldflags='-s -w -X main.version=1.0.0'
 var (
-	version = "dev"
-	date    = "unknown"
-	goOS    = "unknown"
-	goArch  = "unknown"
+	summary      = "dev"
+	artifactName = "unknown"
+	date         = "unknown"
+	debug        = "true"
 )
 
 func main() {
-	fmt.Printf("apkgo %s %s/%s built at %s\n\n", version, goOS, goArch, date)
-	cmd.Execute()
+	fmt.Printf("%s %s built at %s\n\n", artifactName, summary, date)
+	cmd.Execute(debug == "false")
 }
