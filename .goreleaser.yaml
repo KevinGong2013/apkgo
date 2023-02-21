@@ -53,13 +53,13 @@ brews:
   - name: apkgo
     homepage: https://apkgo.com.cn
     description: Upload apk to anywhere
-    license: "Apache License 2.0"
+    license: "Apache-2.0"
     tap:
       owner: KevinGong2013
       name: homebrew-tap
       branch: main
     commit_author:
-      name: kevin.gong
+      name: kevin.Gong
       email: aoxianglele@cloud.com
     install: |-
       bin.install "apkgo"
@@ -69,4 +69,4 @@ aurs:
     description: Upload apk to anywhere
     maintainers:
       - "Kevin<aoxianglele@icloud.com>"
-    license: "Apache License 2.0"
+    license: "Apache-2.0"
