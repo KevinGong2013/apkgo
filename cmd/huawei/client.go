@@ -242,3 +242,84 @@ type Ret struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
+
+// type fetchAppInfoResponse struct {
+// 	Ret struct {
+// 		Code int    `json:"code"`
+// 		Msg  string `json:"msg"`
+// 	} `json:"ret"`
+// 	AppInfo struct {
+// 		ReleaseState       int    `json:"releaseState"`
+// 		DefaultLang        string `json:"defaultLang"`
+// 		ParentType         int    `json:"parentType"`
+// 		ChildType          int    `json:"childType"`
+// 		GrandChildType     int    `json:"grandChildType"`
+// 		PrivacyPolicy      string `json:"privacyPolicy"`
+// 		AppAdapters        string `json:"appAdapters"`
+// 		PriceDetail        string `json:"priceDetail"`
+// 		PublishCountry     string `json:"publishCountry"`
+// 		ContentRate        string `json:"contentRate"`
+// 		HispaceAutoDown    int    `json:"hispaceAutoDown"`
+// 		AppTariffType      string `json:"appTariffType"`
+// 		DeveloperNameCn    string `json:"developerNameCn"`
+// 		DeveloperNameEn    string `json:"developerNameEn"`
+// 		DeveloperWebsite   string `json:"developerWebsite"`
+// 		ElecCertificateURL string `json:"elecCertificateUrl"`
+// 		CertificateURLs    string `json:"certificateURLs"`
+// 		PublicationURLs    string `json:"publicationURLs"`
+// 		CultureRecordURLs  string `json:"cultureRecordURLs"`
+// 		UpdateTime         string `json:"updateTime"`
+// 		VersionNumber      string `json:"versionNumber"`
+// 		FamilyShareTag     int    `json:"familyShareTag"`
+// 		DeviceTypes        []struct {
+// 			DeviceType  int    `json:"deviceType"`
+// 			AppAdapters string `json:"appAdapters"`
+// 		} `json:"deviceTypes"`
+// 		WebGameFlag  int    `json:"webGameFlag"`
+// 		PrivacyLabel string `json:"privacyLabel"`
+// 	} `json:"appInfo"`
+// 	AuditInfo struct {
+// 		AuditOpinion string `json:"auditOpinion"`
+// 	} `json:"auditInfo"`
+// 	Languages []struct {
+// 		Lang            string `json:"lang"`
+// 		AppName         string `json:"appName"`
+// 		AppDesc         string `json:"appDesc"`
+// 		BriefInfo       string `json:"briefInfo"`
+// 		NewFeatures     string `json:"newFeatures"`
+// 		Icon            string `json:"icon"`
+// 		ShowType        int    `json:"showType"`
+// 		VideoShowType   int    `json:"videoShowType"`
+// 		IntroPic        string `json:"introPic"`
+// 		DeviceMaterials []struct {
+// 			DeviceType          int           `json:"deviceType"`
+// 			AppIcon             string        `json:"appIcon"`
+// 			ScreenShots         []string      `json:"screenShots"`
+// 			ShowType            int           `json:"showType"`
+// 			VrCoverLayeredImage []interface{} `json:"vrCoverLayeredImage"`
+// 			VrRecomGraphic4To3  []interface{} `json:"vrRecomGraphic4to3"`
+// 			VrRecomGraphic1To1  []interface{} `json:"vrRecomGraphic1to1"`
+// 			PromoGraphics       []interface{} `json:"promoGraphics"`
+// 			VideoShowType       int           `json:"videoShowType"`
+// 		} `json:"deviceMaterials"`
+// 	} `json:"languages"`
+// }
+
+// func (c *Client) fetchAppInfo(appId string) (*fetchAppInfoResponse, error) {
+
+// 	r := new(fetchAppInfoResponse)
+
+// 	response, err := c.restyClient.R().
+// 		SetQueryParam("appId", appId).
+// 		SetResult(r).
+// 		Get("/api/publish/v2/app-info")
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	if response.StatusCode() < 200 || response.StatusCode() >= 300 {
+// 		return nil, fmt.Errorf("get app info failed. %s", string(response.Body()))
+// 	}
+
+// 	return r, nil
+// }

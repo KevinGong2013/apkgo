@@ -13,11 +13,11 @@
             "args": [
                 "upload",
                 "-s",
-                "vivo",
+                "all",
                 "-c",
                 ".apkgo.json",
                 "-f",
-                "../aster.apk",
+                "app-release.apk",
                 "--disable-double-confirmation"
             ]
         }

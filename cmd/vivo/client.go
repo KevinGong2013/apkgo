@@ -2,6 +2,7 @@ package vivo
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/KevinGong2013/apkgo/cmd/utils"
@@ -74,7 +75,7 @@ func (c *Client) upload(method, packageName, apkFilepath string) (*appInfoRespon
 	}
 
 	if r.Code != 0 || len(r.Message) > 0 {
-		return nil, fmt.Errorf("upload apk failed. %s", r.Message)
+		return nil, errors.New(r.Message)
 	}
 
 	if r.Data == nil {

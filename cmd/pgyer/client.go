@@ -57,14 +57,14 @@ type buildInfoResponse struct {
 	Message string `json:"message"`
 	Data    struct {
 		Key          string `json:"buildKey"`
-		Type         int    `json:"buildType"`
-		IsFirst      int    `json:"buildIsFirst"`
-		IsLastest    int    `json:"buildIsLastest"`
-		FileSize     int    `json:"buildFileSize"`
+		Type         string `json:"buildType"`
+		IsFirst      string `json:"buildIsFirst"`
+		IsLastest    string `json:"buildIsLastest"`
+		FileSize     string `json:"buildFileSize"`
 		Name         string `json:"buildName"`
 		Version      string `json:"buildVersion"`
 		VersionNo    string `json:"buildVersionNo"`
-		BuildVersion int    `json:"buildBuildVersion"`
+		BuildVersion string `json:"buildBuildVersion"`
 		Identifier   string `json:"buildIdentifier"`
 		Icon         string `json:"buildIcon"`
 		Description  string `json:"buildDescription"`

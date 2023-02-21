@@ -27,29 +27,22 @@ func (c *Client) Do(req shared.PublishRequest) error {
 
 	// 提交发布
 	// 1分钟执行执行一次
-	waitTimes := 3
+	times := 0
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 
-	fmt.Printf(" %d 分钟后尝试提交应用\n", waitTimes)
 	for range t.C {
-		if waitTimes <= 0 {
-			r := c.submitApp(appId)
-			if r.Code == 0 {
-				t.Stop()
-				return nil
-			}
-
-			fmt.Println(r.Message)
-			fmt.Println("1 分钟后尝试重新提价")
-
-			if waitTimes <= -60 {
-				return fmt.Errorf("失败太多次了，请前往华为后台检查")
-			}
-		} else {
-			fmt.Printf(" %d 分钟后尝试提交应用\n", waitTimes)
-			waitTimes--
+		r := c.submitApp(appId)
+		if r.Code == 0 {
+			t.Stop()
+			return nil
 		}
+
+		if times >= 10 {
+			return fmt.Errorf("失败太多次了，请前往华为后台检查")
+		}
+
+		times++
 	}
 
 	return nil

@@ -1,6 +1,8 @@
 package fir
 
 import (
+	"fmt"
+
 	"github.com/go-resty/resty/v2"
 )
 
@@ -57,4 +59,34 @@ func (c *Client) getUploadToken(packageName string) (*getUploadTokenResponse, er
 		Post("/apps")
 
 	return &r, err
+}
+
+type getAppInfoResponse struct {
+	Name         string `json:"name"`
+	Version      string `json:"version"`
+	Changelog    string `json:"changelog"`
+	VersionShort string `json:"versionShort"`
+	Build        string `json:"build"`
+	InstallURL   string `json:"installUrl"`
+	InstallURL0  string `json:"install_url"`
+	UpdateURL    string `json:"update_url"`
+	Binary       struct {
+		Fsize int `json:"fsize"`
+	} `json:"binary"`
+}
+
+func (c *Client) getAppInfo(packageName string) (*getAppInfoResponse, error) {
+
+	r := new(getAppInfoResponse)
+
+	_, err := c.restyClient.R().
+		SetQueryParams(map[string]string{
+			"type":      "android",
+			"api_token": c.apiToken,
+		}).
+		SetResult(r).
+		Get(fmt.Sprintf("/apps/latest/%s", packageName))
+
+	return r, err
+
 }

@@ -13,6 +13,20 @@ func (c *Client) Name() string {
 
 func (c *Client) Do(req shared.PublishRequest) error {
 
+	info, err := c.getAppInfo(req.PackageName)
+	if err != nil {
+		return err
+	}
+
+	versionCode, err := strconv.Atoi(info.Build)
+	if err != nil {
+		return err
+	}
+
+	if versionCode >= int(req.VersionCode) {
+		return fmt.Errorf("线上版本(%d)比当前版本(%d)更高 %s", versionCode, req.VersionCode, info.UpdateURL)
+	}
+
 	resp, err := c.getUploadToken(req.PackageName)
 	if err != nil {
 		return err
