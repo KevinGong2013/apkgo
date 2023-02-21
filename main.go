@@ -24,12 +24,14 @@ import (
 // write form ldflags
 // go build -ldflags='-s -w -X main.release=true'
 var (
-	artifactName = "dev"
-	date         = "unknown"
-	release      = "false"
+	os      = "unknown"
+	arch    = "intel"
+	version = "dev"
+	date    = "unknown"
+	release = "false"
 )
 
 func main() {
-	fmt.Printf("%s built at %s\n\n", artifactName, date)
+	fmt.Printf("apkgo %s/%s v%s built at %s\n\n", os, arch, version, date)
 	cmd.Execute(release == "true")
 }
