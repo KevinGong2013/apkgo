@@ -14,7 +14,7 @@ brew install kevingong2013/tap/apkgo
 
 ```
 
-> 无`brew`环境请前往[apk releases](https://github.com/KevinGong2013/apkgo/releases)下载对应系统的安装包(*支持windows*)。
+> 无`brew`环境请前往[Github Release Page](https://github.com/KevinGong2013/apkgo/releases)下载对应系统的安装包(*支持windows*)。
 >
 > 当然也支持通过`docker`使用 `docker pull kevingong2013/apkgo`
 
