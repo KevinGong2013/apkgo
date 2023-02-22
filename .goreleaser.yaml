@@ -65,4 +65,4 @@ brews:
       bin.install "apkgo"
 dockers:
   - image_templates:
-      - kevingong2013/apkgo
+      - kevingong2013/apkgo:{{ .Tag }}

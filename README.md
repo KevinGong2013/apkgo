@@ -1,5 +1,7 @@
 # apkgo
 
+![v](https://img.shields.io/github/v/tag/kevingong2013/apkgo?style=flat-square) ![build](https://img.shields.io/github/actions/workflow/status/kevingong2013/apkgo/release.yml?style=flat-square) ![g1](https://img.shields.io/github/go-mod/go-version/kevingong2013/apkgo?style=flat-square) ![go](https://img.shields.io/github/languages/top/kevingong2013/apkgo?style=flat-square) ![license](https://img.shields.io/github/license/kevingong2013/apkgo?style=flat-square)
+
 apkgo帮助我们快速将apk包更新到各个平台。
 
 ![demo](./docs/demo.png)
@@ -13,6 +15,7 @@ brew install kevingong2013/tap/apkgo
 ```
 
 > 无`brew`环境请前往[apk releases](https://github.com/KevinGong2013/apkgo/releases)下载对应系统的安装包(*支持windows*)。
+> 当然也支持通过`docker`使用 `docker pull kevingong2013/apkgo`
 
 ## 配置指南
 
