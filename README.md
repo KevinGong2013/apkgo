@@ -1,6 +1,6 @@
 # apkgo
 
-![v](https://img.shields.io/github/v/tag/kevingong2013/apkgo?style=flat-square) ![build](https://img.shields.io/github/actions/workflow/status/kevingong2013/apkgo/release.yml?style=flat-square) ![g1](https://img.shields.io/github/go-mod/go-version/kevingong2013/apkgo?style=flat-square) ![go](https://img.shields.io/github/languages/top/kevingong2013/apkgo?style=flat-square) ![license](https://img.shields.io/github/license/kevingong2013/apkgo?style=flat-square)
+![v](https://img.shields.io/docker/v/kevingong2013/apkgo?arch=amd64&sort=date&style=flat-square) ![tag](https://img.shields.io/github/v/tag/kevingong2013/apkgo?style=flat-square) ![build](https://img.shields.io/github/actions/workflow/status/kevingong2013/apkgo/release.yml?style=flat-square) ![g1](https://img.shields.io/github/go-mod/go-version/kevingong2013/apkgo?style=flat-square) ![go](https://img.shields.io/github/languages/top/kevingong2013/apkgo?style=flat-square) ![license](https://img.shields.io/github/license/kevingong2013/apkgo?style=flat-square)
 
 apkgo帮助我们快速将apk包更新到各个平台。
 
