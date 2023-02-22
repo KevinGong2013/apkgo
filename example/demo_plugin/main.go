@@ -12,8 +12,8 @@ import (
 
 var logger = hclog.New(&hclog.LoggerOptions{
 	Output: hclog.DefaultOutput,
-	Level:  hclog.Trace,
-	Name:   "apkgo_demo",
+	Level:  hclog.Error,
+	Name:   "apkgo_demo_plugin",
 })
 
 func main() {
@@ -34,19 +34,20 @@ func main() {
 type DemoPlugin struct{}
 
 func (p *DemoPlugin) Name() string {
-	logger.Info("Plugin.Name()")
+	logger.Debug("Name()")
 	return "apkgo_plugin_demo"
 }
 
 func (p *DemoPlugin) Do(req shared.PublishRequest) error {
-	logger.Info("Plugin.Do() %s", req)
+	r := rand.Intn(3)
+	time.Sleep(time.Second * time.Duration(2+r))
 
-	r := rand.Intn(10)
-	time.Sleep(time.Second * time.Duration(10+r))
+	logger.Debug("Do", r%2)
 
 	if r%2 == 0 {
-		return fmt.Errorf("upload %s failed", req.AppName)
+		return fmt.Errorf("upload %v failed", req)
 	}
 
 	return nil
+
 }

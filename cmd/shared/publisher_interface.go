@@ -31,6 +31,11 @@ type Publisher interface {
 }
 
 // /////////////////////////
+
+type PublisherPlugin struct {
+	Impl Publisher
+}
+
 type PublisherRPC struct {
 	client *rpc.Client
 }
@@ -38,17 +43,27 @@ type PublisherRPC struct {
 func (p *PublisherRPC) Name() string {
 	var resp string
 	// ignore error
-	p.client.Call("Plugin.Name", new(interface{}), &resp)
+	err := p.client.Call("Plugin.Name", new(interface{}), &resp)
+	if err != nil {
+		fmt.Println(err)
+		return "unknown_plugin"
+	}
 	return resp
 }
 
 func (p *PublisherRPC) Do(req PublishRequest) error {
-	return p.client.Call("Plugin.Do", &req, new(interface{}))
+	var reply string
+	err := p.client.Call("Plugin.Do", req, &reply)
+
+	return err
+}
+
+func (PublisherPlugin) Client(b *plugin.MuxBroker, c *rpc.Client) (interface{}, error) {
+	return &PublisherRPC{client: c}, nil
 }
 
 // /////////////////////////////
-// Here is the RPC server that PublisherRPCServer talks to, conforming to
-// the requirements of net/rpc
+// 插件内通过这个server来提供服务
 type PublisherRPCServer struct {
 	Impl Publisher
 }
@@ -58,18 +73,14 @@ func (s *PublisherRPCServer) Name(args interface{}, resp *string) error {
 	return nil
 }
 
-func (s *PublisherRPCServer) Do(req PublishRequest, resp interface{}) error {
-	return s.Impl.Do(req)
-}
-
-type PublisherPlugin struct {
-	Impl Publisher
+func (s *PublisherRPCServer) Do(req PublishRequest, resp *string) error {
+	err := s.Impl.Do(req)
+	if err == nil {
+		*resp = "NoError"
+	}
+	return err
 }
 
 func (p *PublisherPlugin) Server(*plugin.MuxBroker) (interface{}, error) {
 	return &PublisherRPCServer{Impl: p.Impl}, nil
-}
-
-func (PublisherPlugin) Client(b *plugin.MuxBroker, c *rpc.Client) (interface{}, error) {
-	return &PublisherRPC{client: c}, nil
 }
