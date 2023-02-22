@@ -29,21 +29,6 @@ func main() {
 		},
 		Logger: logger,
 	})
-
-	// 对应的 .apkgo.json 的配置文件
-	/**
-		{
-			"publishers": {
-				"apkgo_demo": {
-					"path": "执行 go build 以后的可执行文件路径/demo_plugin",
-	            	"version": "23", // 对应 ProtocolVersion
-	            	"magic_cookie_key": "apkgo_demo_key",
-	            	"magic_cookie_value": "apkgo_demo_value"
-				}
-			}
-		}
-
-	*/
 }
 
 type DemoPlugin struct{}

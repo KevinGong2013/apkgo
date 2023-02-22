@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"os/exec"
 
 	"github.com/KevinGong2013/apkgo/cmd/shared"
@@ -35,7 +36,7 @@ func NewPluginPublisher(pc *PluginConfig) (*PluginPublisher, error) {
 			pc.Name: &shared.PublisherPlugin{},
 		},
 		Logger: hclog.New(&hclog.LoggerOptions{
-			Output: hclog.DefaultOutput,
+			Output: os.Stdout,
 			Level:  hclog.Trace,
 			Name:   "PluginPublisher",
 		}),
