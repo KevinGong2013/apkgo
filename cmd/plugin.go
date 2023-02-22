@@ -25,6 +25,15 @@ type PluginPublisher struct {
 
 func NewPluginPublisher(pc *PluginConfig) (*PluginPublisher, error) {
 
+	logger := hclog.New(&hclog.LoggerOptions{
+		Output: os.Stdout,
+		Level:  hclog.Error,
+		Name:   "PluginPublisher",
+	})
+	if developMode {
+		logger.SetLevel(hclog.Trace)
+	}
+
 	c := plugin.NewClient(&plugin.ClientConfig{
 		HandshakeConfig: plugin.HandshakeConfig{
 			ProtocolVersion:  pc.ProtocolVersion,
@@ -35,11 +44,7 @@ func NewPluginPublisher(pc *PluginConfig) (*PluginPublisher, error) {
 		Plugins: map[string]plugin.Plugin{
 			pc.Name: &shared.PublisherPlugin{},
 		},
-		Logger: hclog.New(&hclog.LoggerOptions{
-			Output: os.Stdout,
-			Level:  hclog.Error,
-			Name:   "PluginPublisher",
-		}),
+		Logger: logger,
 	})
 
 	rpcClient, err := c.Client()

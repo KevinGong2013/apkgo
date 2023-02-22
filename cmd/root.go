@@ -36,11 +36,17 @@ func Execute(isRelease bool) {
 		fmt.Println(text.FgHiYellow.Sprint("Debug mode will use mock publisher \n"))
 	}
 	err := rootCmd.Execute()
+
 	if err != nil {
 		os.Exit(1)
 	}
 }
 
+var developMode bool
+
 func init() {
+
+	rootCmd.PersistentFlags().BoolVar(&developMode, "develop_mode", false, "开发者模式打开，会输出Trace级别的plugin日志")
+
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 }
