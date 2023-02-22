@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -246,6 +247,15 @@ func run(cmd *cobra.Command, args []string) {
 	// 记录节省时间
 	// 商店数 * 5 分钟
 	http.Post("https://central.rainbowbridge.top/api/apkgo/", "text/plain", strings.NewReader(strings.Join(stores, ",")))
+
+	// 清理一些需要关闭的publisher
+	for _, p := range publishers {
+		if c, ok := p.(io.Closer); ok {
+			if err := c.Close(); err != nil {
+				fmt.Println(text.FgRed.Sprintf("清理资源出错. %s", err.Error()))
+			}
+		}
+	}
 
 	fmt.Println(text.FgYellow.Sprint("Finished 🚀🚀"))
 }

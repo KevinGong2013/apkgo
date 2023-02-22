@@ -37,15 +37,13 @@ type PublisherRPC struct {
 
 func (p *PublisherRPC) Name() string {
 	var resp string
-	err := p.client.Call("Plugin.Name", new(interface{}), &resp)
-	if err != nil {
-		panic(err)
-	}
+	// ignore error
+	p.client.Call("Publisher.Name", new(interface{}), &resp)
 	return resp
 }
 
 func (p *PublisherRPC) Do(req PublishRequest) error {
-	return p.client.Call("Plugin.Do", req, nil)
+	return p.client.Call("Publisher.Do", req, new(interface{}))
 }
 
 // /////////////////////////////

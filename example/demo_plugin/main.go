@@ -6,8 +6,15 @@ import (
 	"time"
 
 	"github.com/KevinGong2013/apkgo/cmd/shared"
+	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
 )
+
+var logger = hclog.New(&hclog.LoggerOptions{
+	Output: hclog.DefaultOutput,
+	Level:  hclog.Trace,
+	Name:   "apkgo_demo",
+})
 
 func main() {
 
@@ -20,6 +27,7 @@ func main() {
 			MagicCookieKey:   "apkgo_demo_key",
 			MagicCookieValue: "apkgo_demo_value",
 		},
+		Logger: logger,
 	})
 
 	// 对应的 .apkgo.json 的配置文件
@@ -41,10 +49,12 @@ func main() {
 type DemoPlugin struct{}
 
 func (p *DemoPlugin) Name() string {
+	logger.Info("Plugin.Name()")
 	return "apkgo_plugin_demo"
 }
 
 func (p *DemoPlugin) Do(req shared.PublishRequest) error {
+	logger.Info("Plugin.Do() %s", req)
 
 	r := rand.Intn(10)
 	time.Sleep(time.Second * time.Duration(10+r))
