@@ -37,7 +37,7 @@ func NewPluginPublisher(pc *PluginConfig) (*PluginPublisher, error) {
 		},
 		Logger: hclog.New(&hclog.LoggerOptions{
 			Output: os.Stdout,
-			Level:  hclog.Trace,
+			Level:  hclog.Error,
 			Name:   "PluginPublisher",
 		}),
 	})
