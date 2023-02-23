@@ -228,7 +228,7 @@ func (c *Client) submitApp(appId string) *Ret {
 			"releaseType": "1",
 		}).
 		SetBody(map[string]interface{}{}).
-		SetResult(publishResponse).
+		SetResult(&publishResponse).
 		Post("/api/publish/v2/app-submit")
 
 	// if publishResponse.Ret.Code != 0 {

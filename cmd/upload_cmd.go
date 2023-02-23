@@ -23,13 +23,11 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/KevinGong2013/apkgo/cmd/notifiers"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
-	"github.com/mitchellh/go-homedir"
 	"github.com/shogo82148/androidbinary/apk"
 	"github.com/spf13/cobra"
 )
@@ -72,7 +70,7 @@ var uploadCmd = &cobra.Command{
 
 		return nil
 	},
-	Run: run,
+	Run: runUpload,
 }
 
 var stores []string
@@ -102,14 +100,6 @@ type Config struct {
 var cfgFilePath string
 
 func initConfig() {
-
-	if cfgFilePath == "" {
-		home, err := homedir.Dir()
-		if err != nil {
-			panic(err)
-		}
-		cfgFilePath = filepath.Join(home, ".apkgo.json")
-	}
 
 	fmt.Println(text.FgMagenta.Sprintf("Reading config: %s", cfgFilePath))
 
@@ -169,7 +159,7 @@ func init() {
 
 }
 
-func run(cmd *cobra.Command, args []string) {
+func runUpload(cmd *cobra.Command, args []string) {
 
 	defer func() {
 		// 清理一些需要关闭的publisher

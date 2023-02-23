@@ -17,9 +17,12 @@ package cmd
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/jedib0t/go-pretty/v6/text"
+	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 )
 
@@ -44,9 +47,27 @@ func Execute(isRelease bool) {
 
 var developMode bool
 
+var apkgoHome string
+
 func init() {
 
 	rootCmd.PersistentFlags().BoolVar(&developMode, "develop_mode", false, "开发者模式打开，会输出Trace级别的plugin日志")
 
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
+
+	apkgoHome = os.Getenv("APKGO_HOME")
+	if len(apkgoHome) == 0 {
+		home, err := homedir.Dir()
+		if err != nil {
+			panic(err)
+		}
+		apkgoHome = filepath.Join(home, ".apkgo")
+
+		if err := os.MkdirAll(apkgoHome, 0755); err != nil {
+			log.Fatalf("%s 目录不可读写，请重新设置环境变量 APKGO_HOME", apkgoHome)
+			return
+		}
+
+		cfgFilePath = filepath.Join(apkgoHome, ".config.json")
+	}
 }

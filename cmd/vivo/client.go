@@ -2,7 +2,6 @@ package vivo
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/KevinGong2013/apkgo/cmd/utils"
@@ -74,8 +73,8 @@ func (c *Client) upload(method, packageName, apkFilepath string) (*appInfoRespon
 		return nil, err
 	}
 
-	if r.Code != 0 || len(r.Message) > 0 {
-		return nil, errors.New(r.Message)
+	if r.Code != 0 {
+		return nil, fmt.Errorf("%d %s", r.Code, r.Message)
 	}
 
 	if r.Data == nil {
@@ -137,7 +136,7 @@ func (c *Client) update(method string, req updateAppRequest, additions map[strin
 type appInfoResponse struct {
 	PackageName  string `json:"packageName"`
 	SerialNumber string `json:"serialnumber"`
-	VersionCode  int    `json:"versionCode"`
+	VersionCode  string `json:"versionCode"`
 	VersionName  string `json:"versionName"`
 	FileMd5      string `json:"fileMd5"`
 }

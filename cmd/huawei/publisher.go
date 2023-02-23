@@ -23,7 +23,9 @@ func (c *Client) Do(req shared.PublishRequest) error {
 		return err
 	}
 
-	// 需要3分钟后再尝试提交审核
+	// 需要2分钟后再尝试提交审核
+	// 软件包采用异步解析方式，请您在传包后等候2分钟再调用提交发布接口。
+	time.Sleep(time.Minute * 2)
 
 	// 提交发布
 	// 1分钟执行执行一次
@@ -39,7 +41,7 @@ func (c *Client) Do(req shared.PublishRequest) error {
 		}
 
 		if times >= 10 {
-			return fmt.Errorf("失败太多次了，请前往华为后台检查")
+			return fmt.Errorf("apk上传成功但提交审核失败，请前往华为后台手动提交发布。https://developer.huawei.com/consumer/cn/console#/serviceCards/")
 		}
 
 		times++
