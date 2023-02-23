@@ -68,6 +68,6 @@ func init() {
 			return
 		}
 
-		cfgFilePath = filepath.Join(apkgoHome, ".config.json")
+		cfgFilePath = filepath.Join(apkgoHome, "config.json")
 	}
 }

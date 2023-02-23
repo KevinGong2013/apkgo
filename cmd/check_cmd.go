@@ -19,7 +19,7 @@ import (
 
 var checkCommand = &cobra.Command{
 	Use:   "check",
-	Short: "预检查各个平台的授权信息",
+	Short: "预检查各个平台的授权信息 [todo]",
 	Run:   runCheck,
 }
 

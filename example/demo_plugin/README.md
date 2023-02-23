@@ -6,4 +6,4 @@
 
 其次在main方法中server你的Publisher协议
 
-最后前往 `.apkgo.json` 添加你的插件
+最后前往 `$APKGO_HOME/config.json` 添加你的插件
