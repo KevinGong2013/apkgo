@@ -25,7 +25,7 @@ func runCheck(cmd *cobra.Command, args []string) {
 
 	for _, publisher := range publishers {
 		if p, ok := publisher.(shared.Checker); ok {
-			p.CheckAuth(false)
+			p.CheckAuth(true)
 		}
 	}
 }
