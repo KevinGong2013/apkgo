@@ -25,10 +25,14 @@ brew install kevingong2013/tap/apkgo
 - [华为](https://developer.huawei.com/consumer/cn/doc/development/AppGallery-connect-Guides/agcapi-getstarted-0000001111845114)
 - [小米](https://dev.mi.com/distribute/doc/details?pId=1134)
 - [vivo](https://dev.vivo.com.cn/documentCenter/doc/327)
-- OPPO(vivo审核通过15分钟后会自动同步)
+- [OPPO](https://open.oppomobile.com/new/ecological/app)
 - [pyger](https://www.pgyer.com/doc/view/api#fastUploadApp)
 - [fir.im](https://www.betaqr.com/docs/publish)
 - [自定义内部服务](./docs/plugin.md)
+
+- 百度移动(TODO)
+- 腾讯应用宝(TODO)
+- 骑虎360(TODO)
 
 > 请注意`apkgo`解决的是应用更新的问题，如果你是第一次发布，请前往对应商店的管理后台手动操作。
 
