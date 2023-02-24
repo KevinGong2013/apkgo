@@ -14,7 +14,7 @@ func TestDo(t *testing.T) {
 	releaseNots = "1. 提升稳定性\n2.优化性能"
 	file = "/Users/gix/Documents/GitHub/apkgo/app-release.apk"
 
-	initialPublishers()
+	initialPublishers(false)
 
 	req := assemblePublishRequest()
 

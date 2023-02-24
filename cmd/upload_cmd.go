@@ -17,15 +17,14 @@ package cmd
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/KevinGong2013/apkgo/cmd/notifiers"
+	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/shogo82148/androidbinary/apk"
@@ -37,9 +36,6 @@ var uploadCmd = &cobra.Command{
 	Use:   "upload",
 	Short: "上传apk到指定应用商店",
 	Args: func(cmd *cobra.Command, args []string) error {
-
-		initConfig()
-
 		// 确认apk文件不能为空且
 		if len(file) == 0 && len(file32) == 0 && len(file64) == 0 {
 			return errors.New("待上传apk文件不能为空")
@@ -99,33 +95,6 @@ type Config struct {
 
 var cfgFilePath string
 
-func initConfig() {
-
-	fmt.Println(text.FgMagenta.Sprintf("Reading config: %s", cfgFilePath))
-
-	// 读取config文件
-	cfgFileBytes, err := os.ReadFile(cfgFilePath)
-	if err != nil {
-		fmt.Println(text.FgRed.Sprint(err.Error()))
-		os.Exit(1)
-		return
-	}
-
-	// 解析config文件
-	if err = json.Unmarshal(cfgFileBytes, &config); err != nil {
-		fmt.Println(text.FgRed.Sprintf("Config文件解析失败 %s", err.Error()))
-		os.Exit(2)
-		return
-	}
-
-	// 判断配置是否正确
-	if len(config.Publishers) == 0 {
-		fmt.Println(text.FgYellow.Sprint("没有可用store"))
-		os.Exit(3)
-	}
-
-}
-
 func init() {
 
 	rootCmd.AddCommand(uploadCmd)
@@ -164,8 +133,8 @@ func runUpload(cmd *cobra.Command, args []string) {
 	defer func() {
 		// 清理一些需要关闭的publisher
 		for _, p := range publishers {
-			if c, ok := p.(io.Closer); ok {
-				if err := c.Close(); err != nil {
+			if post, ok := p.(shared.PostPublish); ok {
+				if err := post.PostDo(); err != nil {
 					fmt.Println(text.FgRed.Sprintf("清理资源出错. %s", err.Error()))
 				}
 			}
@@ -230,7 +199,7 @@ func runUpload(cmd *cobra.Command, args []string) {
 	}
 
 	// 初始化所有商店的 Publisher
-	if err := initialPublishers(); err != nil {
+	if err := initialPublishers(true); err != nil {
 		fmt.Printf("%s\n", text.FgRed.Sprintf("初始化应用商店上传组件失败 err: %s", err.Error()))
 		os.Exit(5)
 	}

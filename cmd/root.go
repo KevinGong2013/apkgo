@@ -16,6 +16,8 @@ limitations under the License.
 package cmd
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -69,5 +71,47 @@ func init() {
 		}
 
 		cfgFilePath = filepath.Join(apkgoHome, "config.json")
+
+		if _, err := os.Stat(cfgFilePath); errors.Is(err, os.ErrNotExist) {
+			t := map[string]interface{}{
+				"stores": map[string]interface{}{
+					"oppo": map[string]string{},
+				},
+				"notifiers": map[string]interface{}{
+					"webhookd": []string{"yours"},
+				},
+			}
+			bytes, _ := json.MarshalIndent(t, "", " ")
+			os.WriteFile(cfgFilePath, bytes, 0755)
+		}
 	}
+
+	initConfig()
+}
+
+func initConfig() {
+
+	fmt.Println(text.FgMagenta.Sprintf("Reading config: %s", cfgFilePath))
+
+	// 读取config文件
+	cfgFileBytes, err := os.ReadFile(cfgFilePath)
+	if err != nil {
+		fmt.Println(text.FgRed.Sprint(err.Error()))
+		os.Exit(1)
+		return
+	}
+
+	// 解析config文件
+	if err = json.Unmarshal(cfgFileBytes, &config); err != nil {
+		fmt.Println(text.FgRed.Sprintf("Config文件解析失败 %s", err.Error()))
+		os.Exit(2)
+		return
+	}
+
+	// 判断配置是否正确
+	if len(config.Publishers) == 0 {
+		fmt.Println(text.FgYellow.Sprint("没有可用store"))
+		os.Exit(3)
+	}
+
 }

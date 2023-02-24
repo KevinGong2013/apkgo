@@ -30,6 +30,18 @@ type Publisher interface {
 	Name() string
 }
 
+type Checker interface {
+	CheckAuth(reAuth bool) error
+}
+
+type PrePublish interface {
+	PreDo(req PublishRequest) error
+}
+
+type PostPublish interface {
+	PostDo() error
+}
+
 // /////////////////////////
 
 type PublisherPlugin struct {

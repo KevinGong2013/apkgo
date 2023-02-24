@@ -5,17 +5,11 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/KevinGong2013/apkgo/cmd/fir"
-	"github.com/KevinGong2013/apkgo/cmd/huawei"
 	"github.com/KevinGong2013/apkgo/cmd/notifiers"
-	"github.com/KevinGong2013/apkgo/cmd/pgyer"
 	"github.com/KevinGong2013/apkgo/cmd/shared"
-	"github.com/KevinGong2013/apkgo/cmd/vivo"
-	"github.com/KevinGong2013/apkgo/cmd/xiaomi"
 	"github.com/shogo82148/androidbinary/apk"
 
 	"github.com/jedib0t/go-pretty/v6/progress"
@@ -56,61 +50,6 @@ func assemblePublishRequest() shared.PublishRequest {
 	}
 
 	return req
-}
-
-func initialPublishers() error {
-	for _, k := range stores {
-		v := config.Publishers[k]
-		switch k {
-		case "xiaomi":
-			xm, err := xiaomi.NewClient(v["username"], v["private_key"])
-			if err != nil {
-				return err
-			}
-			publishers[k] = xm
-		case "vivo":
-			vv, err := vivo.NewClient(v["access_key"], v["access_secret"])
-			if err != nil {
-				return err
-			}
-			publishers[k] = vv
-		case "huawei":
-			hw, err := huawei.NewClient(v["client_id"], v["client_secret"])
-			if err != nil {
-				return err
-			}
-			publishers[k] = hw
-		case "pgyer":
-			publishers[k] = pgyer.NewClient(v["api_key"])
-		case "fir":
-			publishers[k] = fir.NewClient(v["api_token"])
-		default:
-			// 看看是不是支持的plugin
-			if v["magic_cookie_key"] != "" && v["magic_cookie_value"] != "" {
-
-				version, err := strconv.Atoi(v["version"])
-				if err != nil {
-					return err
-				}
-
-				p, err := NewPluginPublisher(&PluginConfig{
-					Name:             k,
-					Path:             v["path"],
-					ProtocolVersion:  uint(version),
-					MagicCookieKey:   v["magic_cookie_key"],
-					MagicCookieValue: v["magic_cookie_value"],
-				})
-				if err != nil {
-					return nil
-				}
-				publishers[k] = p
-			} else {
-				return fmt.Errorf("unsupported market. [%s]", k)
-			}
-		}
-	}
-
-	return nil
 }
 
 func publish(req shared.PublishRequest) map[string]string {

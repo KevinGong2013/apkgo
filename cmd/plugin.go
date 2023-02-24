@@ -71,7 +71,7 @@ func (pp *PluginPublisher) Do(req shared.PublishRequest) error {
 	return pp.publisher.Do(req)
 }
 
-func (pp *PluginPublisher) Close() error {
+func (pp *PluginPublisher) PostDo() error {
 	pp.plugin.Kill()
 	return nil
 }
