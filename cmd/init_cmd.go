@@ -70,6 +70,8 @@ func runInit(cmd *cobra.Command, args []string) {
 		if clean {
 			os.Remove(filepath.Join(apkgoHome, ConfigFileName))
 			os.RemoveAll(filepath.Join(apkgoHome, SecretDirName))
+		} else {
+			os.Exit(0)
 		}
 	}
 
@@ -125,7 +127,12 @@ func runInit(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Println(text.FgGreen.Sprint("apkgo 初始化完成🚀🚀"))
+	fmt.Println(text.FgGreen.Sprint("apkgo 初始化完成🚀🚀 \n"))
+
+	fmt.Println("\n接下来: ")
+
+	fmt.Println("- 由我来维护各商店的认证信息? 执行[apk store --help]")
+	fmt.Println("- 由我来上传apk? 执行[apk upload --help]")
 }
 
 // "http://git.yuxiaor.com/yuxiaor-mobile/apkgo-conf.git",

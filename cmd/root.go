@@ -74,5 +74,5 @@ func init() {
 }
 
 func initConfig() {
-	fmt.Println(text.FgMagenta.Sprint("export APKGO_HOME=", apkgoHome))
+	fmt.Println(text.FgCyan.Sprint("export APKGO_HOME=", apkgoHome))
 }
