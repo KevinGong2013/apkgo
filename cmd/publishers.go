@@ -57,6 +57,12 @@ func NewChromePublisher(ctx context.Context, store string) (shared.Publisher, er
 }
 
 func initialPublishers(headless bool) error {
+
+	config, err := parseStoreSecretFile()
+	if err != nil {
+		return err
+	}
+
 	for _, k := range stores {
 		v := config.Publishers[k]
 		switch k {

@@ -4,3 +4,4 @@ dist/
 *.apk
 apkgo-cams
 .vscode
+test.yaml

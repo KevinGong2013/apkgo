@@ -7,19 +7,23 @@ import (
 
 func TestDo(t *testing.T) {
 
-	cfgFilePath = "/Users/gix/Documents/GitHub/apkgo/.apkgo.json"
-	initConfig()
+	if err := write(&Config{}); err != nil {
+		fmt.Println(err)
+	}
 
-	stores = []string{"huawei"}
-	releaseNots = "1. 提升稳定性\n2.优化性能"
-	file = "/Users/gix/Documents/GitHub/apkgo/app-release.apk"
+	// cfgFilePath = "/Users/gix/Documents/GitHub/apkgo/.apkgo.json"
+	// initConfig()
 
-	initialPublishers(false)
+	// stores = []string{"huawei"}
+	// releaseNots = "1. 提升稳定性\n2.优化性能"
+	// file = "/Users/gix/Documents/GitHub/apkgo/app-release.apk"
 
-	req := assemblePublishRequest()
+	// initialPublishers(false)
 
-	isDebugMode = false
-	err := notify(req, publish(req))
+	// req := assemblePublishRequest()
 
-	fmt.Println(err)
+	// isDebugMode = false
+	// err := notify(nil, req, publish(req))
+
+	// fmt.Println(err)
 }

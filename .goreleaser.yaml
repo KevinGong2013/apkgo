@@ -61,8 +61,6 @@ brews:
     commit_author:
       name: Kevin.Gong
       email: aoxianglele@cloud.com
-    dependencies:
-      - name: git
     install: |-
       bin.install "apkgo"
 dockers:

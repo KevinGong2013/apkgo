@@ -32,6 +32,6 @@ var (
 )
 
 func main() {
-	fmt.Printf("apkgo %s/%s v%s built at %s\n\n", os, arch, version, date)
+	fmt.Printf("apkgo %s/%s v%s built at %s\n", os, arch, version, date)
 	cmd.Execute(release == "true")
 }

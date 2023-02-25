@@ -127,7 +127,7 @@ func trackPublish(pw progress.Writer, publisher shared.Publisher) *progress.Trac
 	return &tracker
 }
 
-func notify(req shared.PublishRequest, result map[string]string) error {
+func notify(config *StoreConfig, req shared.PublishRequest, result map[string]string) error {
 
 	if config.Notifiers.Lark != nil {
 		l := &notifiers.LarkNotifier{

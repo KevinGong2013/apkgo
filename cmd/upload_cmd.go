@@ -36,18 +36,11 @@ var uploadCmd = &cobra.Command{
 	Use:   "upload",
 	Short: "上传apk到指定应用商店",
 	Args: func(cmd *cobra.Command, args []string) error {
-		// 确认apk文件不能为空且
-		if len(file) == 0 && len(file32) == 0 && len(file64) == 0 {
-			return errors.New("待上传apk文件不能为空")
-		}
 
-		// 确认apk文件合法
-		for _, f := range []string{file, file32, file64} {
-			if len(f) > 0 {
-				if err := validateApkFile(f); err != nil {
-					return fmt.Errorf("%s: %s", f, err.Error())
-				}
-			}
+		// 确认apkgo已正确初始化
+		config, err := parseStoreSecretFile()
+		if err != nil {
+			return fmt.Errorf("apkgo未正确初始化,请重新执行`apkgo init` %s", text.FgRed.Sprint(err.Error()))
 		}
 
 		if len(stores) == 1 && stores[0] == "all" {
@@ -61,6 +54,20 @@ var uploadCmd = &cobra.Command{
 		for _, s := range stores {
 			if config.Publishers[s] == nil {
 				return fmt.Errorf("不支持的应用商店. 请检查(%s)是否配置了此商店(%s)授权信息", cfgFilePath, s)
+			}
+		}
+
+		// 确认apk文件不能为空且
+		if len(file) == 0 && len(file32) == 0 && len(file64) == 0 {
+			return errors.New("待上传apk文件不能为空")
+		}
+
+		// 确认apk文件合法
+		for _, f := range []string{file, file32, file64} {
+			if len(f) > 0 {
+				if err := validateApkFile(f); err != nil {
+					return fmt.Errorf("%s: %s", f, err.Error())
+				}
 			}
 		}
 
@@ -79,18 +86,11 @@ var releaseNots string
 
 var disableDoubleCheck bool
 
-var config Config
-
 type Notifiers struct {
 	Lark     *notifiers.LarkNotifier     `json:"lark,omitempty"`
 	DingTalk *notifiers.DingTalkNotifier `json:"dingtalk,omitempty"`
 	WeCom    *notifiers.WeComNotifier    `json:"wecom,omitempty"`
 	WebHook  *notifiers.Webhook          `json:"webhook,omitempty"`
-}
-
-type Config struct {
-	Publishers map[string]map[string]string `json:"stores"`
-	Notifiers  Notifiers                    `json:"notifiers,omitempty"`
 }
 
 var cfgFilePath string
@@ -140,6 +140,13 @@ func runUpload(cmd *cobra.Command, args []string) {
 			}
 		}
 	}()
+
+	config, err := parseStoreSecretFile()
+
+	if err != nil {
+		fmt.Println(text.FgRed.Sprint("解析各应用商店配置文件失败，请重新初始化", err))
+		os.Exit(1)
+	}
 
 	req := assemblePublishRequest()
 
@@ -209,7 +216,7 @@ func runUpload(cmd *cobra.Command, args []string) {
 	result := publish(req)
 
 	// 通知
-	if err := notify(req, result); err != nil {
+	if err := notify(config, req, result); err != nil {
 		fmt.Printf("%s\n", text.FgRed.Sprintf("上传结果通知失败 err: %s", err.Error()))
 		os.Exit(6)
 	}
