@@ -1,15 +1,10 @@
 package cmd
 
 import (
-	"fmt"
 	"testing"
 )
 
 func TestDo(t *testing.T) {
-
-	if err := write(&Config{}); err != nil {
-		fmt.Println(err)
-	}
 
 	// cfgFilePath = "/Users/gix/Documents/GitHub/apkgo/.apkgo.json"
 	// initConfig()

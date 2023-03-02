@@ -38,24 +38,14 @@ var uploadCmd = &cobra.Command{
 	Args: func(cmd *cobra.Command, args []string) error {
 
 		// 确认apkgo已正确初始化
-		config, err := parseStoreSecretFile()
+		_, err := ParseStoreSecretFile(nil)
 		if err != nil {
 			return fmt.Errorf("apkgo未正确初始化,请重新执行`apkgo init` %s", text.FgRed.Sprint(err.Error()))
 		}
 
-		if len(stores) == 1 && stores[0] == "all" {
-			stores = []string{}
-			for k := range config.Publishers {
-				stores = append(stores, k)
-			}
-		}
-
-		// 确认想要上传的store 在配置文件中都存在
-		for _, s := range stores {
-			if config.Publishers[s] == nil {
-				return fmt.Errorf("不支持的应用商店. 请检查(%s)是否配置了此商店(%s)授权信息", cfgFilePath, s)
-			}
-		}
+		file, _ := cmd.Flags().GetString("file")
+		file32, _ := cmd.Flags().GetString("file32")
+		file64, _ := cmd.Flags().GetString("file64")
 
 		// 确认apk文件不能为空且
 		if len(file) == 0 && len(file32) == 0 && len(file64) == 0 {
@@ -76,15 +66,15 @@ var uploadCmd = &cobra.Command{
 	Run: runUpload,
 }
 
-var stores []string
+// var stores []string
 
-var file string
-var file32 string
-var file64 string
+// var file string
+// var file32 string
+// var file64 string
 
-var releaseNots string
+// var releaseNots string
 
-var disableDoubleCheck bool
+// var disableDoubleCheck bool
 
 type Notifiers struct {
 	Lark     *notifiers.LarkNotifier     `json:"lark,omitempty"`
@@ -93,24 +83,19 @@ type Notifiers struct {
 	WebHook  *notifiers.Webhook          `json:"webhook,omitempty"`
 }
 
-var cfgFilePath string
-
 func init() {
 
 	rootCmd.AddCommand(uploadCmd)
 
-	// 配置文件
-	uploadCmd.Flags().StringVarP(&cfgFilePath, "config", "c", "", "config file (default is $HOME/.apkgo.json)")
-
 	// 需要上传到哪些商店
-	uploadCmd.Flags().StringSliceVarP(&stores, "store", "s", []string{}, "需要上传到哪些商店。 [-s all] 上传到配置文件中的所有商店")
+	uploadCmd.Flags().StringSliceP("store", "s", []string{}, "需要上传到哪些商店。 [-s all] 上传到配置文件中的所有商店")
 	uploadCmd.MarkFlagRequired("store")
 
 	// apk 文件
-	uploadCmd.Flags().StringVarP(&file, "file", "f", "", "单包apk文件路径")
+	uploadCmd.Flags().StringP("file", "f", "", "单包apk文件路径")
 
-	uploadCmd.Flags().StringVarP(&file32, "file32", "", "", "32位apk文件路径 注意：如果采用分包上传则 file32 和 file64都必须指定文件")
-	uploadCmd.Flags().StringVarP(&file64, "file64", "", "", "64位apk文件路径 注意：如果采用分包上传则 file32 和 file64都必须指定文件")
+	uploadCmd.Flags().StringP("file32", "", "", "32位apk文件路径 注意：如果采用分包上传则 file32 和 file64都必须指定文件")
+	uploadCmd.Flags().StringP("file64", "", "", "64位apk文件路径 注意：如果采用分包上传则 file32 和 file64都必须指定文件")
 
 	// 如果分包，不能同时传单包和32位
 	uploadCmd.MarkFlagsMutuallyExclusive("file", "file32")
@@ -121,34 +106,24 @@ func init() {
 	uploadCmd.MarkFlagsRequiredTogether("file32", "file64")
 
 	// 更新日志
-	uploadCmd.Flags().StringVarP(&releaseNots, "release-notes", "n", "性能优化、提升稳定性", "更新日志")
+	uploadCmd.Flags().StringP("release-notes", "n", "性能优化、提升稳定性", "更新日志")
 
 	// 是否需要禁用二次确认
-	uploadCmd.Flags().BoolVar(&disableDoubleCheck, "disable-double-confirmation", false, "取消二次确认")
+	uploadCmd.Flags().Bool("disable-double-confirmation", false, "取消二次确认")
 
 }
 
 func runUpload(cmd *cobra.Command, args []string) {
 
-	defer func() {
-		// 清理一些需要关闭的publisher
-		for _, p := range publishers {
-			if post, ok := p.(shared.PostPublish); ok {
-				if err := post.PostDo(); err != nil {
-					fmt.Println(text.FgRed.Sprintf("清理资源出错. %s", err.Error()))
-				}
-			}
-		}
-	}()
-
-	config, err := parseStoreSecretFile()
+	stores, _ := cmd.Flags().GetStringSlice("stores")
+	config, err := ParseStoreSecretFile(stores)
 
 	if err != nil {
 		fmt.Println(text.FgRed.Sprint("解析各应用商店配置文件失败，请重新初始化", err))
 		os.Exit(1)
 	}
 
-	req := assemblePublishRequest()
+	req := assemblePublishRequest(cmd)
 
 	fmt.Println()
 	t := table.NewWriter()
@@ -166,13 +141,13 @@ func runUpload(cmd *cobra.Command, args []string) {
 	if config.Notifiers.Lark != nil {
 		ns = append(ns, "飞书")
 	}
-	if config.Notifiers.DingTalk != nil {
+	if config.Notifiers.Dingtalk != nil {
 		ns = append(ns, "钉钉")
 	}
-	if config.Notifiers.WeCom != nil {
+	if config.Notifiers.Wecom != nil {
 		ns = append(ns, "企业微信")
 	}
-	if config.Notifiers.WebHook != nil {
+	if config.Notifiers.Webhook != nil {
 		ns = append(ns, "WebHook")
 	}
 	if len(ns) > 0 {
@@ -185,6 +160,7 @@ func runUpload(cmd *cobra.Command, args []string) {
 	t.Render()
 
 	// 是否需要二次确认
+	disableDoubleCheck, _ := cmd.Flags().GetBool("disable-double-confirmation")
 	if !disableDoubleCheck {
 		for {
 			reader := bufio.NewReader(os.Stdin)
@@ -206,14 +182,28 @@ func runUpload(cmd *cobra.Command, args []string) {
 	}
 
 	// 初始化所有商店的 Publisher
-	if err := initialPublishers(true); err != nil {
+	curls, browsers, plugins, err := InitPublishers(config, false)
+	if err != nil {
 		fmt.Printf("%s\n", text.FgRed.Sprintf("初始化应用商店上传组件失败 err: %s", err.Error()))
 		os.Exit(5)
 	}
 
+	publishers := append(append(curls, browsers...), plugins...)
+
+	defer func() {
+		// 清理一些需要关闭的publisher
+		for _, p := range publishers {
+			if post, ok := p.(shared.PostPublish); ok {
+				if err := post.PostDo(); err != nil {
+					fmt.Println(text.FgRed.Sprintf("清理资源出错. %s", err.Error()))
+				}
+			}
+		}
+	}()
+
 	// 开始上传
 	fmt.Println()
-	result := publish(req)
+	result := publish(req, publishers)
 
 	// 通知
 	if err := notify(config, req, result); err != nil {

@@ -21,17 +21,18 @@ type Config struct {
 type Storage struct {
 	isLocal         bool
 	gitCloneOptions git.CloneOptions
+	path            string
 }
 
-func New(c Config) (*Storage, error) {
+func New(c Config, path string) (*Storage, error) {
 	switch c.Location {
 	case "local":
 		return &Storage{
 			isLocal: true,
+			path:    path,
 		}, nil
 	case "git":
 		var auth transport.AuthMethod
-		fmt.Println(c.Key)
 		if len(c.Key) > 0 {
 			publicKey, err := ssh.NewPublicKeysFromFile("git", c.Key, c.Password)
 			if err != nil {
@@ -44,8 +45,10 @@ func New(c Config) (*Storage, error) {
 				Password: c.Password,
 			}
 		}
+		fmt.Println(auth)
 		return &Storage{
 			isLocal: false,
+			path:    path,
 			gitCloneOptions: git.CloneOptions{
 				URL:             c.URL,
 				Auth:            auth,
@@ -61,16 +64,40 @@ func New(c Config) (*Storage, error) {
 	}
 }
 
-func (s *Storage) Mkdir(path string) error {
+// 第一次
+func (s *Storage) EnsureDir() error {
+
 	if s.isLocal {
-		return os.MkdirAll(path, 0755)
+		return os.MkdirAll(s.path, 0755)
 	}
 
 	// 没有git仓库需要去clone
-	_, err := git.PlainClone(path, false, &s.gitCloneOptions)
+	os.RemoveAll(s.path)
+	_, err := git.PlainClone(s.path, false, &s.gitCloneOptions)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (s *Storage) UpToDate() error {
+	if s.isLocal {
+		return nil
+	}
+
+	if err := s.upToDateIfLocalClean(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// 推送本地的授权信息
+func (s *Storage) Sync() error {
+	if s.isLocal {
+		return nil
+	}
+
+	return s.commitAndPushLocalChanges()
 }

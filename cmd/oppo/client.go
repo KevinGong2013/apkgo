@@ -1,24 +1,42 @@
 package oppo
 
 import (
-	"context"
-	"log"
-
 	"github.com/KevinGong2013/apkgo/cmd/shared"
-	"github.com/chromedp/chromedp"
+	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
 )
 
 type Client struct {
-	ctx    context.Context
-	cancel context.CancelFunc
+	page *rod.Page
 }
 
-func NewClient(ctx context.Context) (*Client, error) {
-	taskCtx, cancel := chromedp.NewContext(ctx, chromedp.WithLogf(log.Printf))
+func NewClient(dir string) (*Client, error) {
+	u, err := launcher.New().
+		UserDataDir(dir).
+		ProfileDir("apkgo").
+		Headless(false).
+		Set("disable-gpu").
+		Set("disable-features", "OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints").
+		Launch()
+	if err != nil {
+		return nil, err
+	}
 
+	b := rod.New().ControlURL(u)
+
+	if err := b.Connect(); err != nil {
+		return nil, err
+	}
+
+	page, err := b.Page(proto.TargetCreateTarget{
+		URL: "https://open.oppomobile.com/new/ecological/app",
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &Client{
-		ctx:    taskCtx,
-		cancel: cancel,
+		page: page,
 	}, nil
 }
 
@@ -35,6 +53,10 @@ func (c *Client) Do(req shared.PublishRequest) error {
 }
 
 func (c *Client) PostDo() error {
-	c.cancel()
-	return nil
+
+	if err := c.page.Close(); err != nil {
+		return err
+	}
+
+	return c.page.Browser().Close()
 }

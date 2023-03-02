@@ -1,156 +1,154 @@
 package oppo
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
-	"strings"
+	"time"
 
 	"github.com/KevinGong2013/apkgo/cmd/shared"
-	"github.com/KevinGong2013/apkgo/cmd/utils"
-	"github.com/chromedp/cdproto/cdp"
-	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/cdproto/runtime"
-	"github.com/chromedp/chromedp"
+	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/proto"
+	"github.com/ysmood/gson"
+	"golang.org/x/net/context"
 )
+
+func (c *Client) waitParseAPK() error {
+	router := c.page.HijackRequests()
+	defer router.MustStop()
+
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Minute*5)
+	ch := make(chan *verifyInfoResponse)
+
+	router.MustAdd("*/verify-info.json*", func(ctx *rod.Hijack) {
+		// 必不可少的
+		ctx.MustLoadResponse()
+		resp := new(verifyInfoResponse)
+		fmt.Println(ctx.Response.Body())
+		if err := json.Unmarshal([]byte(ctx.Response.Body()), resp); err != nil {
+			fmt.Printf("unmarshal err %s", err.Error())
+			return
+		}
+		ch <- resp
+	})
+
+	go router.Run()
+
+	for {
+		select {
+		case r := <-ch:
+			if r.Errno == 0 {
+				cancel()
+				return nil
+			} else if r.Errno == 911046 {
+				cancel()
+				return errors.New(r.Data.Message)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
 
 func (c *Client) do(req shared.PublishRequest) error {
 
-	taskCtx := c.ctx
+	js := `async function postData() {
+	var formData = new FormData()
+	formData.append('type', 0)
+	formData.append('limit', 100)
+	formData.append('offset', 0)
+	const response = await fetch('https://open.oppomobile.com/resource/list/index.json', {
+		method: 'POST',
+		body: formData
+	})
+	return response.text()
+}`
 
-	js := `
-async function postData(data = {}) {
-  const response = await fetch('https://open.oppomobile.com/resource/list/index.json', {
-    method: 'POST',
-	body: data
-  });
-  return response.text();
-}; 
-
-let formData = new FormData();
-formData.append('type', 0);
-formData.append('limit', 100);
-formData.append('offset', 0);
-formData.append('app_name', '寓小二公寓版');
-
-postData(formData)`
-	var response string
-	if err := chromedp.Run(taskCtx,
-		chromedp.Evaluate(js, &response, func(ep *runtime.EvaluateParams) *runtime.EvaluateParams {
-			return ep.WithAwaitPromise(true)
-		}),
-	); err != nil {
-		log.Fatal(err)
-	}
-
-	var indexResponse IndexResponse
-
-	if err := json.Unmarshal([]byte(response), &indexResponse); err != nil {
-		log.Fatalf("unmarshal json failed %s", err.Error())
+	obj, err := c.page.Evaluate(&rod.EvalOptions{
+		ByValue:      true,
+		AwaitPromise: true,
+		JS:           js,
+		UserGesture:  true,
+	})
+	if err != nil {
+		fmt.Println(err)
 		return err
 	}
 
-	var app App
+	r := gson.NewFrom(obj.Value.Str())
 
-	for _, r := range indexResponse.Data.Apps {
-		if r.PkgName == "com.yuxiaor" {
-			app = r
+	errno := r.Get("errno").Int()
+	if errno != 0 {
+		return fmt.Errorf("auth failed. %s", r.Raw())
+	}
+
+	var appid string
+	for _, row := range r.Get("data").Get("rows").Arr() {
+		if row.Get("pkg_name").Str() == req.PackageName {
+			appid = row.Get("app_id").Str()
 			break
 		}
 	}
-	if len(app.PkgName) == 0 {
-		// 找不到app
-		return errors.New("not found")
+
+	if len(appid) == 0 {
+		return fmt.Errorf("unsupported package. %s", req.PackageName)
 	}
 
-	// 做一些版本处理
-	if err := chromedp.Run(taskCtx,
-		chromedp.Navigate(fmt.Sprintf("https://open.oppomobile.com/new/mcom#/home/management/app-admin#/resource/update/index?app_id=%s&is_gray=2", app.AppID)),
-	); err != nil {
-		log.Fatal(err)
-	}
+	c.page.Navigate(fmt.Sprintf("https://open.oppomobile.com/new/mcom#/home/management/app-admin#/resource/update/index?app_id=%s&is_gray=2", appid))
 
-	chromedp.Run(taskCtx,
-		utils.RunWithTimeOut(&taskCtx, 3, chromedp.Tasks{
-			chromedp.Click(`button[class="btn yes"]`),
-		}),
-	)
+	iframe := c.page.MustElement(`iframe[id="menu_service_main_iframe"]`).MustFrame()
 
-	var iframes []*cdp.Node
-	if err := chromedp.Run(taskCtx, chromedp.Nodes(`iframe[id="menu_service_main_iframe"]`, &iframes, chromedp.ByQuery)); err != nil {
-		return err
-	}
-	if len(iframes) == 0 {
-		log.Fatal("no iframe")
-		return errors.New("no iframe")
-	}
-
-	mainIframe := iframes[0]
-
-	ch := make(chan *network.EventResponseReceived)
-	// 监听网络等待文件上传成功
-	chromedp.ListenTarget(taskCtx, func(ev interface{}) {
-		go func() {
-			if res, ok := ev.(*network.EventResponseReceived); ok {
-				ch <- res
-			}
-		}()
-	})
-
-	// 上传文件
-	if err := chromedp.Run(taskCtx,
-		chromedp.SetUploadFiles(`input[type="file"]`, []string{"/Users/gix/Downloads/Yuxiaor_release_9.2.8_9572.apk"}, chromedp.ByQuery, chromedp.FromNode(mainIframe)),
-	); err != nil {
-		log.Fatal(err)
-		return err
-	}
-
-	fmt.Println("upload button ready")
-
-	// 网络
-	for res := range ch {
-		if strings.Contains(res.Response.URL, "resource/parse/verify-info.json") {
-			var respBody []byte
-			if err := chromedp.Run(taskCtx, chromedp.ActionFunc(func(cxt context.Context) error {
-				var err error
-				respBody, err = network.GetResponseBody(res.RequestID).Do(cxt)
-				return err
-			})); err != nil {
-				log.Fatal(err)
-			}
-			var result struct {
-				ErrNo int `json:"errno"`
-			}
-			if err := json.Unmarshal(respBody, &result); err != nil {
-				log.Fatal(err)
-				return err
-			}
-			if result.ErrNo == 0 {
-				break
-			}
+	// 判断一下如果有弹窗，先关掉弹窗
+	time.Sleep(time.Second * 3)
+	exist, noButton, _ := iframe.Has(`#save-the-draft > div > div > div.modal-body > div:nth-child(2) > button.btn.no`)
+	if exist {
+		if err := noButton.Click(proto.InputMouseButtonLeft, 1); err != nil {
+			return err
 		}
 	}
 
-	updateDesc := "提升稳定性、优化性能"
-
-	if err := chromedp.Run(taskCtx,
-		chromedp.SetValue(`textarea[name="update_desc"]`, updateDesc, chromedp.ByQuery, chromedp.FromNode(mainIframe)),
-	); err != nil {
-		log.Fatal(err)
+	textarea, err := iframe.Element(`textarea[name="update_desc"`)
+	if err != nil {
 		return err
 	}
 
-	if err := chromedp.Run(taskCtx,
-		chromedp.Click(`//*[@id="auditphasedbuttonclick"]`),
-	); err != nil {
-		log.Fatal(err)
+	// 上传文件
+	fmt.Println("上传apk包完成， 等待解析")
+	fileUploader, err := iframe.Element(`input[type="file"]`)
+	if err != nil {
+		return err
+	}
+	if err := fileUploader.SetFiles([]string{req.ApkFile}); err != nil {
 		return err
 	}
 
-	fmt.Println("publish")
+	err = c.waitParseAPK()
+	if err != nil {
+		return err
+	}
 
-	// 尝试发布
+	// 全选文字
+	if err := textarea.SelectAllText(); err != nil {
+		return err
+	}
+
+	// 填写更新说明
+	//
+	fmt.Println("填写更新日志")
+	if err := textarea.Input(req.UpdateDesc); err != nil {
+		return err
+	}
+
+	btn, err := iframe.Element(`#auditphasedbuttonclick`)
+	if err != nil {
+		return err
+	}
+
+	if err := btn.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return err
+	}
+
+	fmt.Printf("done. ")
+
 	return nil
 }

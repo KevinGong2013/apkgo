@@ -11,15 +11,21 @@ import (
 	"github.com/KevinGong2013/apkgo/cmd/notifiers"
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/shogo82148/androidbinary/apk"
+	"github.com/spf13/cobra"
 
 	"github.com/jedib0t/go-pretty/v6/progress"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 )
 
-var publishers = make(map[string]shared.Publisher)
+func assemblePublishRequest(cmd *cobra.Command) shared.PublishRequest {
 
-func assemblePublishRequest() shared.PublishRequest {
+	file, _ := cmd.Flags().GetString("file")
+	file32, _ := cmd.Flags().GetString("file32")
+	file64, _ := cmd.Flags().GetString("file64")
+	stores, _ := cmd.Flags().GetStringSlice("stores")
+	releaseNots, _ := cmd.Flags().GetString("release-notes")
+
 	apkFile := file
 	splitPackage := false
 	if len(apkFile) == 0 {
@@ -52,13 +58,13 @@ func assemblePublishRequest() shared.PublishRequest {
 	return req
 }
 
-func publish(req shared.PublishRequest) map[string]string {
+func publish(req shared.PublishRequest, ps []shared.Publisher) map[string]string {
 
 	pw := progress.NewWriter()
 	pw.SetAutoStop(true)
 	pw.SetMessageWidth(24)
 	pw.SetTrackerLength(25)
-	pw.SetNumTrackersExpected(len(publishers))
+	pw.SetNumTrackersExpected(len(ps))
 	pw.SetSortBy(progress.SortByNone)
 	pw.SetStyle(progress.StyleDefault)
 	pw.SetTrackerPosition(progress.PositionRight)
@@ -85,14 +91,11 @@ func publish(req shared.PublishRequest) map[string]string {
 
 	result := make(map[string]string)
 
-	for k := range publishers {
-		p := publishers[k]
+	for k := range ps {
+		p := ps[k]
 		name := p.Name()
 		go func() {
 			tracker := trackPublish(pw, p)
-			if isDebugMode {
-				p = newMockPublisher(p)
-			}
 			err := p.Do(req)
 
 			if err == nil {
@@ -139,27 +142,27 @@ func notify(config *StoreConfig, req shared.PublishRequest, result map[string]st
 		}
 	}
 
-	if config.Notifiers.DingTalk != nil {
+	if config.Notifiers.Dingtalk != nil {
 		dt := notifiers.DingTalkNotifier{
-			AccessToken: config.Notifiers.DingTalk.AccessToken,
-			SecretToken: config.Notifiers.DingTalk.SecretToken,
+			AccessToken: config.Notifiers.Dingtalk.AccessToken,
+			SecretToken: config.Notifiers.Dingtalk.SecretToken,
 		}
 		if err := dt.Notify(dt.BuildAppPubishedMessage(req, result)); err != nil {
 			return err
 		}
 	}
 
-	if config.Notifiers.WeCom != nil {
+	if config.Notifiers.Wecom != nil {
 		w := notifiers.WeComNotifier{
-			Key: config.Notifiers.WeCom.Key,
+			Key: config.Notifiers.Wecom.Key,
 		}
 		if err := w.Notify(w.BuildAppPubishedMessage(req, result)); err != nil {
 			return err
 		}
 	}
 
-	if config.Notifiers.WebHook != nil {
-		w := notifiers.Webhook{Url: config.Notifiers.WebHook.Url}
+	if config.Notifiers.Webhook != nil {
+		w := notifiers.Webhook{Url: config.Notifiers.Webhook.Url}
 		if err := w.Notify(req, result); err != nil {
 			return err
 		}
@@ -170,17 +173,13 @@ func notify(config *StoreConfig, req shared.PublishRequest, result map[string]st
 
 // 一下代码主要是测试的时候使用
 type mockPublisher struct {
-	real shared.Publisher
-}
-
-func newMockPublisher(r shared.Publisher) *mockPublisher {
-	return &mockPublisher{
-		real: r,
-	}
+	name   string
+	key    string
+	secret string
 }
 
 func (mp *mockPublisher) Name() string {
-	return "mock-" + mp.real.Name()
+	return fmt.Sprintf("%s key: %s secret: %s", mp.name, mp.key, mp.secret)
 }
 
 func (mp *mockPublisher) Do(req shared.PublishRequest) error {

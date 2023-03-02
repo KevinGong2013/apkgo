@@ -3,18 +3,24 @@ package storage
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/transport/http"
 )
 
 func Download() error {
 	return nil
 }
 
-func ensureRepoCleanAndUpToDate(repo *git.Repository) error {
+func (s *Storage) upToDateIfLocalClean() error {
+
+	repo, err := git.PlainOpen(s.path)
+	if err != nil {
+		return err
+	}
+
 	// Get the working tree
 	wt, err := repo.Worktree()
 	if err != nil {
@@ -29,57 +35,63 @@ func ensureRepoCleanAndUpToDate(repo *git.Repository) error {
 		return err
 	}
 
-	if !status.IsClean() {
-		fmt.Fprintf(os.Stderr, "error: repository has uncommitted changes\n")
-		return err
-	}
+	if status.IsClean() {
+		// Pull the latest changes
+		err = wt.Pull(&git.PullOptions{
+			RemoteName: s.gitCloneOptions.RemoteName,
+			Progress:   os.Stdout,
+			Auth:       s.gitCloneOptions.Auth,
+		})
 
-	// Pull the latest changes
-	err = wt.Pull(&git.PullOptions{
-		RemoteName: "origin",
-		Progress:   os.Stdout,
-		Auth:       &http.BasicAuth{Username: "kevin", Password: "aoxianglele"},
-	})
-
-	if err != nil {
-		if err == git.NoErrAlreadyUpToDate {
-			fmt.Println("Repository is already up-to-date.")
-		} else {
-			fmt.Fprintf(os.Stderr, "error: %s\n", err)
-			return err
+		if err != nil {
+			if err == git.NoErrAlreadyUpToDate {
+				fmt.Println("Already up to date.")
+				return nil
+			} else {
+				fmt.Fprintf(os.Stderr, "error: %s\n", err)
+				return err
+			}
 		}
 	}
 
-	// Get the latest commit hash
+	fmt.Println("本地认证信息修改，不能自动同步远程认证信息")
+
 	return nil
 }
 
-func commitAndPushLocalChanges(repo *git.Repository) error {
+func (s *Storage) commitAndPushLocalChanges() error {
+
+	repo, err := git.PlainOpen(s.path)
+	if err != nil {
+		return err
+	}
 
 	// Get the working tree
 	wt, err := repo.Worktree()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	// Add the changes to the index
 	_, err = wt.Add(".")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	// Commit the changes
-	commit, err := wt.Commit("Update apkgo secrets", &git.CommitOptions{
+	commit, err := wt.Commit("Refresh store secrets", &git.CommitOptions{
 		Author: &object.Signature{
-			Name:  "Your Name",
-			Email: "your-email@example.com",
+			Name:  "apkgo",
+			Email: "support@apkgo.com.cn",
+			When:  time.Now(),
 		},
+		All: true,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	// Print the commit hash
@@ -91,11 +103,11 @@ func commitAndPushLocalChanges(repo *git.Repository) error {
 		RefSpecs: []config.RefSpec{
 			config.RefSpec("refs/heads/master:refs/heads/master"),
 		},
-		Auth: nil,
+		Auth: s.gitCloneOptions.Auth,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	fmt.Println("Changes pushed successfully")

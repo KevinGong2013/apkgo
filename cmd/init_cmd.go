@@ -24,22 +24,31 @@ var initCommand = &cobra.Command{
 
 func init() {
 
+	initCommand.Flags().Bool("local", false, "单机使用，不初始化团队合作配置")
+	initCommand.Flags().String("git", "", "存储认证信息的repo 例如: https://github.com/KevinGong2013/apkgo-conf-repo.git")
+	initCommand.MarkFlagsMutuallyExclusive("local", "git")
+
+	initCommand.Flags().String("username", "", "git仓库登陆用户名")
+	initCommand.Flags().String("private-key", "", "git仓库使用的私钥路径")
+	initCommand.Flags().String("password", "", "git登陆密码或者私钥的密码")
+
+	initCommand.MarkFlagsRequiredTogether("username", "password")
+	initCommand.MarkFlagsMutuallyExclusive("username", "private-key")
+
 	rootCmd.AddCommand(initCommand)
 }
 
 type Config struct {
 	Storage storage.Config `yaml:"storage"`
 	Plugins []struct {
-		Name   string `yaml:"name"`
-		Path   string `yaml:"path"`
-		Author string `yaml:"author"`
-		Repo   string `yaml:"repo"`
+		Name string `yaml:"name"`
+		Path string `yaml:"path"`
 	} `yaml:"plugins,omitempty"`
 }
 
 func LoadConfig() (*Config, error) {
 	// Read the YAML file
-	data, err := os.ReadFile(filepath.Join(apkgoHome, "config.yaml"))
+	data, err := os.ReadFile(configFilePath())
 	if err != nil {
 		return nil, err
 	}
@@ -60,20 +69,150 @@ func runInit(cmd *cobra.Command, args []string) {
 	if c == nil {
 		c = &Config{}
 	}
-	if len(c.Storage.Location) > 0 {
-		clean := false
-		prompt := &survey.Confirm{
-			Message: "配置文件已存在，是否重新初始化？",
-		}
-		handleExit(survey.AskOne(prompt, &clean))
 
-		if clean {
-			os.Remove(filepath.Join(apkgoHome, ConfigFileName))
-			os.RemoveAll(filepath.Join(apkgoHome, SecretDirName))
+	sc := c.Storage
+	// 判断有没有参数， 如果有参数就直接想办法重写掉
+	if local, err := cmd.Flags().GetBool("local"); err == nil && local {
+		sc = storage.Config{
+			Location: "local",
+		}
+	} else {
+		//
+		git, _ := cmd.Flags().GetString("git")
+		if len(git) > 0 {
+			username, _ := cmd.Flags().GetString("git-username")
+			privateKey, _ := cmd.Flags().GetString("git-private-key")
+			password, _ := cmd.Flags().GetString("git-password")
+
+			sc = storage.Config{
+				Location: "git",
+				URL:      git,
+				Username: username,
+				Password: password,
+				Key:      privateKey,
+			}
 		} else {
-			os.Exit(0)
+			if len(sc.Location) > 0 {
+				clean := false
+				prompt := &survey.Confirm{
+					Message: "配置文件已存在，是否重新初始化？",
+				}
+				handleExit(survey.AskOne(prompt, &clean))
+
+				if clean {
+					os.Remove(filepath.Join(apkgoHome, ConfigFileName))
+					os.RemoveAll(filepath.Join(apkgoHome, SecretDirName))
+					sc = storageInitial(sc)
+				}
+			} else {
+				sc = storageInitial(sc)
+			}
 		}
 	}
+
+	s, err := storage.New(sc, filepath.Join(apkgoHome, SecretDirName))
+
+	if err != nil {
+		fatalErr(err.Error())
+	} else {
+		if err = s.EnsureDir(); err != nil {
+			fatalErr(err.Error())
+
+		}
+	}
+	c.Storage = sc
+
+	if err := writeConfigToFile(c); err != nil {
+		fatalErr(text.FgRed.Sprintf("写入配置文件失败. %s", err.Error()))
+	}
+
+	p := storeCfgFilePath()
+
+	// 判断如果没有默认配置文件就写一个
+	if _, err := os.Stat(p); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// 写如一个默认的配置文件
+			defaultCfg := `{
+	"stores": {
+		"huawei": {
+			"client_id": "[替换为你的值]",
+			"client_secret": "[替换为你的值]"
+		},
+		"vivo": {
+			"access_key": "[替换为你的值]",
+			"access_secret": "[替换为你的值]"
+		},
+		"xiaomi": {
+			"username": "[替换为你的值]",
+			"private_key": "[替换为你的值]"
+		},
+		"pgyer": {
+			"api_key": "[替换为你的值]"
+		},
+		"fir": {
+			"api_token": "[替换为你的值]"
+		},
+		"oppo": {
+			"enable": "false",
+			"description": "需要通过浏览器登陆，完成以上信息配置后会自动开始添加"
+		},
+		"qh360": {
+			"enable": "false",
+			"description": "[TODO]需要通过浏览器登陆，完成以上信息配置后会自动开始添加"
+		},
+		"baidu": {
+			"enable": "false",
+			"description": "[TODO]需要通过浏览器登陆，完成以上信息配置后会自动开始添加"
+		},
+		"tencent":{
+			"enable": "false",
+			"description": "需要通过浏览器登陆，完成以上信息配置后会自动开始添加"
+		}
+	},
+	"notifiers": {
+		"lark": {
+			"key": "[替换为你的值]",
+			"secret_token": "[替换为你的值]"
+		},
+		"dingtalk": {
+			"access_token": "[替换为你的值]",
+			"secret_token": "[替换为你的值]"
+		},
+		"wecom": {
+			"key": "[替换为你的值]"
+		},
+		"webhook": {
+			"url": [
+				"[替换为你的值]"
+			]
+		}
+	}
+}`
+			os.WriteFile(p, []byte(defaultCfg), 0755)
+		}
+	}
+
+	// 添加gitignore文件
+	gitignore := `chrome_user_data/SingletonCookie
+chrome_user_data/SingletonLock
+chrome_user_data/SingletonSocket
+.DS_Store
+`
+	if err = os.WriteFile(filepath.Join(apkgoHome, SecretDirName, ".gitignore"), []byte(gitignore), 0666); err != nil {
+		fatalErr(err.Error())
+	}
+
+	// 主要是同步gitignore
+	s.Sync()
+
+	fmt.Printf("apkgo 初始化完成\n")
+
+	// 画一个表格
+}
+
+func storageInitial(existConfig storage.Config) storage.Config {
+
+	c := existConfig
 
 	for {
 		// 初始化仓库
@@ -81,7 +220,7 @@ func runInit(cmd *cobra.Command, args []string) {
 		prompt := &survey.Select{
 			Message: "请选择认证信息的存储方式",
 			Options: []string{"git", "local"},
-			Default: c.Storage.Location,
+			Default: existConfig.Location,
 			Description: func(value string, index int) string {
 				switch value {
 				case "git":
@@ -94,7 +233,7 @@ func runInit(cmd *cobra.Command, args []string) {
 			},
 		}
 		handleExit(survey.AskOne(prompt, &location))
-		c.Storage.Location = location
+		c.Location = location
 
 		//
 		if location == "local" {
@@ -105,44 +244,20 @@ func runInit(cmd *cobra.Command, args []string) {
 				break
 			}
 		} else {
-			c.Storage.Location = "git"
-			gitInitial(c)
-
-			s, err := storage.New(c.Storage)
-			if err != nil {
-				fmt.Println(text.FgRed.Sprintf("未知location %s", err.Error()))
-			} else {
-				if err = s.Mkdir(filepath.Join(apkgoHome, SecretDirName)); err != nil {
-					fmt.Println(text.FgRed.Sprintf("Storage 配置失败. %s", err.Error()))
-				} else {
-					break
-				}
-			}
+			c.Location = "git"
+			gitInitial(&c)
+			break
 		}
 	}
 
-	err := write(c)
-	if err != nil {
-		fmt.Println(text.FgRed.Sprintf("写入配置文件失败. %s", err.Error()))
-		os.Exit(1)
-	}
-
-	fmt.Println(text.FgGreen.Sprint("apkgo 初始化完成🚀🚀 \n"))
-
-	fmt.Println("\n接下来: ")
-
-	fmt.Println("- 由我来维护各商店的认证信息? 执行[apk store --help]")
-	fmt.Println("- 由我来上传apk? 执行[apk upload --help]")
+	return c
 }
 
-// "http://git.yuxiaor.com/yuxiaor-mobile/apkgo-conf.git",
-// "git@git.yuxiaor.com:yuxiaor-mobile/apkgo-conf.git",
-
-func gitInitial(c *Config) {
+func gitInitial(c *storage.Config) {
 	gitURL := ""
 	prompt := &survey.Input{
 		Message: text.FgYellow.Sprintf("请新创建一个%s的git仓库，用来存储各应用商店的认证信息\nURL of the Git Repo: ", text.FgRed.Sprint("私有")),
-		Default: c.Storage.URL,
+		Default: c.URL,
 	}
 	handleExit(survey.AskOne(prompt, &gitURL, survey.WithValidator(func(input interface{}) error {
 		if isValidGitRepoURL(input) {
@@ -151,11 +266,11 @@ func gitInitial(c *Config) {
 			return errors.New("请输入合法的url,以git或者https开头")
 		}
 	}), survey.WithValidator(survey.Required)))
-	c.Storage.URL = gitURL
+	c.URL = gitURL
 
 	authMethod := ""
-	if strings.HasPrefix(gitURL, "ssh") {
-		authMethod = "ssh"
+	if strings.HasPrefix(gitURL, "http") {
+		authMethod = "basic"
 	} else {
 		promptS := &survey.Select{
 			Message: "请选择Git仓库认证方式",
@@ -177,36 +292,36 @@ func gitInitial(c *Config) {
 		privateKey := ""
 		prompt := &survey.Input{
 			Message: "请输入私钥文件路径。注意不要使用.pub结尾的公钥\n",
-			Default: c.Storage.Key,
+			Default: c.Key,
 			Suggest: func(toComplete string) []string {
 				files, _ := filepath.Glob(toComplete + "*")
 				return files
 			},
 		}
 		handleExit(survey.AskOne(prompt, &privateKey, survey.WithValidator(survey.Required)))
-		c.Storage.Key = privateKey
+		c.Key = privateKey
 
 		password := ""
 		promptP := &survey.Password{
 			Message: "请输入私钥密码，若无密码可直接按Enter",
 		}
 		handleExit(survey.AskOne(promptP, &password))
-		c.Storage.Password = password
+		c.Password = password
 	} else {
 		username := ""
 		prompt := &survey.Input{
 			Message: "请输入git仓库认证用户名",
-			Default: c.Storage.Username,
+			Default: c.Username,
 		}
 		handleExit(survey.AskOne(prompt, &username, survey.WithValidator(survey.Required)))
-		c.Storage.Username = username
+		c.Username = username
 
 		password := ""
 		promptP := &survey.Password{
 			Message: "请输入git仓库认证密码或AccessToken",
 		}
 		handleExit(survey.AskOne(promptP, &password, survey.WithValidator(survey.Required)))
-		c.Storage.Password = password
+		c.Password = password
 	}
 }
 
@@ -231,11 +346,11 @@ func isValidGitRepoURL(url interface{}) bool {
 	return gitURLRegex.MatchString(urlStr)
 }
 
-func write(c *Config) error {
+func writeConfigToFile(c *Config) error {
 	bytes, err := yaml.Marshal(c)
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(apkgoHome, "config.yaml"), bytes, 0755)
+	return os.WriteFile(configFilePath(), bytes, 0666)
 }

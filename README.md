@@ -32,7 +32,7 @@ brew install kevingong2013/tap/apkgo
 
 - 百度移动(TODO)
 - 腾讯应用宝(TODO)
-- 骑虎360(TODO)
+- 奇虎360(TODO)
 
 > 请注意`apkgo`解决的是应用更新的问题，如果你是第一次发布，请前往对应商店的管理后台手动操作。
 
