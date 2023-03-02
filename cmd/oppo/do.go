@@ -13,8 +13,8 @@ import (
 	"golang.org/x/net/context"
 )
 
-func (c *Client) waitParseAPK() error {
-	router := c.page.HijackRequests()
+func waitParseAPK(page *rod.Page) error {
+	router := page.HijackRequests()
 	defer router.MustStop()
 
 	ctx, cancel := context.WithTimeout(context.TODO(), time.Minute*5)
@@ -50,7 +50,7 @@ func (c *Client) waitParseAPK() error {
 	}
 }
 
-func (c *Client) do(req shared.PublishRequest) error {
+func do(page *rod.Page, req shared.PublishRequest) error {
 
 	js := `async function postData() {
 	var formData = new FormData()
@@ -64,7 +64,7 @@ func (c *Client) do(req shared.PublishRequest) error {
 	return response.text()
 }`
 
-	obj, err := c.page.Evaluate(&rod.EvalOptions{
+	obj, err := page.Evaluate(&rod.EvalOptions{
 		ByValue:      true,
 		AwaitPromise: true,
 		JS:           js,
@@ -94,9 +94,9 @@ func (c *Client) do(req shared.PublishRequest) error {
 		return fmt.Errorf("unsupported package. %s", req.PackageName)
 	}
 
-	c.page.Navigate(fmt.Sprintf("https://open.oppomobile.com/new/mcom#/home/management/app-admin#/resource/update/index?app_id=%s&is_gray=2", appid))
+	page.Navigate(fmt.Sprintf("https://open.oppomobile.com/new/mcom#/home/management/app-admin#/resource/update/index?app_id=%s&is_gray=2", appid))
 
-	iframe := c.page.MustElement(`iframe[id="menu_service_main_iframe"]`).MustFrame()
+	iframe := page.MustElement(`iframe[id="menu_service_main_iframe"]`).MustFrame()
 
 	// 判断一下如果有弹窗，先关掉弹窗
 	time.Sleep(time.Second * 3)
@@ -122,7 +122,7 @@ func (c *Client) do(req shared.PublishRequest) error {
 		return err
 	}
 
-	err = c.waitParseAPK()
+	err = waitParseAPK(page)
 	if err != nil {
 		return err
 	}

@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
-	"math/rand"
 	"os"
 	"strings"
 	"time"
@@ -166,29 +164,6 @@ func notify(config *StoreConfig, req shared.PublishRequest, result map[string]st
 		if err := w.Notify(req, result); err != nil {
 			return err
 		}
-	}
-
-	return nil
-}
-
-// 一下代码主要是测试的时候使用
-type mockPublisher struct {
-	name   string
-	key    string
-	secret string
-}
-
-func (mp *mockPublisher) Name() string {
-	return fmt.Sprintf("%s key: %s secret: %s", mp.name, mp.key, mp.secret)
-}
-
-func (mp *mockPublisher) Do(req shared.PublishRequest) error {
-
-	r := rand.Intn(10)
-	time.Sleep(time.Second * time.Duration(r))
-
-	if r%2 == 0 {
-		return errors.New("mock publish failed")
 	}
 
 	return nil

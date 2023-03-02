@@ -11,6 +11,7 @@ import (
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/AlecAivazis/survey/v2/terminal"
 	"github.com/KevinGong2013/apkgo/cmd/storage"
+	"github.com/KevinGong2013/apkgo/cmd/utils"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -80,9 +81,9 @@ func runInit(cmd *cobra.Command, args []string) {
 		//
 		git, _ := cmd.Flags().GetString("git")
 		if len(git) > 0 {
-			username, _ := cmd.Flags().GetString("git-username")
-			privateKey, _ := cmd.Flags().GetString("git-private-key")
-			password, _ := cmd.Flags().GetString("git-password")
+			username, _ := cmd.Flags().GetString("username")
+			privateKey, _ := cmd.Flags().GetString("private-key")
+			password, _ := cmd.Flags().GetString("password")
 
 			sc = storage.Config{
 				Location: "git",
@@ -132,73 +133,17 @@ func runInit(cmd *cobra.Command, args []string) {
 	if _, err := os.Stat(p); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// 写如一个默认的配置文件
-			defaultCfg := `{
-	"stores": {
-		"huawei": {
-			"client_id": "[替换为你的值]",
-			"client_secret": "[替换为你的值]"
-		},
-		"vivo": {
-			"access_key": "[替换为你的值]",
-			"access_secret": "[替换为你的值]"
-		},
-		"xiaomi": {
-			"username": "[替换为你的值]",
-			"private_key": "[替换为你的值]"
-		},
-		"pgyer": {
-			"api_key": "[替换为你的值]"
-		},
-		"fir": {
-			"api_token": "[替换为你的值]"
-		},
-		"oppo": {
-			"enable": "false",
-			"description": "需要通过浏览器登陆，完成以上信息配置后会自动开始添加"
-		},
-		"qh360": {
-			"enable": "false",
-			"description": "[TODO]需要通过浏览器登陆，完成以上信息配置后会自动开始添加"
-		},
-		"baidu": {
-			"enable": "false",
-			"description": "[TODO]需要通过浏览器登陆，完成以上信息配置后会自动开始添加"
-		},
-		"tencent":{
-			"enable": "false",
-			"description": "需要通过浏览器登陆，完成以上信息配置后会自动开始添加"
-		}
-	},
-	"notifiers": {
-		"lark": {
-			"key": "[替换为你的值]",
-			"secret_token": "[替换为你的值]"
-		},
-		"dingtalk": {
-			"access_token": "[替换为你的值]",
-			"secret_token": "[替换为你的值]"
-		},
-		"wecom": {
-			"key": "[替换为你的值]"
-		},
-		"webhook": {
-			"url": [
-				"[替换为你的值]"
-			]
-		}
-	}
-}`
-			os.WriteFile(p, []byte(defaultCfg), 0755)
+			os.WriteFile(p, []byte(utils.DefaultConfig), 0755)
 		}
 	}
 
 	// 添加gitignore文件
-	gitignore := `chrome_user_data/SingletonCookie
-chrome_user_data/SingletonLock
-chrome_user_data/SingletonSocket
-.DS_Store
-`
-	if err = os.WriteFile(filepath.Join(apkgoHome, SecretDirName, ".gitignore"), []byte(gitignore), 0666); err != nil {
+	if err = os.WriteFile(filepath.Join(apkgoHome, SecretDirName, ".gitignore"), []byte(utils.GitIgnore), 0666); err != nil {
+		fatalErr(err.Error())
+	}
+
+	// 生成浏览器缓存目录
+	if err := os.MkdirAll(browserUserDataDir(), 0666); err != nil {
 		fatalErr(err.Error())
 	}
 

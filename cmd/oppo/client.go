@@ -1,62 +1,49 @@
 package oppo
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 )
 
-type Client struct {
-	page *rod.Page
+type OpppClient string
+
+var DefaultClient = OpppClient("oppo")
+
+func (oc OpppClient) Identifier() string {
+	return string(oc)
 }
 
-func NewClient(dir string) (*Client, error) {
-	u, err := launcher.New().
-		UserDataDir(dir).
-		ProfileDir("apkgo").
-		Headless(false).
-		Set("disable-gpu").
-		Set("disable-features", "OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints").
-		Launch()
-	if err != nil {
-		return nil, err
-	}
+func (oc OpppClient) Name() string {
+	return "oppo应用商店"
+}
 
-	b := rod.New().ControlURL(u)
-
-	if err := b.Connect(); err != nil {
-		return nil, err
-	}
-
-	page, err := b.Page(proto.TargetCreateTarget{
+func (oc OpppClient) CheckAuth(browser *rod.Browser, reAuth bool) (*rod.Page, error) {
+	page, err := browser.Page(proto.TargetCreateTarget{
 		URL: "https://open.oppomobile.com/new/ecological/app",
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Client{
-		page: page,
-	}, nil
+	_, err = page.Race().ElementR("h1", "Sign in").Handle(func(e *rod.Element) error {
+		if !reAuth {
+			return errors.New("登陆态失效")
+		}
+		fmt.Println("登录用户登陆...")
+		if _, err := page.Eval("(msg) => { alert(msg) }", "登录完成以后会自动同步到apkgo"); err != nil {
+			return err
+		}
+		return page.WaitElementsMoreThan(".service-item-open", 0)
+	}).Element(".service-item-open").MustHandle(func(e *rod.Element) {
+		fmt.Println("已经登陆成功，免登")
+	}).Do()
+
+	return page, err
 }
 
-func (c *Client) Name() string {
-	return "oppo应用商店"
-}
-
-func (c *Client) CheckAuth(reAuth bool) error {
-	return c.check(reAuth)
-}
-
-func (c *Client) Do(req shared.PublishRequest) error {
-	return c.do(req)
-}
-
-func (c *Client) PostDo() error {
-
-	if err := c.page.Close(); err != nil {
-		return err
-	}
-
-	return c.page.Browser().Close()
+func (oc OpppClient) Do(page *rod.Page, req shared.PublishRequest) error {
+	return do(page, req)
 }

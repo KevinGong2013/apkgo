@@ -22,7 +22,7 @@ func init() {
 
 	rootCmd.AddCommand(checkCommand)
 
-	checkCommand.Flags().Bool("refresh-cookie", false, "如果认证失败是否打开浏览器重新登陆以刷新cookie")
+	checkCommand.Flags().Bool("refresh-cookie", true, "如果认证失败是否打开浏览器重新登陆以刷新cookie")
 }
 
 func runCheck(cmd *cobra.Command, args []string) {

@@ -45,7 +45,6 @@ func New(c Config, path string) (*Storage, error) {
 				Password: c.Password,
 			}
 		}
-		fmt.Println(auth)
 		return &Storage{
 			isLocal: false,
 			path:    path,

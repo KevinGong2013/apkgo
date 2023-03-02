@@ -13,3 +13,7 @@ func storeCfgFilePath() string {
 func configFilePath() string {
 	return filepath.Join(apkgoHome, ConfigFileName)
 }
+
+func browserUserDataDir() string {
+	return filepath.Join(apkgoHome, SecretDirName, "chrome_user_data")
+}
