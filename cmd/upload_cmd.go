@@ -115,7 +115,7 @@ func init() {
 
 func runUpload(cmd *cobra.Command, args []string) {
 
-	stores, _ := cmd.Flags().GetStringSlice("stores")
+	stores, _ := cmd.Flags().GetStringSlice("store")
 	config, err := ParseStoreSecretFile(stores)
 
 	if err != nil {

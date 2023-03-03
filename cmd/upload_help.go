@@ -21,7 +21,7 @@ func assemblePublishRequest(cmd *cobra.Command) shared.PublishRequest {
 	file, _ := cmd.Flags().GetString("file")
 	file32, _ := cmd.Flags().GetString("file32")
 	file64, _ := cmd.Flags().GetString("file64")
-	stores, _ := cmd.Flags().GetStringSlice("stores")
+	stores, _ := cmd.Flags().GetStringSlice("store")
 	releaseNots, _ := cmd.Flags().GetString("release-notes")
 
 	apkFile := file

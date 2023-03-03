@@ -9,19 +9,19 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 )
 
-type OpppClient string
+type OppoClient string
 
-var DefaultClient = OpppClient("oppo")
+var DefaultClient = OppoClient("oppo")
 
-func (oc OpppClient) Identifier() string {
+func (oc OppoClient) Identifier() string {
 	return string(oc)
 }
 
-func (oc OpppClient) Name() string {
+func (oc OppoClient) Name() string {
 	return "oppo应用商店"
 }
 
-func (oc OpppClient) CheckAuth(browser *rod.Browser, reAuth bool) (*rod.Page, error) {
+func (oc OppoClient) CheckAuth(browser *rod.Browser, reAuth bool) (*rod.Page, error) {
 	page, err := browser.Page(proto.TargetCreateTarget{
 		URL: "https://open.oppomobile.com/new/ecological/app",
 	})
@@ -44,6 +44,6 @@ func (oc OpppClient) CheckAuth(browser *rod.Browser, reAuth bool) (*rod.Page, er
 	return page, err
 }
 
-func (oc OpppClient) Do(page *rod.Page, req shared.PublishRequest) error {
+func (oc OppoClient) Do(page *rod.Page, req shared.PublishRequest) error {
 	return do(page, req)
 }

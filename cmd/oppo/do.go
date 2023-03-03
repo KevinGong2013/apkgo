@@ -1,54 +1,14 @@
 package oppo
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/KevinGong2013/apkgo/cmd/shared"
+	"github.com/KevinGong2013/apkgo/cmd/utils"
 	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/proto"
 	"github.com/ysmood/gson"
-	"golang.org/x/net/context"
 )
-
-func waitParseAPK(page *rod.Page) error {
-	router := page.HijackRequests()
-	defer router.MustStop()
-
-	ctx, cancel := context.WithTimeout(context.TODO(), time.Minute*5)
-	ch := make(chan *verifyInfoResponse)
-
-	router.MustAdd("*/verify-info.json*", func(ctx *rod.Hijack) {
-		// 必不可少的
-		ctx.MustLoadResponse()
-		resp := new(verifyInfoResponse)
-		fmt.Println(ctx.Response.Body())
-		if err := json.Unmarshal([]byte(ctx.Response.Body()), resp); err != nil {
-			fmt.Printf("unmarshal err %s", err.Error())
-			return
-		}
-		ch <- resp
-	})
-
-	go router.Run()
-
-	for {
-		select {
-		case r := <-ch:
-			if r.Errno == 0 {
-				cancel()
-				return nil
-			} else if r.Errno == 911046 {
-				cancel()
-				return errors.New(r.Data.Message)
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-}
 
 func do(page *rod.Page, req shared.PublishRequest) error {
 
@@ -94,61 +54,35 @@ func do(page *rod.Page, req shared.PublishRequest) error {
 		return fmt.Errorf("unsupported package. %s", req.PackageName)
 	}
 
-	page.Navigate(fmt.Sprintf("https://open.oppomobile.com/new/mcom#/home/management/app-admin#/resource/update/index?app_id=%s&is_gray=2", appid))
-
-	iframe := page.MustElement(`iframe[id="menu_service_main_iframe"]`).MustFrame()
-
-	// 判断一下如果有弹窗，先关掉弹窗
-	time.Sleep(time.Second * 3)
-	exist, noButton, _ := iframe.Has(`#save-the-draft > div > div > div.modal-body > div:nth-child(2) > button.btn.no`)
-	if exist {
-		if err := noButton.Click(proto.InputMouseButtonLeft, 1); err != nil {
-			return err
+	return rod.Try(func() {
+		page.MustNavigate(fmt.Sprintf("https://open.oppomobile.com/new/mcom#/home/management/app-admin#/resource/update/index?app_id=%s&is_gray=2", appid))
+		iframe := page.MustElement(`iframe[id="menu_service_main_iframe"]`).MustFrame()
+		// 判断一下如果有弹窗，先关掉弹窗
+		time.Sleep(time.Second * 3)
+		exist, noButton, _ := iframe.Has(`#save-the-draft > div > div > div.modal-body > div:nth-child(2) > button.btn.no`)
+		if exist {
+			noButton.MustClick()
 		}
-	}
 
-	textarea, err := iframe.Element(`textarea[name="update_desc"`)
-	if err != nil {
-		return err
-	}
+		iframe.MustElement(`textarea[name="update_desc"`).MustSelectAllText().MustInput(req.UpdateDesc)
 
-	// 上传文件
-	fmt.Println("上传apk包完成， 等待解析")
-	fileUploader, err := iframe.Element(`input[type="file"]`)
-	if err != nil {
-		return err
-	}
-	if err := fileUploader.SetFiles([]string{req.ApkFile}); err != nil {
-		return err
-	}
+		if err := utils.WaitRequest(page, "verify-info.json", func() {
+			iframe.MustElement(`input[type="file"]`).MustInput(req.ApkFile)
+		}, func(body gson.JSON) (stop bool, err error) {
+			errno := body.Get("errono").Int()
+			if errno == 0 {
+				return true, nil
+			}
 
-	err = waitParseAPK(page)
-	if err != nil {
-		return err
-	}
+			if errno == 911046 {
+				return true, fmt.Errorf("err: %s", body.String())
+			}
 
-	// 全选文字
-	if err := textarea.SelectAllText(); err != nil {
-		return err
-	}
+			return false, nil
+		}); err != nil {
+			panic(err)
+		}
 
-	// 填写更新说明
-	//
-	fmt.Println("填写更新日志")
-	if err := textarea.Input(req.UpdateDesc); err != nil {
-		return err
-	}
-
-	btn, err := iframe.Element(`#auditphasedbuttonclick`)
-	if err != nil {
-		return err
-	}
-
-	if err := btn.Click(proto.InputMouseButtonLeft, 1); err != nil {
-		return err
-	}
-
-	fmt.Printf("done. ")
-
-	return nil
+		iframe.MustElement(`#auditphasedbuttonclick`).MustClick()
+	})
 }
