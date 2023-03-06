@@ -1,6 +1,8 @@
 package baidu
 
 import (
+	"errors"
+
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/go-rod/rod"
 )
@@ -18,7 +20,7 @@ func (bc BaiduClient) Name() string {
 }
 
 func (bc BaiduClient) CheckAuth(browser *rod.Browser, reAuth bool) (*rod.Page, error) {
-	return nil, nil
+	return nil, errors.New("todo [暂不支持]")
 }
 
 func (bc BaiduClient) Do(page *rod.Page, req shared.PublishRequest) error {

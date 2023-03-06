@@ -3,6 +3,7 @@ package oppo
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/go-rod/rod"
@@ -28,6 +29,8 @@ func (oc OppoClient) CheckAuth(browser *rod.Browser, reAuth bool) (*rod.Page, er
 	if err != nil {
 		return nil, err
 	}
+	// oppo 环境检测非常慢
+	time.Sleep(time.Second * 15)
 	_, err = page.Race().ElementR("h1", "Sign in").Handle(func(e *rod.Element) error {
 		if !reAuth {
 			return errors.New("登陆态失效")

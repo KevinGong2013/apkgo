@@ -92,7 +92,11 @@ func runCheck(cmd *cobra.Command, args []string) {
 		if c, ok := p.(shared.Checker); ok {
 			status := text.FgGreen.Sprint("正常")
 			if err := c.CheckAuth(refreshCookie); err != nil {
-				status = text.FgYellow.Sprint("需要重新登陆")
+				if refreshCookie {
+					status = text.FgRed.Sprint("重新登陆失败")
+				} else {
+					status = text.FgYellow.Sprint("需要重新登陆")
+				}
 			}
 			rows = append(rows, table.Row{p.Name(), "browser", status})
 		}
