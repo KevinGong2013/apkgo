@@ -3,9 +3,9 @@ package qh360
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/KevinGong2013/apkgo/cmd/shared"
-	"github.com/KevinGong2013/apkgo/cmd/utils"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/ysmood/gson"
@@ -86,19 +86,25 @@ func (qc QH360Client) Do(page *rod.Page, req shared.PublishRequest) error {
 	return rod.Try(func() {
 		page.MustNavigate(fmt.Sprintf("https://dev.360.cn/mod3/createmobile/baseinfo?id=%s", appid))
 
-		fmt.Println("等待上传完成。。。")
-		if err := utils.WaitRequest(page, "mod/upload/apk/", func() {
-			// 传文件
-			page.MustElement(`input[type="file"]`).MustSetFiles(req.ApkFile)
-		}, func(body gson.JSON) (stop bool, err error) {
-			status := body.Get("status").Int()
-			if status == 0 {
-				return true, nil
+		wait := make(chan bool)
+		go page.EachEvent(func(e *proto.NetworkResponseReceived) {
+			url := e.Response.URL
+			if strings.Contains(url, "mod/upload/apk/") || strings.Contains(url, "mod3/createmobile/submitBaseInfo") {
+				m := proto.NetworkGetResponseBody{RequestID: e.RequestID}
+				if r, err := m.Call(page); err == nil {
+					body := gson.NewFrom(r.Body)
+					if strings.Contains(url, "mod/upload/apk/") {
+						wait <- body.Get("status").Int() == 0
+					} else {
+						wait <- body.Get("errno").Int() == 0
+					}
+				}
 			}
-			return true, fmt.Errorf("err: %s", body.String())
-		}); err != nil {
-			panic(err)
-		}
+		})()
+
+		// 传文件
+		go page.MustElement(`input[type="file"]`).MustSetFiles(req.ApkFile)
+		<-wait
 
 		// 更新文案
 		page.MustElement("#desc_desc").MustSelectAllText().MustInput(req.UpdateDesc)
@@ -115,16 +121,7 @@ func (qc QH360Client) Do(page *rod.Page, req shared.PublishRequest) error {
 			}
 		}
 
-		if err := utils.WaitRequest(page, "mod3/createmobile/submitBaseInfo", func() {
-			page.MustElement("#submitform").MustClick()
-		}, func(body gson.JSON) (stop bool, err error) {
-			errno := body.Get("errno").Int()
-			if errno == 0 {
-				return true, nil
-			}
-			return true, fmt.Errorf("err %s", body.String())
-		}); err != nil {
-			panic(err)
-		}
+		go page.MustElement("#submitform").MustClick()
+		<-wait
 	})
 }

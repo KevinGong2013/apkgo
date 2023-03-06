@@ -2,11 +2,12 @@ package oppo
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/KevinGong2013/apkgo/cmd/shared"
-	"github.com/KevinGong2013/apkgo/cmd/utils"
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/proto"
 	"github.com/ysmood/gson"
 )
 
@@ -66,23 +67,29 @@ func do(page *rod.Page, req shared.PublishRequest) error {
 
 		iframe.MustElement(`textarea[name="update_desc"`).MustSelectAllText().MustInput(req.UpdateDesc)
 
-		if err := utils.WaitRequest(page, "verify-info.json", func() {
-			iframe.MustElement(`input[type="file"]`).MustInput(req.ApkFile)
-		}, func(body gson.JSON) (stop bool, err error) {
-			errno := body.Get("errono").Int()
-			if errno == 0 {
-				return true, nil
+		wait := page.EachEvent(func(e *proto.NetworkResponseReceived) bool {
+			url := e.Response.URL
+			if strings.Contains(url, "verify-info.json") {
+				m := proto.NetworkGetResponseBody{RequestID: e.RequestID}
+				if r, err := m.Call(page); err == nil {
+					body := gson.NewFrom(r.Body)
+					errno := body.Get("errono").Int()
+					if errno == 0 {
+						return true
+					}
+
+					if errno == 911046 {
+						return true
+					}
+
+				}
+				return false
 			}
+			return false
+		})
 
-			if errno == 911046 {
-				return true, fmt.Errorf("err: %s", body.String())
-			}
+		go iframe.MustElement(`#auditphasedbuttonclick`).MustClick()
 
-			return false, nil
-		}); err != nil {
-			panic(err)
-		}
-
-		iframe.MustElement(`#auditphasedbuttonclick`).MustClick()
+		wait()
 	})
 }
