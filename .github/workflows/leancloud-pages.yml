@@ -1,12 +1,11 @@
 # Sample workflow for building and deploying a Jekyll site to GitHub Pages
-name: Deploy Jekyll with GitHub Pages dependencies preinstalled
+name: Push docs to leancloud
 
 on:
   # Runs on pushes targeting the default branch
   push:
     paths:
-      - 'docs/**'
-
+      - "docs/**"
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -24,23 +23,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Setup LeanCloud Cli
-        # You may pin to the exact commit or the version.
-        # uses: manyuanrong/setup-lean-cli@18164c579a6077a9b93317c3a9fb41d974991d37
         uses: manyuanrong/setup-lean-cli@v1.0.0
 
   # Deployment job
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - name: Deploy to LeanCloud
-        id: deployment
-        uses: actions/deploy-pages@v1
       - run: |
-          cd ./public
+          cd ./docs
           lean login --region cn-n1 --username ${{secrets.LEANCLOUD_USER}} --password ${{secrets.LEANCLOUD_PASS}}
           lean switch --region cn-n1 --group web ${{secrets.LEANCLOUD_APP_ID}}
           lean deploy
