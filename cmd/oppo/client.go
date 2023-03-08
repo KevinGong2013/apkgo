@@ -41,7 +41,7 @@ func (oc OppoClient) CheckAuth(browser *rod.Browser, reAuth bool) (*rod.Page, er
 		}
 		return page.WaitElementsMoreThan(".service-item-open", 0)
 	}).Element(".service-item-open").MustHandle(func(e *rod.Element) {
-		fmt.Println("已经登陆成功，免登")
+		fmt.Println("oppo login succeed")
 	}).Do()
 
 	return page, err

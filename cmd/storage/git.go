@@ -52,9 +52,9 @@ func (s *Storage) upToDateIfLocalClean() error {
 				return err
 			}
 		}
+	} else {
+		fmt.Println("Local file(s) has changes, cancel sync from remote")
 	}
-
-	fmt.Println("本地认证信息修改，不能自动同步远程认证信息")
 
 	return nil
 }

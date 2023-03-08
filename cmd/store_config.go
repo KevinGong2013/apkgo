@@ -110,7 +110,7 @@ func InitPublishers(sc *StoreConfig, browserHeadless bool) (curls []shared.Publi
 			if b.Disable {
 				continue
 			}
-			if p, err = publisher.NewBrowserPublisher(b.Name, browserUserDataDir()); err != nil {
+			if p, err = publisher.NewBrowserPublisher(b.Name, browserUserDataDir(), browserHeadless); err != nil {
 				return
 			}
 			browsers = append(browsers, p)

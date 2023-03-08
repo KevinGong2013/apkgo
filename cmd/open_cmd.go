@@ -41,7 +41,7 @@ func runOpen(cmd *cobra.Command, args []string) {
 
 	switch store {
 	case "oppo", "tencent", "baidu", "qh360":
-		p, err := publisher.NewBrowserPublisher(store, browserUserDataDir())
+		p, err := publisher.NewBrowserPublisher(store, browserUserDataDir(), true)
 		if err != nil {
 			fatalErr(err.Error())
 		}

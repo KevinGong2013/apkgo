@@ -33,7 +33,7 @@ func (tc TencentClient) CheckAuth(browser *rod.Browser, reAuth bool) (*rod.Page,
 	}
 
 	_, err = page.Race().Element(".app-list-main").MustHandle(func(e *rod.Element) {
-		fmt.Println("鉴权有效")
+		fmt.Println("tencent login succeed")
 	}).Element(".manage").Handle(func(e *rod.Element) error {
 		if !reAuth {
 			return errors.New("鉴权失效")

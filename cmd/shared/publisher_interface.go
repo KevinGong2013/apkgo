@@ -38,8 +38,8 @@ type PrePublish interface {
 	PreDo(req PublishRequest) error
 }
 
-type PostPublish interface {
-	PostDo() error
+type PublishCleaner interface {
+	Clean() error
 }
 
 // /////////////////////////

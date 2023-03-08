@@ -1,7 +1,9 @@
 package utils
 
-const GitIgnore = `chrome_user_data/SingletonCookie
-chrome_user_data/SingletonLock
-chrome_user_data/SingletonSocket
+const GitIgnore = `SingletonCookie
+SingletonLock
+SingletonSocket
+Reporting and NEL
 .DS_Store
+chrome_shutdown_ms.txt
 `

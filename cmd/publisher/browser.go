@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/KevinGong2013/apkgo/cmd/baidu"
@@ -33,14 +34,30 @@ type BrowserPublisher struct {
 	browserRod browserRod
 }
 
-func NewBrowserPublisher(identifier string, userDataDir string) (*BrowserPublisher, error) {
-	u, err := launcher.New().
+func isRunningInDockerContainer() bool {
+	// docker creates a .dockerenv file at the root
+	// of the directory tree inside the container.
+	// if this file exists then the viewer is running
+	// from inside a container so return true
+
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+
+	return false
+}
+
+func NewBrowserPublisher(identifier string, userDataDir string, headless bool) (*BrowserPublisher, error) {
+	l := launcher.New().
 		UserDataDir(filepath.Join(userDataDir, identifier)).
 		ProfileDir("apkgo").
-		Headless(false).
+		Headless(headless).
 		Set("disable-gpu").
-		Set("disable-features", "OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints").
-		Launch()
+		Set("disable-features", "OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints")
+	if isRunningInDockerContainer() {
+		l.Headless(false).XVFB("-a", "--server-args=-screen 0, 1024x768x24")
+	}
+	u, err := l.Launch()
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +103,6 @@ func (bp *BrowserPublisher) CheckAuth(reAuth bool) error {
 	return err
 }
 
-func (bp *BrowserPublisher) PostDo() error {
+func (bp *BrowserPublisher) Clean() error {
 	return bp.browser.Close()
 }

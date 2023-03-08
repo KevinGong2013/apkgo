@@ -193,8 +193,8 @@ func runUpload(cmd *cobra.Command, args []string) {
 	defer func() {
 		// 清理一些需要关闭的publisher
 		for _, p := range publishers {
-			if post, ok := p.(shared.PostPublish); ok {
-				if err := post.PostDo(); err != nil {
+			if post, ok := p.(shared.PublishCleaner); ok {
+				if err := post.Clean(); err != nil {
 					fmt.Println(text.FgRed.Sprintf("清理资源出错. %s", err.Error()))
 				}
 			}

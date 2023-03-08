@@ -33,7 +33,7 @@ func (qc QH360Client) CheckAuth(browser *rod.Browser, reAuth bool) (*rod.Page, e
 	}
 
 	_, err = page.Race().Element("#content-main").MustHandle(func(e *rod.Element) {
-		fmt.Println("鉴权有效")
+		fmt.Println("qh360 login succeed.")
 	}).Element(".quc-login-content").Handle(func(e *rod.Element) error {
 		if !reAuth {
 			return errors.New("鉴权失效")
