@@ -69,3 +69,8 @@ dockers:
       - ghcr.io/kevingong2013/apkgo:{{ .Tag }}
     extra_files:
       - docker/entrypoint.sh
+  - dockerfile: docker/Dockerfile
+    image_templates:
+      - ghcr.io/kevingong2013/apkgo:latest
+    extra_files:
+      - docker/entrypoint.sh
