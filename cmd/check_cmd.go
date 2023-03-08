@@ -62,9 +62,12 @@ func runCheck(cmd *cobra.Command, args []string) {
 	}
 
 	curls, browsers, plugins, err := InitPublishers(sc, !refreshCookie)
+
 	if err != nil {
 		fatalErr(err.Error())
 	}
+
+	fmt.Printf("curls(%d), browsers(%d), plugins(%d)\n", len(curls), len(browsers), len(plugins))
 
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
