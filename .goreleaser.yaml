@@ -65,7 +65,7 @@ brews:
       bin.install "apkgo"
 dockers:
   - dockerfile: docker/Dockerfile
-  - image_templates:
+    image_templates:
       - ghcr.io/kevingong2013/apkgo:{{ .Tag }}
-  - extra_files:
+    extra_files:
       - docker/entrypoint.sh
