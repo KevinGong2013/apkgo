@@ -26,7 +26,7 @@ brew install apkgo
 #### Docker
 
 ``` shell
-docker pull kevingong2013/apkgo
+docker pull ghcr.io/kevingong2013/apkgo:latest
 ```
 
 #### Build from source
