@@ -3,33 +3,25 @@ module github.com/KevinGong2013/apkgo
 go 1.20
 
 require (
-	github.com/chromedp/cdproto v0.0.0-20230220211738-2b1ec77315c9
-	github.com/chromedp/chromedp v0.8.6
 	github.com/go-resty/resty/v2 v2.7.0
 	github.com/hashicorp/go-hclog v0.14.1
 	github.com/spf13/cobra v1.6.1
+	github.com/ysmood/gson v0.7.3
 )
 
 require (
 	github.com/Microsoft/go-winio v0.5.2 // indirect
-	github.com/Xuanwo/go-locale v1.1.0 // indirect
-	github.com/chromedp/sysutil v1.0.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/fatih/color v1.7.0 // indirect
 	github.com/go-git/gcfg v1.5.0 // indirect
 	github.com/go-git/go-billy/v5 v5.1.0 // indirect
-	github.com/gobwas/httphead v0.1.0 // indirect
-	github.com/gobwas/pool v0.2.1 // indirect
-	github.com/gobwas/ws v1.1.0 // indirect
 	github.com/golang/protobuf v1.3.4 // indirect
-	github.com/google/uuid v1.3.0 // indirect
+	github.com/google/go-cmp v0.5.8 // indirect
 	github.com/hashicorp/yamux v0.0.0-20180604194846-3520598351bb // indirect
 	github.com/imdario/mergo v0.3.13 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
-	github.com/josharian/intern v1.0.0 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
-	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-colorable v0.1.4 // indirect
 	github.com/mattn/go-isatty v0.0.10 // indirect
 	github.com/mattn/go-runewidth v0.0.13 // indirect
@@ -40,10 +32,8 @@ require (
 	github.com/sergi/go-diff v1.3.1 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/ysmood/goob v0.4.0 // indirect
-	github.com/ysmood/gson v0.7.3 // indirect
 	github.com/ysmood/leakless v0.8.0 // indirect
 	golang.org/x/crypto v0.3.0 // indirect
-	golang.org/x/exp v0.0.0-20221217163422-3c43f8badb15 // indirect
 	golang.org/x/net v0.2.0 // indirect
 	golang.org/x/sys v0.5.0 // indirect
 	golang.org/x/term v0.2.0 // indirect
