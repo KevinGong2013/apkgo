@@ -2,7 +2,6 @@ package publisher
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/KevinGong2013/apkgo/cmd/baidu"
@@ -10,6 +9,7 @@ import (
 	"github.com/KevinGong2013/apkgo/cmd/qh360"
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/KevinGong2013/apkgo/cmd/tencent"
+	"github.com/KevinGong2013/apkgo/cmd/utils"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 )
@@ -34,19 +34,6 @@ type BrowserPublisher struct {
 	browserRod browserRod
 }
 
-func isRunningInDockerContainer() bool {
-	// docker creates a .dockerenv file at the root
-	// of the directory tree inside the container.
-	// if this file exists then the viewer is running
-	// from inside a container so return true
-
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		return true
-	}
-
-	return false
-}
-
 func NewBrowserPublisher(identifier string, userDataDir string, headless bool) (*BrowserPublisher, error) {
 	l := launcher.New().
 		UserDataDir(filepath.Join(userDataDir, identifier)).
@@ -54,7 +41,7 @@ func NewBrowserPublisher(identifier string, userDataDir string, headless bool) (
 		Headless(headless).
 		Set("disable-gpu").
 		Set("disable-features", "OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints")
-	if isRunningInDockerContainer() {
+	if utils.IsRunningInDockerContainer() {
 		l.Headless(false).XVFB("-a", "--server-args=-screen 0, 1024x768x24")
 	}
 	u, err := l.Launch()

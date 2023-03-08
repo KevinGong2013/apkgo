@@ -19,6 +19,16 @@
 - 支持与常见CI/CD系统集成
 - 支持通过Docker使用
 
+## 快速玩一玩
+
+```shell
+# 初始化
+docker run -v $PWD:/root/.apkgo ghcr.io/kevingong2013/apkgo:latest init --git https://github.com/your/conf/repo --username kevin --password your_pass
+
+# 发布
+docker run -v $PWD:/root/.apkgo ghcr.io/kevingong2013/apkgo:latest upload
+```
+
 ## License
 
 [Apache License 2.0](./LICENSE)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/KevinGong2013/apkgo/cmd/storage"
+	"github.com/KevinGong2013/apkgo/cmd/utils"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
@@ -55,6 +56,9 @@ func runCheck(cmd *cobra.Command, args []string) {
 	refreshCookie, err := cmd.Flags().GetBool("refresh-cookie")
 	if err != nil {
 		refreshCookie = true
+	}
+	if utils.IsRunningInDockerContainer() {
+		refreshCookie = false
 	}
 
 	curls, browsers, plugins, err := InitPublishers(sc, !refreshCookie)
