@@ -48,7 +48,7 @@ func (s *Storage) upToDateIfLocalClean() error {
 				fmt.Println("Already up to date.")
 				return nil
 			} else {
-				fmt.Fprintf(os.Stderr, "error: %s\n", err)
+				fmt.Fprintf(os.Stderr, "worktree pull error: %s\n", err)
 				return err
 			}
 		}
