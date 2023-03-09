@@ -61,9 +61,9 @@ func runCheck(cmd *cobra.Command, args []string) {
 		refreshCookie = false
 	}
 
-	fmt.Println("initial publishers ...")
+	fmt.Println("Initial publishers ...")
 
-	curls, browsers, plugins, err := InitPublishers(sc, !refreshCookie)
+	curls, browsers, plugins, err := InitPublishers(sc)
 
 	if err != nil {
 		fatalErr(err.Error())

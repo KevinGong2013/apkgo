@@ -34,30 +34,35 @@ type BrowserPublisher struct {
 	browserRod browserRod
 }
 
-func NewBrowserPublisher(identifier string, userDataDir string, headless bool) (*BrowserPublisher, error) {
-	l := launcher.New().
-		UserDataDir(filepath.Join(userDataDir, identifier)).
+func setupDefaultFlags(l *launcher.Launcher, dir string) *launcher.Launcher {
+	return l.
+		KeepUserDataDir().
+		UserDataDir(dir).
 		ProfileDir("apkgo").
-		Headless(headless).
+		Headless(false).
 		Set("disable-gpu").
 		Set("disable-features", "OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints")
+}
+
+func NewBrowserPublisher(identifier string, userDataDir string) (*BrowserPublisher, error) {
+	dir := filepath.Join(userDataDir, identifier)
+	var b *rod.Browser
 	if utils.IsRunningInDockerContainer() {
-		l.Headless(false).XVFB("-a", "--server-args=-screen 0, 1024x768x24")
+		l := launcher.MustNewManaged("")
+		setupDefaultFlags(l, dir)
+		l.XVFB("-a", "--server-args=-screen 0, 1024x768x24")
+		b = rod.New().Client(l.MustClient()).MustConnect()
+	} else {
+		l := launcher.New()
+		// l := launcher.MustNewManaged("ws://192.168.3.64:7317")
+		setupDefaultFlags(l, dir)
+		b = rod.New().ControlURL(l.MustLaunch())
+		// b = rod.New().Client(l.MustClient()).MustConnect()
 	}
-	u, err := l.Launch()
-	if err != nil {
-		return nil, err
-	}
-
-	b := rod.New().ControlURL(u)
-
-	// if err := b.Connect(); err != nil {
-	// 	return nil, err
-	// }
 
 	bd := supportedRods[identifier]
 	if bd == nil {
-		return nil, fmt.Errorf("unsupport %s", identifier)
+		return nil, fmt.Errorf("unsupported %s", identifier)
 	}
 
 	if err := b.Connect(); err != nil {

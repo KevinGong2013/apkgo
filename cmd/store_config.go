@@ -89,7 +89,7 @@ func ParseStoreSecretFile(identifiers []string) (*StoreConfig, error) {
 	return &conf, nil
 }
 
-func InitPublishers(sc *StoreConfig, browserHeadless bool) (curls []shared.Publisher, browsers []shared.Publisher, plugins []shared.Publisher, err error) {
+func InitPublishers(sc *StoreConfig) (curls []shared.Publisher, browsers []shared.Publisher, plugins []shared.Publisher, err error) {
 
 	var p shared.Publisher
 
@@ -110,7 +110,7 @@ func InitPublishers(sc *StoreConfig, browserHeadless bool) (curls []shared.Publi
 			if b.Disable {
 				continue
 			}
-			p, err = publisher.NewBrowserPublisher(b.Name, browserUserDataDir(), browserHeadless)
+			p, err = publisher.NewBrowserPublisher(b.Name, browserUserDataDir())
 			if err != nil {
 				return
 			}

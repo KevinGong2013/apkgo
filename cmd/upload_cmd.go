@@ -182,7 +182,7 @@ func runUpload(cmd *cobra.Command, args []string) {
 	}
 
 	// 初始化所有商店的 Publisher
-	curls, browsers, plugins, err := InitPublishers(config, false)
+	curls, browsers, plugins, err := InitPublishers(config)
 	if err != nil {
 		fmt.Printf("%s\n", text.FgRed.Sprintf("初始化应用商店上传组件失败 err: %s", err.Error()))
 		os.Exit(5)

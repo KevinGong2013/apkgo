@@ -38,7 +38,7 @@ func (tc TencentClient) CheckAuth(browser *rod.Browser, reAuth bool) (*rod.Page,
 		if !reAuth {
 			return errors.New("鉴权失效")
 		}
-		fmt.Println("登录用户登陆...")
+		fmt.Println("show login alert")
 		if _, err := page.Eval("(msg) => { alert(msg) }", "登录完成以后会自动同步到apkgo"); err != nil {
 			return err
 		}

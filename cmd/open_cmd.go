@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/KevinGong2013/apkgo/cmd/publisher"
@@ -41,11 +42,14 @@ func runOpen(cmd *cobra.Command, args []string) {
 
 	switch store {
 	case "oppo", "tencent", "baidu", "qh360":
-		p, err := publisher.NewBrowserPublisher(store, browserUserDataDir(), true)
+		p, err := publisher.NewBrowserPublisher(store, browserUserDataDir())
 		if err != nil {
 			fatalErr(err.Error())
 		}
 		p.CheckAuth(true)
+
+		fmt.Println("Ctl+C 退出")
+		time.Sleep(time.Hour)
 	default:
 		fmt.Println(text.FgRed.Sprintf("%s请直接通过浏览器访问", store))
 	}

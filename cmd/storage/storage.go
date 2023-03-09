@@ -53,7 +53,6 @@ func New(c Config, path string) (*Storage, error) {
 				Auth:            auth,
 				ReferenceName:   "refs/heads/master",
 				SingleBranch:    true,
-				Depth:           1,
 				InsecureSkipTLS: true,
 				Progress:        os.Stdout,
 			},
