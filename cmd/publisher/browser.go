@@ -36,7 +36,6 @@ type BrowserPublisher struct {
 
 func setupDefaultFlags(l *launcher.Launcher, dir string) *launcher.Launcher {
 	return l.
-		KeepUserDataDir().
 		UserDataDir(dir).
 		ProfileDir("apkgo").
 		Headless(false).
@@ -48,25 +47,22 @@ func NewBrowserPublisher(identifier string, userDataDir string) (*BrowserPublish
 	dir := filepath.Join(userDataDir, identifier)
 	var b *rod.Browser
 	if utils.IsRunningInDockerContainer() {
-		l := launcher.MustNewManaged("")
-		setupDefaultFlags(l, dir)
-		l.XVFB("-a", "--server-args=-screen 0, 1024x768x24")
+		l := launcher.MustNewManaged("").
+			KeepUserDataDir()
+		setupDefaultFlags(l, dir).
+			XVFB("-a", "--server-args=-screen 0, 1024x768x24")
 		b = rod.New().Client(l.MustClient()).MustConnect()
 	} else {
 		l := launcher.New()
 		// l := launcher.MustNewManaged("ws://192.168.3.64:7317")
 		setupDefaultFlags(l, dir)
-		b = rod.New().ControlURL(l.MustLaunch())
+		b = rod.New().ControlURL(l.MustLaunch()).MustConnect()
 		// b = rod.New().Client(l.MustClient()).MustConnect()
 	}
 
 	bd := supportedRods[identifier]
 	if bd == nil {
 		return nil, fmt.Errorf("unsupported %s", identifier)
-	}
-
-	if err := b.Connect(); err != nil {
-		return nil, err
 	}
 
 	return &BrowserPublisher{
