@@ -57,33 +57,34 @@ func (tc TencentClient) Do(page *rod.Page, req shared.PublishRequest) error {
 	wait := make(chan bool)
 
 	go page.EachEvent(func(e *proto.NetworkResponseReceived) bool {
-		if strings.Contains(e.Response.URL, "v3/get_app_list") ||
-			strings.HasPrefix(e.Response.URL, "https://p.open.qq.com/open_file/v1/init_multi_upload") ||
-			strings.HasPrefix(e.Response.URL, "https://app.open.qq.com/api/xy/runtime/env/prod/manage/datasource/collection/request/open/distribution_update_edit_v2/putOnAndUpdate/custom_commit") {
-			fmt.Println(e.Response.URL)
-			m := proto.NetworkGetResponseBody{RequestID: e.RequestID}
-			r, err := m.Call(page)
-			if err != nil {
-				return false
-			}
-			body := gson.NewFrom(r.Body)
+		go func(url string) {
+			if e.Response.Status >= 200 && e.Response.Status < 300 {
+				if strings.Contains(url, "v3/get_app_list") ||
+					strings.Contains(url, "/v1/init_multi_upload") ||
+					strings.Contains(url, "/open/distribution_update_edit_v2/putOnAndUpdate/custom_commit") {
 
-			if body.Get("ret").Int() == 0 {
-				if strings.Contains(e.Response.URL, "v3/get_app_list") {
-					for _, app := range body.Get("data").Get("apps").Arr() {
-						if app.Get("package_name").Str() == req.PackageName {
-							appIdCh <- app.Get("app_id").Str()
+					m := proto.NetworkGetResponseBody{RequestID: e.RequestID}
+					if r, err := m.Call(page); err == nil {
+						body := gson.NewFrom(r.Body)
+
+						if body.Get("ret").Int() == 0 {
+							if strings.Contains(e.Response.URL, "v3/get_app_list") {
+								for _, app := range body.Get("data").Get("apps").Arr() {
+									if app.Get("package_name").Str() == req.PackageName {
+										appIdCh <- app.Get("app_id").Str()
+									}
+								}
+							} else {
+								// 上传文件成功
+								// 或者提交审核成功
+								wait <- true
+							}
 						}
 					}
-				} else {
-					// 上传文件成功
-					// 或者提交审核成功
-					wait <- true
 				}
 			}
-		} else if strings.Contains(e.Response.URL, "distribution_update_edit_v2/putOnAndUpdate/request") {
-			wait <- true
-		}
+		}(e.Response.URL)
+
 		return false
 	})()
 
@@ -100,7 +101,10 @@ func (tc TencentClient) Do(page *rod.Page, req shared.PublishRequest) error {
 
 		page.MustElementR("label", "版本特性说明").MustParent().MustParent().MustElement("textarea").MustSelectAllText().MustInput(req.UpdateDesc)
 
-		page.MustElementR("label", "32位安装包").MustParent().MustParent().MustElement("input").SetFiles([]string{req.ApkFile})
+		go func() {
+			time.Sleep(time.Second * 2)
+			page.MustElementR("label", "32位安装包").MustParent().MustParent().MustElement("input").SetFiles([]string{req.ApkFile})
+		}()
 
 		fmt.Println("wait upload file")
 		<-wait // uploaded
@@ -109,10 +113,13 @@ func (tc TencentClient) Do(page *rod.Page, req shared.PublishRequest) error {
 			page.MustElement("#w-sys-page > div > div:nth-child(6) > form > div:nth-child(4) > div.ant-col.ant-col-4.ant-form-item-label.ant-form-item-label-left > label").
 				MustParent().MustParent().MustElement("input").SetFiles([]string{req.SecondApkFile})
 			<-wait // upload64
+		} else {
+			page.MustElementR("label", "不上传").MustParent().MustClick()
 		}
 
-		page.MustElementR("span", "提交审核").MustParent().MustClick()
+		page.MustElement("#w-sys-page > div > div:nth-child(2) > div > div > div.o-composition-button-group > span:nth-child(2) > span > button").MustParent().MustClick()
 
+		fmt.Println("wait commit")
 		<-wait
 	})
 }
