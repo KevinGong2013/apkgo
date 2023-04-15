@@ -29,7 +29,7 @@ jobs:
         with:
           registry: ghcr.io
           username: KevinGong2013
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GH_PAT }}
 
       # on your needs.
       - uses: goreleaser/goreleaser-action@v4
