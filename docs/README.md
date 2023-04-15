@@ -231,6 +231,8 @@ apkgo check
 
 ### 使用举例
 
+!> 如果你打算上传apk到小米应用商店，请确保apk文件所在目录支持写操作。具体原因见：[需要解析apk获取icon文件](https://github.com/KevinGong2013/apkgo/blob/d1d60cc87c9f15e66ec8711de6de43135bc0d9cb/cmd/xiaomi/client.go#L122)
+
 #### Example 1
 
 ``` shell
