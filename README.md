@@ -1,6 +1,6 @@
 # apkgo
 
-![v](https://img.shields.io/docker/v/kevingong2013/apkgo?arch=amd64&sort=date&style=flat-square) ![date](https://img.shields.io/github/release-date/kevingong2013/apkgo?style=flat-square) ![size](https://img.shields.io/docker/image-size/kevingong2013/apkgo?sort=semver&style=flat-square) ![build](https://img.shields.io/github/actions/workflow/status/kevingong2013/apkgo/release.yml?style=flat-square) ![g1](https://img.shields.io/github/go-mod/go-version/kevingong2013/apkgo?style=flat-square) ![go](https://img.shields.io/github/languages/top/kevingong2013/apkgo?style=flat-square) ![license](https://img.shields.io/github/license/kevingong2013/apkgo?style=flat-square)
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/KevinGong2013/apkgo) ![date](https://img.shields.io/github/release-date/kevingong2013/apkgo?style=flat-square) ![build](https://img.shields.io/github/actions/workflow/status/kevingong2013/apkgo/release.yml?style=flat-square) ![g1](https://img.shields.io/github/go-mod/go-version/kevingong2013/apkgo?style=flat-square) ![go](https://img.shields.io/github/languages/top/kevingong2013/apkgo?style=flat-square) ![license](https://img.shields.io/github/license/kevingong2013/apkgo?style=flat-square)
 
 快速将安卓应用更新到各主流应用商店
 
