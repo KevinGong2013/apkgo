@@ -1,13 +1,21 @@
 package xiaomi
 
 import (
+	"bytes"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"image/jpeg"
+	"image/png"
 	"net/url"
+	"os"
+	"path/filepath"
 
 	"github.com/KevinGong2013/apkgo/cmd/utils"
 	"github.com/go-resty/resty/v2"
+	"github.com/shogo82148/androidbinary"
+	"github.com/shogo82148/androidbinary/apk"
 )
 
 type Client struct {
@@ -27,8 +35,8 @@ func NewClient(userName string, privateKey string) (*Client, error) {
 
 	restyClient := resty.New()
 
-	restyClient.SetDebug(false)
-	restyClient.SetDebugBodyLimit(1000)
+	restyClient.SetDebug(true)
+	restyClient.SetDebugBodyLimit(2048)
 	restyClient.SetBaseURL("http://api.developer.xiaomi.com/devupload")
 
 	c := &Client{
@@ -110,6 +118,45 @@ type appInfoRequest struct {
 
 // synchroType 更新类型：0=新增，1=更新包，2=内容更新
 func (c *Client) push(synchroType int, apkPath, secondApkPath string, appInfo appInfoRequest) error {
+
+	// 2023/04/27
+	//
+	// From xiaomi developer:
+	// 现阶段麻烦就传现有的图标~某APP去年就因为没有传图标导致图标变为安卓机器人~近期我们又发现了几例这样的事故，所以临时把这个字段做了必填
+	// 后续会改成默认读取上一版本的图标
+
+	pkg, _ := apk.OpenFile(apkPath)
+	defer pkg.Close()
+	icon, err := pkg.Icon(&androidbinary.ResTableConfig{
+		Size: 512,
+	})
+	if err != nil {
+		return fmt.Errorf("提取appIcon失败。%s", err.Error())
+	}
+
+	iconTempPath := filepath.Join(filepath.Dir(apkPath), "icon.png")
+	file, err := os.Create(iconTempPath)
+	if err != nil {
+		return fmt.Errorf("创建apk icon 文件失败。 %s", err.Error())
+	}
+	if err := png.Encode(file, icon); err != nil {
+		return fmt.Errorf("encode icon file failed. %s", err.Error())
+	}
+
+	defer func() {
+		// 防止误删
+		if len(iconTempPath) > 6 {
+			os.Remove(iconTempPath)
+		}
+	}()
+
+	var jpegIcon bytes.Buffer
+	if err := jpeg.Encode(&jpegIcon, icon, &jpeg.Options{Quality: 100}); err != nil {
+		return fmt.Errorf("转换图标失败: %s", err.Error())
+	}
+
+	// iconReader := bytes.NewReader(jpegIcon.Bytes())
+
 	body := c.encode(map[string]interface{}{
 		"synchroType": synchroType,
 		"userName":    c.userName,
@@ -117,23 +164,35 @@ func (c *Client) push(synchroType int, apkPath, secondApkPath string, appInfo ap
 	}, map[string]string{
 		"apk":           apkPath,
 		"secondApkPath": secondApkPath,
+		"icon":          iconTempPath,
 	})
 
 	var r struct {
 		Result      int          `json:"result"`
-		PackageInfo *packageInfo `json:"packageInfo"`
+		PackageInfo *packageInfo `json:"packageInfo,omitempty"`
+		Message     string       `json:"message,omitempty"`
 	}
 
 	req := c.restyClient.R().
 		SetHeader("Content-Type", "application/x-www-form-urlencoded").
 		SetFormDataFromValues(body).
 		SetFile("apk", apkPath).
+		SetFile("icon", iconTempPath).
+		// SetFileReader("icon", "icon.jpeg", iconReader).
 		SetResult(&r)
 	if len(secondApkPath) > 0 {
 		req.SetFile("secondApkPath", secondApkPath)
 	}
 
-	_, err := req.Post("/dev/push")
+	_, err = req.Post("/dev/push")
+
+	if err != nil {
+		return err
+	}
+
+	if r.Result != 0 {
+		return errors.New(r.Message)
+	}
 
 	return err
 }
@@ -148,7 +207,8 @@ func (c *Client) encode(params map[string]interface{}, files map[string]string) 
 
 	sigItem := make(map[string]string)
 	sigItem["name"] = "RequestData"
-	sigItem["hash"] = utils.MD5(requestDataStr)
+	md5, _ := utils.MD5(requestDataStr)
+	sigItem["hash"] = md5
 
 	sig := make(map[string]interface{})
 	sigs := make([]map[string]string, 0)

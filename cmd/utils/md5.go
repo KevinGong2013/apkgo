@@ -5,12 +5,11 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
+	"strings"
 )
 
-func MD5(str string) string {
-	h := md5.New()
-	h.Write([]byte(str))
-	return hex.EncodeToString(h.Sum(nil))
+func MD5(str string) (string, error) {
+	return readerMD5(strings.NewReader(str))
 }
 
 func FileMD5(filePath string) (string, error) {
@@ -20,8 +19,12 @@ func FileMD5(filePath string) (string, error) {
 	}
 	defer f.Close()
 
+	return readerMD5(f)
+}
+
+func readerMD5(r io.Reader) (string, error) {
 	h := md5.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.Copy(h, r); err != nil {
 		return "", err
 	}
 

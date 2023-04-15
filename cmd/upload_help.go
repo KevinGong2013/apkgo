@@ -34,7 +34,6 @@ func assemblePublishRequest(cmd *cobra.Command) shared.PublishRequest {
 	// 解析apk文件
 	pkg, _ := apk.OpenFile(apkFile)
 	defer pkg.Close()
-
 	//
 	req := shared.PublishRequest{
 		AppName:     pkg.Manifest().App.Label.MustString(),
