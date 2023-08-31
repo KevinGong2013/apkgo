@@ -8,6 +8,7 @@ import (
 
 	"github.com/KevinGong2013/apkgo/cmd/fir"
 	"github.com/KevinGong2013/apkgo/cmd/huawei"
+	"github.com/KevinGong2013/apkgo/cmd/oppo"
 	"github.com/KevinGong2013/apkgo/cmd/pgyer"
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/KevinGong2013/apkgo/cmd/vivo"
@@ -20,6 +21,8 @@ func NewCurlClient(name, key, secret string) (shared.Publisher, error) {
 		return huawei.NewClient(key, secret)
 	case "xiaomi":
 		return xiaomi.NewClient(key, secret)
+	case "oppo":
+		return oppo.NewClient(key, secret)
 	case "vivo":
 		return vivo.NewClient(key, secret)
 	case "pgyer":

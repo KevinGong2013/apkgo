@@ -1,95 +1,106 @@
 package oppo
 
 import (
-	"fmt"
-	"strings"
+	"errors"
+	"strconv"
 	"time"
 
 	"github.com/KevinGong2013/apkgo/cmd/shared"
-	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/proto"
-	"github.com/ysmood/gson"
 )
 
-func do(page *rod.Page, req shared.PublishRequest) error {
+func (c *Client) Do(req shared.PublishRequest) error {
 
-	js := `async function postData() {
-	var formData = new FormData()
-	formData.append('type', 0)
-	formData.append('limit', 100)
-	formData.append('offset', 0)
-	const response = await fetch('https://open.oppomobile.com/resource/list/index.json', {
-		method: 'POST',
-		body: formData
-	})
-	return response.text()
-}`
+	param := publishRequestParameter{}
 
-	obj, err := page.Evaluate(&rod.EvalOptions{
-		ByValue:      true,
-		AwaitPromise: true,
-		JS:           js,
-		UserGesture:  true,
-	})
+	param.PkgName = req.PackageName
+	param.VersionCode = strconv.Itoa(int(req.VersionCode))
+
+	// 1. 获取一批基础信息
+	app, err := c.query(req.PackageName)
 	if err != nil {
-		fmt.Println(err)
+		return err
+	}
+	param.AppName = app.AppName
+
+	secondCategoryId, _ := strconv.Atoi(app.SecondCategoryID)
+	param.SecondCategoryId = secondCategoryId
+
+	thirdCategoryId, _ := strconv.Atoi(app.ThirdCategoryID)
+	param.ThirdCategoryId = thirdCategoryId
+
+	param.Summary = "[寓小二]公寓系统定制专家" //app.Summary
+	param.DetailDesc = app.DetailDesc
+	param.UpdateDesc = req.UpdateDesc
+	param.PrivacySourceUrl = app.PrivacySourceURL
+	param.IconUrl = app.IconURL
+	param.PicUrl = app.PicURL
+	param.OnlineType = 1
+	param.TestDesc = "submit by apkgo tool."
+	param.CopyrightUrl = app.CopyrightURL
+	param.BusinessUsername = app.BusinessUsername
+	param.BusinessMobile = app.BusinessMobile
+	param.BusinessEmail = app.BusinessEmail
+
+	ageLevel, _ := strconv.Atoi(app.AgeLevel)
+	param.AgeLevel = ageLevel
+
+	param.AdaptiveType = app.AdaptiveType
+	param.AdaptiveEquipment = app.AdaptiveEquipment
+
+	param.CustomerContact = app.CustomerContact
+
+	// 2. 上传apk包
+	uploadResult, err := c.uploadAPK(req.ApkFile)
+	if err != nil {
 		return err
 	}
 
-	r := gson.NewFrom(obj.Value.Str())
+	cpucode := 0
 
-	errno := r.Get("errno").Int()
-	if errno != 0 {
-		return fmt.Errorf("auth failed. %s", r.Raw())
+	if len(req.SecondApkFile) > 0 {
+		cpucode = 32
 	}
 
-	var appid string
-	for _, row := range r.Get("data").Get("rows").Arr() {
-		if row.Get("pkg_name").Str() == req.PackageName {
-			appid = row.Get("app_id").Str()
-			break
-		}
-	}
-
-	if len(appid) == 0 {
-		return fmt.Errorf("unsupported package. %s", req.PackageName)
-	}
-
-	return rod.Try(func() {
-		page.MustNavigate(fmt.Sprintf("https://open.oppomobile.com/new/mcom#/home/management/app-admin#/resource/update/index?app_id=%s&is_gray=2", appid))
-		iframe := page.MustElement(`iframe[id="menu_service_main_iframe"]`).MustFrame()
-		// 判断一下如果有弹窗，先关掉弹窗
-		time.Sleep(time.Second * 3)
-		exist, noButton, _ := iframe.Has(`#save-the-draft > div > div > div.modal-body > div:nth-child(2) > button.btn.no`)
-		if exist {
-			noButton.MustClick()
-		}
-
-		iframe.MustElement(`textarea[name="update_desc"`).MustSelectAllText().MustInput(req.UpdateDesc)
-
-		wait := page.EachEvent(func(e *proto.NetworkResponseReceived) bool {
-			url := e.Response.URL
-			if strings.Contains(url, "verify-info.json") {
-				m := proto.NetworkGetResponseBody{RequestID: e.RequestID}
-				if r, err := m.Call(page); err == nil {
-					body := gson.NewFrom(r.Body)
-					errno := body.Get("errono").Int()
-					if errno == 0 {
-						return true
-					}
-
-					if errno == 911046 {
-						return true
-					}
-
-				}
-				return false
-			}
-			return false
-		})
-
-		go iframe.MustElement(`#auditphasedbuttonclick`).MustClick()
-
-		wait()
+	param.ApkUrl = append(param.ApkUrl, apkInfo{
+		Url:     uploadResult.URL,
+		Md5:     uploadResult.MD5,
+		CpuCode: cpucode,
 	})
+
+	if len(req.SecondApkFile) > 0 {
+		secondResult, err := c.uploadAPK(req.SecondApkFile)
+		if err != nil {
+			return err
+		}
+		param.ApkUrl = append(param.ApkUrl, apkInfo{
+			Url:     secondResult.URL,
+			Md5:     secondResult.MD5,
+			CpuCode: 64,
+		})
+	}
+
+	// 3. 发布
+	if err := c.publish(param); err != nil {
+		return err
+	}
+
+	times := 0
+	for {
+		if times > 10 {
+			return errors.New("发布失败")
+		}
+		time.Sleep(time.Second * 10)
+		state, err := c.taskState(req.PackageName, strconv.Itoa(int(req.VersionCode)))
+		if err != nil {
+			return err
+		}
+		// 成功
+		if state.TaskState == "2" {
+			return nil
+		}
+		if state.TaskState == "3" {
+			return errors.New(state.ErrMsg)
+		}
+		times += 1
+	}
 }

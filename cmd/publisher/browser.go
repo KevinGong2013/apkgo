@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 
 	"github.com/KevinGong2013/apkgo/cmd/baidu"
-	"github.com/KevinGong2013/apkgo/cmd/oppo"
 	"github.com/KevinGong2013/apkgo/cmd/qh360"
 	"github.com/KevinGong2013/apkgo/cmd/shared"
 	"github.com/KevinGong2013/apkgo/cmd/tencent"
@@ -22,7 +21,6 @@ type browserRod interface {
 }
 
 var supportedRods = map[string]browserRod{
-	oppo.DefaultClient.Identifier():    oppo.DefaultClient,
 	tencent.DefaultClient.Identifier(): tencent.DefaultClient,
 	baidu.DefaultClient.Identifier():   baidu.DefaultClient,
 	qh360.DefaultClient.Identifier():   qh360.DefaultClient,
