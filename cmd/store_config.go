@@ -120,7 +120,7 @@ func InitPublishers(sc *StoreConfig) (curls []shared.Publisher, browsers []share
 
 	// type 3
 	for _, pc := range sc.Stores.Plugins {
-		if pc.Disable {
+		if pc.Disable || len(pc.Path) == 0 {
 			continue
 		}
 		if p, err = publisher.NewPluginPublisher(pc, developMode); err != nil {
