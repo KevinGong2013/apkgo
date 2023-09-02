@@ -32,7 +32,7 @@ func NewClient(clientId, clientSecret string) (*Client, error) {
 
 	restyClient.SetBaseURL("https://oop-openapi-cn.heytapmobi.com")
 	restyClient.SetHeader("Content-Type", "application/json")
-	restyClient.SetDebug(true)
+	restyClient.SetDebug(false)
 
 	// 获取token
 	var result struct {
