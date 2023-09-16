@@ -6,13 +6,11 @@ require (
 	github.com/go-resty/resty/v2 v2.7.0
 	github.com/hashicorp/go-hclog v0.14.1
 	github.com/spf13/cobra v1.6.1
-	github.com/ysmood/gson v0.7.3
 )
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.6
 	github.com/go-git/go-git/v5 v5.3.0
-	github.com/go-rod/rod v0.112.6
 	github.com/hashicorp/go-plugin v1.4.8
 	github.com/inconshreveable/mousetrap v1.0.1 // indirect
 	github.com/jedib0t/go-pretty/v6 v6.4.4
@@ -43,8 +41,6 @@ require (
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/sergi/go-diff v1.3.1 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
-	github.com/ysmood/goob v0.4.0 // indirect
-	github.com/ysmood/leakless v0.8.0 // indirect
 	golang.org/x/crypto v0.3.0 // indirect
 	golang.org/x/net v0.2.0 // indirect
 	golang.org/x/sys v0.5.0 // indirect

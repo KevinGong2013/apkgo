@@ -1,4 +1,3 @@
-FROM ghcr.io/go-rod/rod
+FROM scratch
 COPY apkgo /apkgo
-COPY docker/entrypoint.sh entrypoint.sh
-ENTRYPOINT /entrypoint.sh  $0 $@
+CMD /apkgo $@
