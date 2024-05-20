@@ -19,7 +19,7 @@ func NewClient(accessKey, accessSecret string) (*Client, error) {
 
 	restyClient := resty.New()
 
-	// restyClient.SetDebug(true)
+	restyClient.SetDebug(false)
 	restyClient.SetDebugBodyLimit(1000)
 
 	restyClient.SetBaseURL("https://developer-api.vivo.com.cn/router/rest")
