@@ -34,9 +34,7 @@ func ParseStoreSecretFile(identifiers []string) (*StoreConfig, error) {
 		identifiers = append(identifiers, "all")
 	}
 
-	storeCfgFile := storeCfgFilePath()
-
-	bytes, err := os.ReadFile(storeCfgFile)
+	bytes, err := os.ReadFile(secretsFile)
 	if err != nil {
 		return nil, err
 	}

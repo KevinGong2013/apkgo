@@ -61,7 +61,7 @@ echo $APKGO_HOME
 
 #### 2. 初始化
 
-新建`store.json`文件，在文件中配置各商店的认证信息
+新建`secrets.json`文件，在文件中配置各商店的认证信息
 
 ```json
 {
@@ -209,22 +209,6 @@ This binary is a plugin. These are not meant to be executed directly.
 Please execute the program that consumes these plugins, which will
 load any plugins automatically
 
-```
-
-###### 2. 配置插件
-
-打开`APKGO_HOME/config.yaml`文件，添加如下配置
-
-``` yaml
-# 示例忽略掉
-storage:
-    location: local
-# 主要是以下节点的配置
-plugins:
-      # apkgo 插件名称 联系插件开发者
-    - name: apkgo-plugin
-      # 插件在本地的路径
-      path: path/to/your/apk-plugin
 ```
 
 ###### 3. 验证

@@ -17,7 +17,6 @@ package cmd
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
@@ -45,34 +44,29 @@ func Execute(isRelease bool) {
 	}
 }
 
-var developMode bool
-
-var apkgoHome string
+var (
+	developMode bool
+	secretsFile string
+)
 
 func init() {
 
-	apkgoHome = os.Getenv("APKGO_HOME")
-
+	rootCmd.PersistentFlags().StringVar(&secretsFile, "secrets_file", "", "指定各应用商店秘钥文件路径，默认为 $HOME/.apkgo/secrets.json")
 	rootCmd.PersistentFlags().BoolVar(&developMode, "develop_mode", false, "开发者模式打开，会输出Trace级别的plugin日志")
 
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 
-	if len(apkgoHome) == 0 {
+	if len(secretsFile) == 0 {
 		home, err := homedir.Dir()
 		if err != nil {
 			panic(err)
 		}
-		apkgoHome = filepath.Join(home, ".apkgo")
-
-		if err := os.MkdirAll(apkgoHome, 0755); err != nil {
-			log.Fatalf("%s 目录不可读写，请重新设置环境变量 APKGO_HOME", apkgoHome)
-			return
-		}
+		secretsFile = filepath.Join(home, ".apkgo", "secrets.json")
 	}
 
 	cobra.OnInitialize(initConfig)
 }
 
 func initConfig() {
-	fmt.Println(text.FgCyan.Sprint("export APKGO_HOME=", apkgoHome))
+	fmt.Println(text.FgCyan.Sprint("store secrets config file path: ", secretsFile))
 }
