@@ -66,16 +66,6 @@ var uploadCmd = &cobra.Command{
 	Run: runUpload,
 }
 
-// var stores []string
-
-// var file string
-// var file32 string
-// var file64 string
-
-// var releaseNots string
-
-// var disableDoubleCheck bool
-
 type Notifiers struct {
 	Lark     *notifiers.LarkNotifier     `json:"lark,omitempty"`
 	DingTalk *notifiers.DingTalkNotifier `json:"dingtalk,omitempty"`

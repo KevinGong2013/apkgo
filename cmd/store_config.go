@@ -9,7 +9,6 @@ import (
 	"github.com/KevinGong2013/apkgo/cmd/notifiers"
 	"github.com/KevinGong2013/apkgo/cmd/publisher"
 	"github.com/KevinGong2013/apkgo/cmd/shared"
-	"github.com/jedib0t/go-pretty/v6/text"
 )
 
 type StoreConfig struct {
@@ -50,26 +49,6 @@ func ParseStoreSecretFile(identifiers []string) (*StoreConfig, error) {
 		return nil, err
 	}
 
-	if len(conf.Stores.Plugins) > 0 {
-		// 从本地整体配置中匹配插件地址
-		c, err := LoadConfig()
-		if err != nil {
-			return nil, err
-		}
-
-		for _, p := range conf.Stores.Plugins {
-			for _, i := range c.Plugins {
-				if p.Name == i.Name {
-					p.Path = i.Path
-					break
-				}
-			}
-			if len(p.Path) == 0 {
-				fmt.Println(text.FgYellow.Sprintf("插件%s.Path未配置", p.Name))
-			}
-		}
-	}
-
 	// 根据 identifiers  将不需要的商店过滤掉
 	if len(identifiers) == 0 || (len(identifiers) == 1 && identifiers[0] == "all") {
 		return &conf, nil
@@ -107,7 +86,7 @@ func InitPublishers(sc *StoreConfig) (curls []shared.Publisher, browsers []share
 	// type 2
 	if len(sc.Stores.Browsers) > 0 {
 		for _, b := range sc.Stores.Browsers {
-			fmt.Println("浏览器上传已移除,请删除配置文件中的浏览器配置. [browsers.%s]" + b.Key)
+			fmt.Printf("浏览器上传已移除,请删除配置文件中的浏览器配置. [browsers.%s]\n", b.Name)
 		}
 
 	}
