@@ -61,28 +61,52 @@ echo $APKGO_HOME
 
 #### 2. 初始化
 
-apkgo支持两种模式
+新建`store.json`文件，在文件中配置各商店的认证信息
 
-- 单机（即只在初始化的机器上使用）
-- 团队（一人维护认证信息，其他成员皆可发布，也可与CI/CD及其他工具配合使用）
-
-!> 团队模式下使用`git repo`同步各商店认证信息，注意一定要创建私有的git仓库并合理的配置仓库读写权限。
-
-``` shell
-# 单机
-apkgo init --local
+```json
+{
+    "stores": {
+        "curls": [
+            {
+                "name": "huawei",
+                "key": "1093286381296",
+                "secret": "D4F2F8AFEEF23EE03A29Exxx"
+            },
+        ],
+        "plugins": [
+            {
+                "name": "cams",
+                "author": "kevin",
+                "args": [
+                    ""
+                ],
+                "path": "/Users/gix/.apkgo/apkgo-cams_Darwin_x86_64/apkgo-cams",
+                "version": 1,
+                "magic_cookie_key": "cams_key",
+                "magic_cookie_value": "cams_value"
+            }
+        ]
+    },
+    "notifiers": {
+        "lark": {
+            "key": "[替换为你的值]",
+            "secret_token": "[替换为你的值]"
+        },
+        "dingtalk": {
+            "access_token": "[替换为你的值]",
+            "secret_token": "[替换为你的值]"
+        },
+        "wecom": {
+            "Key": "[替换为你的值]"
+        },
+        "webhook": {
+            "Url": [
+                "[替换为你的值]"
+            ]
+        }
+    }
+}
 ```
-
-或者
-
-``` shell
-# 根据提示提供对应信息即可
-apkgo init
-```
-
-#### 3. 认证信息
-
-打开初始配置文件`$APKGO_HOME/secrets/store_config.json`，可以看到`stores`节点下包含了所有支持的商店。
 
 所有商店的认证信息分为两类：
 
@@ -164,17 +188,7 @@ apkgo init
 ``` shell
 # 会检查所有配置的认证信息是否有效
 # 如果全部有效且是团队使用则会将配置信息同步至git repo
-apkgo check
-```
-
-- ##### 浏览器登陆
-
-`oppo`,`tencent`,`baidu`,`qh360`均使用这种认证方式
-
-``` shell
-# 执行以下命令如果，oppo市场认证信息无效则会打开oppo管理后台
-# 在管理后台登录成功以后会自动关闭浏览器同步认证信息
-apkgo check oppo
+apkgo doctor
 ```
 
 - ##### 内部服务
@@ -223,10 +237,10 @@ apkgo check apkgo-plugin
 
 ![v](https://img.shields.io/docker/v/kevingong2013/apkgo?arch=amd64&sort=date)
 
-在发布应用之前请确认已经升级apkgo到最新版本，然后执行`check`命令，确认本地认证信息有效
+在发布应用之前请确认已经升级apkgo到最新版本，然后执行`doctor`命令，确认本地认证信息有效
 
 ``` shell
-apkgo check
+apkgo doctor
 ```
 
 ### 使用举例
