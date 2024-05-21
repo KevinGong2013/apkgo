@@ -21,7 +21,7 @@
 
 ```shell
 # 发布
-docker run -v $PWD/secrets.json:/root/secrets.json ghcr.io/kevingong2013/apkgo:latest upload --secrets_file /root/secrets.json
+docker run -v ~/.apkgo:/root ghcr.io/kevingong2013/apkgo:v1.1.0 /apkgo doctor --secrets_file /root/secrets.json
 ```
 
 ## License
