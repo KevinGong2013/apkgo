@@ -20,11 +20,8 @@
 ## 快速玩一玩
 
 ```shell
-# 初始化
-docker run -v $PWD:/root/.apkgo ghcr.io/kevingong2013/apkgo:latest init --git https://github.com/your/conf/repo --username kevin --password your_pass
-
 # 发布
-docker run -v $PWD:/root/.apkgo ghcr.io/kevingong2013/apkgo:latest upload
+docker run -v $PWD/secrets.json:/root/secrets.json ghcr.io/kevingong2013/apkgo:latest upload --secrets_file /root/secrets.json
 ```
 
 ## License

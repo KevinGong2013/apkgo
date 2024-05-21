@@ -32,7 +32,7 @@ func CheckApkgoEnv() error {
 	// 检查apkgo是否正确初始化
 	sc, err := ParseStoreSecretFile(nil)
 	if err != nil {
-		return fmt.Errorf("应用商店密钥配置文件 store.json 配置不正确. %s", text.FgRed.Sprint(err.Error()))
+		return fmt.Errorf("应用商店密钥配置文件%s配置不正确. %s", secretsFile, text.FgRed.Sprint(err.Error()))
 	}
 
 	curls, _, plugins, err := InitPublishers(sc)
