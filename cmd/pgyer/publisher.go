@@ -24,7 +24,12 @@ func (c *Client) Do(req shared.PublishRequest) error {
 		Message string `json:"message"`
 	}
 
+	if resp.Code != 0 {
+		return fmt.Errorf("get cos token failed. %s", resp.Message)
+	}
+
 	resp.Data.Params["key"] = resp.Data.Key
+
 	r, err := c.restyClient.R().
 		SetFormData(resp.Data.Params).
 		SetFile("file", req.ApkFile).
