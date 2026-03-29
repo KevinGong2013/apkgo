@@ -50,6 +50,7 @@ dockers:
     build_flag_templates:
       - "--pull"
     goarch: amd64
+    skip_push: auto
 
 brews:
   - name: apkgo
