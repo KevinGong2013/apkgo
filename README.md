@@ -22,16 +22,27 @@
 # AI Agent Skill (支持 Claude Code、Cursor、Windsurf 等 40+ agent)
 npx skills add KevinGong2013/apkgo
 
-# Linux (direct download)
+# macOS (Apple Silicon)
+curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Darwin_arm64.tar.gz | tar xz -C /usr/local/bin apkgo
+
+# macOS (Intel)
+curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Darwin_x86_64.tar.gz | tar xz -C /usr/local/bin apkgo
+
+# Linux (x86_64)
 curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Linux_x86_64.tar.gz | tar xz -C /usr/local/bin apkgo
 
-# Go install
+# Linux (arm64)
+curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Linux_arm64.tar.gz | tar xz -C /usr/local/bin apkgo
+
+# Windows (PowerShell)
+# 从 https://github.com/KevinGong2013/apkgo/releases/latest 下载 apkgo_Windows_x86_64.zip
+# 解压后将 apkgo.exe 添加到 PATH
+
+# Go
 go install github.com/KevinGong2013/apkgo@latest
 
 # Docker
 docker pull ghcr.io/kevingong2013/apkgo:latest
-
-# 或从 Releases 页面下载预编译二进制
 ```
 
 ## 快速开始

@@ -42,3 +42,12 @@ changelog:
       - "^docs:"
       - "^test:"
 
+dockers:
+  - image_templates:
+      - "ghcr.io/kevingong2013/apkgo:{{ .Tag }}"
+      - "ghcr.io/kevingong2013/apkgo:latest"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--pull"
+    goarch: amd64
+
