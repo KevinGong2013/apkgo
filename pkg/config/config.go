@@ -50,6 +50,25 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// LoadOrEmpty is like Load but returns an empty config instead of an error
+// when no stores are configured. Used by `apkgo serve` for zero-config startup.
+func LoadOrEmpty(path string) *Config {
+	cfg, err := Load(path)
+	if err != nil {
+		return &Config{Stores: map[string]map[string]string{}}
+	}
+	return cfg
+}
+
+// Save writes the config to a YAML file.
+func (c *Config) Save(path string) error {
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
 // mergeEnv scans environment for APKGO_<STORE>_<KEY> variables and
 // merges them into the config. Env vars override file values.
 func mergeEnv(cfg *Config) {

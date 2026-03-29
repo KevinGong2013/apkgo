@@ -18,8 +18,20 @@
     -webkit-font-smoothing: antialiased;
   }
   .container { max-width: 640px; margin: 0 auto; padding: 40px 20px; }
-  h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 24px; }
+  h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; }
   h1 span { color: var(--accent); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
+  .tab {
+    padding: 10px 20px; cursor: pointer; font-size: 0.9rem;
+    color: var(--dim); border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
 
   /* Drop zone */
   .drop-zone {
@@ -29,9 +41,7 @@
   }
   .drop-zone:hover, .drop-zone.over { border-color: var(--accent); background: #0d1b2a; }
   .drop-zone.has-file { border-color: var(--green); border-style: solid; padding: 20px; }
-  .drop-zone input[type="file"] {
-    position: absolute; inset: 0; opacity: 0; cursor: pointer;
-  }
+  .drop-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
   .drop-zone .label { color: var(--dim); font-size: 0.95rem; }
   .drop-zone .file-info { text-align: left; }
   .drop-zone .file-info .name { font-weight: 600; margin-bottom: 4px; }
@@ -46,35 +56,35 @@
   .store-chip {
     display: flex; align-items: center; gap: 6px;
     background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-    padding: 6px 12px; font-size: 0.875rem; cursor: pointer; transition: all 0.1s;
-    user-select: none;
+    padding: 6px 12px; font-size: 0.875rem; cursor: pointer; transition: all 0.1s; user-select: none;
   }
   .store-chip:hover { border-color: var(--dim); }
   .store-chip.selected { border-color: var(--accent); background: #0d1b2a; }
   .store-chip input { display: none; }
-  .store-chip .dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--border); transition: background 0.1s;
-  }
+  .store-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); transition: background 0.1s; }
   .store-chip.selected .dot { background: var(--accent); }
+  .no-stores { color: var(--dim); font-size: 0.85rem; padding: 8px 0; }
 
   /* Notes */
-  textarea {
+  textarea, input[type="text"], input[type="password"] {
     width: 100%; background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); color: var(--text); padding: 12px;
-    font-family: inherit; font-size: 0.9rem; resize: vertical; min-height: 80px;
+    border-radius: var(--radius); color: var(--text); padding: 10px 12px;
+    font-family: inherit; font-size: 0.9rem;
   }
-  textarea:focus { outline: none; border-color: var(--accent); }
-  textarea::placeholder { color: #525252; }
+  textarea { resize: vertical; min-height: 80px; }
+  textarea:focus, input:focus { outline: none; border-color: var(--accent); }
+  textarea::placeholder, input::placeholder { color: #525252; }
 
-  /* Button */
-  .btn-upload {
-    width: 100%; padding: 14px; border: none; border-radius: var(--radius);
-    background: var(--accent); color: #fff; font-size: 1rem; font-weight: 600;
-    cursor: pointer; transition: background 0.15s; margin-top: 20px;
+  /* Buttons */
+  .btn {
+    width: 100%; padding: 12px; border: none; border-radius: var(--radius);
+    font-size: 1rem; font-weight: 600; cursor: pointer; transition: background 0.15s;
   }
-  .btn-upload:hover:not(:disabled) { background: #2563eb; }
-  .btn-upload:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; margin-top: 20px; }
+  .btn-primary:hover:not(:disabled) { background: #2563eb; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); margin-top: 12px; }
+  .btn-secondary:hover { border-color: var(--dim); }
 
   /* Results */
   .results { margin-top: 24px; }
@@ -88,7 +98,47 @@
   .result-card .status { font-size: 0.85rem; font-weight: 500; }
   .result-card .status.ok { color: var(--green); }
   .result-card .status.fail { color: var(--red); }
-  .result-card .error-msg { color: var(--red); font-size: 0.8rem; margin-top: 4px; }
+  .result-card .error-msg { color: var(--red); font-size: 0.8rem; margin-top: 4px; word-break: break-all; }
+
+  /* APK info banner */
+  .apk-banner {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px;
+    font-family: monospace; font-size: 0.85rem; line-height: 1.8;
+  }
+  .apk-banner .k { color: var(--dim); }
+
+  /* Settings */
+  .store-config {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 12px; overflow: hidden;
+  }
+  .store-config-header {
+    padding: 12px 16px; cursor: pointer; display: flex; justify-content: space-between;
+    align-items: center; font-weight: 500;
+  }
+  .store-config-header:hover { background: #1a1a1a; }
+  .store-config-header .arrow { color: var(--dim); font-size: 0.8rem; transition: transform 0.15s; }
+  .store-config-header .arrow.open { transform: rotate(90deg); }
+  .store-config-header .badge {
+    font-size: 0.7rem; padding: 2px 6px; border-radius: 4px;
+    background: #1a2e1a; color: var(--green);
+  }
+  .store-config-header .badge.empty { background: #2a2020; color: var(--dim); }
+  .store-config-body { padding: 0 16px 16px; display: none; }
+  .store-config-body.open { display: block; }
+  .field-group { margin-bottom: 12px; }
+  .field-label {
+    font-size: 0.8rem; color: var(--dim); margin-bottom: 4px;
+    display: flex; justify-content: space-between;
+  }
+  .field-label .req { color: var(--red); font-size: 0.7rem; }
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--green); color: #000; padding: 10px 24px; border-radius: 8px;
+    font-weight: 500; font-size: 0.9rem; opacity: 0; transition: opacity 0.3s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
 
   /* Spinner */
   .spinner {
@@ -98,86 +148,188 @@
     vertical-align: middle; margin-right: 8px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* APK info banner */
-  .apk-banner {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px;
-    font-family: monospace; font-size: 0.85rem; line-height: 1.8;
-  }
-  .apk-banner .k { color: var(--dim); }
-  .apk-banner .v { color: var(--text); }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1><span>apkgo</span> upload</h1>
+  <h1><span>apkgo</span></h1>
 
-  <!-- Primary APK -->
-  <div class="drop-zone" id="dropZone">
-    <input type="file" accept=".apk" id="fileInput">
-    <div class="label" id="dropLabel">Drop APK here or click to select</div>
-    <div class="file-info" id="fileInfo" style="display:none">
-      <div class="name" id="fileName"></div>
-      <div class="meta" id="fileMeta"></div>
+  <div class="tabs">
+    <div class="tab active" data-tab="upload">Upload</div>
+    <div class="tab" data-tab="settings">Settings</div>
+  </div>
+
+  <!-- Upload Tab -->
+  <div class="tab-content active" id="tab-upload">
+    <div class="drop-zone" id="dropZone">
+      <input type="file" accept=".apk" id="fileInput">
+      <div class="label" id="dropLabel">Drop APK here or click to select</div>
+      <div class="file-info" id="fileInfo" style="display:none">
+        <div class="name" id="fileName"></div>
+        <div class="meta" id="fileMeta"></div>
+      </div>
     </div>
-  </div>
 
-  <!-- 64-bit APK (optional) -->
-  <div class="drop-zone drop-zone-sm" id="dropZone64">
-    <input type="file" accept=".apk" id="fileInput64">
-    <div class="label" id="dropLabel64">64-bit APK (optional)</div>
-    <div class="file-info" id="fileInfo64" style="display:none">
-      <div class="name" id="fileName64"></div>
+    <div class="drop-zone drop-zone-sm" id="dropZone64">
+      <input type="file" accept=".apk" id="fileInput64">
+      <div class="label" id="dropLabel64">64-bit APK (optional)</div>
+      <div class="file-info" id="fileInfo64" style="display:none">
+        <div class="name" id="fileName64"></div>
+      </div>
     </div>
-  </div>
 
-  <!-- Stores -->
-  <div class="section">
-    <div class="section-label">Stores</div>
-    <div class="store-grid" id="storeGrid">
-      <div class="label" style="color:var(--dim);font-size:0.85rem">Loading...</div>
+    <div class="section">
+      <div class="section-label">Stores</div>
+      <div class="store-grid" id="storeGrid">
+        <div class="no-stores" id="noStores">No stores configured. Go to Settings to add credentials.</div>
+      </div>
     </div>
+
+    <div class="section">
+      <div class="section-label">Release Notes</div>
+      <textarea id="notes" placeholder="What's new in this version..."></textarea>
+    </div>
+
+    <button class="btn btn-primary" id="uploadBtn" disabled>Upload</button>
+    <div class="results" id="results"></div>
   </div>
 
-  <!-- Release notes -->
-  <div class="section">
-    <div class="section-label">Release Notes</div>
-    <textarea id="notes" placeholder="What's new in this version..."></textarea>
+  <!-- Settings Tab -->
+  <div class="tab-content" id="tab-settings">
+    <div id="settingsContainer"></div>
+    <button class="btn btn-primary" id="saveBtn">Save</button>
   </div>
-
-  <!-- Upload button -->
-  <button class="btn-upload" id="uploadBtn" disabled>Upload</button>
-
-  <!-- Results -->
-  <div class="results" id="results"></div>
 </div>
+
+<div class="toast" id="toast"></div>
 
 <script>
 const $ = s => document.querySelector(s);
-let selectedFile = null, selectedFile64 = null, storeNames = [];
+const $$ = s => document.querySelectorAll(s);
+let selectedFile = null, selectedFile64 = null, configuredStores = [], allSchemas = [];
 
-// Load stores
-fetch('/api/stores').then(r => r.json()).then(data => {
-  storeNames = data.stores || [];
-  const grid = $('#storeGrid');
-  grid.innerHTML = '';
-  storeNames.forEach(name => {
-    const chip = document.createElement('label');
-    chip.className = 'store-chip selected';
-    chip.innerHTML = `<input type="checkbox" value="${name}" checked><span class="dot"></span>${name}`;
-    chip.addEventListener('click', () => {
-      setTimeout(() => {
-        const cb = chip.querySelector('input');
-        chip.classList.toggle('selected', cb.checked);
-      }, 0);
-    });
-    grid.appendChild(chip);
+// Tabs
+$$('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    $$('.tab').forEach(t => t.classList.remove('active'));
+    $$('.tab-content').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    $(`#tab-${tab.dataset.tab}`).classList.add('active');
   });
 });
 
-// Drop zone - primary
-function setupDrop(zoneId, inputId, labelId, infoId, nameId, metaId, onFile) {
+function showToast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+// Load configured stores for upload tab
+function loadStores() {
+  fetch('/api/stores').then(r => r.json()).then(data => {
+    configuredStores = data.stores || [];
+    const grid = $('#storeGrid');
+    grid.innerHTML = '';
+    if (configuredStores.length === 0) {
+      grid.innerHTML = '<div class="no-stores">No stores configured. Go to Settings to add credentials.</div>';
+      return;
+    }
+    configuredStores.forEach(name => {
+      const chip = document.createElement('label');
+      chip.className = 'store-chip selected';
+      chip.innerHTML = `<input type="checkbox" value="${name}" checked><span class="dot"></span>${name}`;
+      chip.addEventListener('click', () => {
+        setTimeout(() => chip.classList.toggle('selected', chip.querySelector('input').checked), 0);
+      });
+      grid.appendChild(chip);
+    });
+  });
+}
+
+// Load schemas + current config for settings tab
+function loadSettings() {
+  Promise.all([
+    fetch('/api/stores/schema').then(r => r.json()),
+    fetch('/api/config').then(r => r.json())
+  ]).then(([schemaData, configData]) => {
+    allSchemas = schemaData.stores || [];
+    const currentConfig = configData.stores || {};
+    const container = $('#settingsContainer');
+    container.innerHTML = '';
+
+    allSchemas.forEach(schema => {
+      const isConfigured = !!currentConfig[schema.name];
+      const div = document.createElement('div');
+      div.className = 'store-config';
+      const badge = isConfigured
+        ? '<span class="badge">configured</span>'
+        : '<span class="badge empty">not set</span>';
+      div.innerHTML = `
+        <div class="store-config-header" data-store="${schema.name}">
+          <div>${schema.name} ${badge}</div>
+          <span class="arrow">&#9654;</span>
+        </div>
+        <div class="store-config-body" id="cfg-${schema.name}">
+          ${schema.fields.map(f => `
+            <div class="field-group">
+              <div class="field-label">
+                <span>${f.key}</span>
+                ${f.required ? '<span class="req">required</span>' : ''}
+              </div>
+              <input type="${f.key.includes('secret') || f.key.includes('private') ? 'password' : 'text'}"
+                placeholder="${f.desc}"
+                data-store="${schema.name}" data-key="${f.key}"
+                value="">
+            </div>
+          `).join('')}
+        </div>
+      `;
+      container.appendChild(div);
+
+      // Toggle
+      div.querySelector('.store-config-header').addEventListener('click', () => {
+        const body = div.querySelector('.store-config-body');
+        const arrow = div.querySelector('.arrow');
+        body.classList.toggle('open');
+        arrow.classList.toggle('open');
+      });
+    });
+  });
+}
+
+// Save settings
+$('#saveBtn').addEventListener('click', async () => {
+  const stores = {};
+  $$('#settingsContainer input').forEach(input => {
+    const s = input.dataset.store, k = input.dataset.key, v = input.value.trim();
+    if (v) {
+      if (!stores[s]) stores[s] = {};
+      stores[s][k] = v;
+    }
+  });
+
+  try {
+    const resp = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({stores})
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showToast('Error: ' + data.error);
+    } else {
+      showToast('Saved to ' + data.saved);
+      loadStores();
+      loadSettings();
+    }
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  }
+});
+
+// Drop zones
+function setupDrop(zoneId, inputId, labelId, infoId, nameId, onFile) {
   const zone = $(zoneId), input = $(inputId);
   ['dragover','dragenter'].forEach(e => zone.addEventListener(e, ev => { ev.preventDefault(); zone.classList.add('over'); }));
   ['dragleave','drop'].forEach(e => zone.addEventListener(e, () => zone.classList.remove('over')));
@@ -185,7 +337,7 @@ function setupDrop(zoneId, inputId, labelId, infoId, nameId, metaId, onFile) {
   input.addEventListener('change', () => { if (input.files.length) onFile(input.files[0]); });
 }
 
-setupDrop('#dropZone', '#fileInput', '#dropLabel', '#fileInfo', '#fileName', '#fileMeta',
+setupDrop('#dropZone', '#fileInput', '#dropLabel', '#fileInfo', '#fileName',
   file => {
     selectedFile = file;
     $('#dropLabel').style.display = 'none';
@@ -193,11 +345,11 @@ setupDrop('#dropZone', '#fileInput', '#dropLabel', '#fileInfo', '#fileName', '#f
     $('#fileName').textContent = file.name;
     $('#fileMeta').textContent = `${(file.size / 1048576).toFixed(1)} MB`;
     $('#dropZone').classList.add('has-file');
-    $('#uploadBtn').disabled = false;
+    $('#uploadBtn').disabled = configuredStores.length === 0;
   }
 );
 
-setupDrop('#dropZone64', '#fileInput64', '#dropLabel64', '#fileInfo64', '#fileName64', null,
+setupDrop('#dropZone64', '#fileInput64', '#dropLabel64', '#fileInfo64', '#fileName64',
   file => {
     selectedFile64 = file;
     $('#dropLabel64').style.display = 'none';
@@ -210,43 +362,36 @@ setupDrop('#dropZone64', '#fileInput64', '#dropLabel64', '#fileInfo64', '#fileNa
 // Upload
 $('#uploadBtn').addEventListener('click', async () => {
   if (!selectedFile) return;
-
   const btn = $('#uploadBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Uploading...';
   $('#results').innerHTML = '';
 
-  const checked = [...document.querySelectorAll('.store-chip input:checked')].map(cb => cb.value);
+  const checked = [...$$('.store-chip input:checked')].map(cb => cb.value);
   const form = new FormData();
   form.append('file', selectedFile);
   if (selectedFile64) form.append('file64', selectedFile64);
-  if (checked.length && checked.length < storeNames.length) form.append('stores', checked.join(','));
+  if (checked.length && checked.length < configuredStores.length) form.append('stores', checked.join(','));
   const notes = $('#notes').value.trim();
   if (notes) form.append('notes', notes);
 
   try {
     const resp = await fetch('/api/upload', { method: 'POST', body: form });
     const data = await resp.json();
-
     if (data.error) {
       $('#results').innerHTML = `<div class="result-card"><span class="status fail">${data.error}</span></div>`;
       return;
     }
-
-    // Show APK info
     let html = '';
     if (data.apk) {
       html += `<div class="apk-banner">
-        <span class="k">package:</span> <span class="v">${data.apk.package}</span><br>
-        <span class="k">version:</span> <span class="v">${data.apk.version_name} (${data.apk.version_code})</span><br>
-        <span class="k">app:</span> <span class="v">${data.apk.app_name}</span>
+        <span class="k">package:</span> ${data.apk.package}<br>
+        <span class="k">version:</span> ${data.apk.version_name} (${data.apk.version_code})<br>
+        <span class="k">app:</span> ${data.apk.app_name}
       </div>`;
     }
-
-    // Show results
     (data.results || []).forEach(r => {
       const cls = r.success ? 'ok' : 'fail';
-      const icon = r.success ? 'OK' : 'FAIL';
       const dur = r.duration_ms ? `${(r.duration_ms / 1000).toFixed(1)}s` : '';
       html += `<div class="result-card">
         <div>
@@ -254,12 +399,11 @@ $('#uploadBtn').addEventListener('click', async () => {
           ${r.error ? `<div class="error-msg">${r.error}</div>` : ''}
         </div>
         <div style="text-align:right">
-          <div class="status ${cls}">${icon}</div>
+          <div class="status ${cls}">${r.success ? 'OK' : 'FAIL'}</div>
           <div class="duration">${dur}</div>
         </div>
       </div>`;
     });
-
     $('#results').innerHTML = html;
   } catch (err) {
     $('#results').innerHTML = `<div class="result-card"><span class="status fail">${err.message}</span></div>`;
@@ -268,6 +412,10 @@ $('#uploadBtn').addEventListener('click', async () => {
     btn.textContent = 'Upload';
   }
 });
+
+// Init
+loadStores();
+loadSettings();
 </script>
 </body>
 </html>

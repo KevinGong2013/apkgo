@@ -23,14 +23,12 @@ var serveCmd = &cobra.Command{
   apkgo serve -p 9090
   apkgo serve -c production.yaml`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(flagConfig)
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
-		}
+		cfg := config.LoadOrEmpty(flagConfig)
 
 		s := &server.Server{
-			Config:  cfg,
-			Timeout: flagTimeout,
+			Config:     cfg,
+			ConfigPath: flagConfig,
+			Timeout:    flagTimeout,
 		}
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "apkgo server running at http://localhost:%d\n", flagPort)
