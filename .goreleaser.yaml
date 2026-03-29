@@ -1,11 +1,9 @@
-# This is an example .goreleaser.yml file with some sensible defaults.
-# Make sure to check the documentation at https://goreleaser.com
+version: 2
+
 before:
   hooks:
-    # You may remove this if you don't use go modules.
     - go mod tidy
-    # you may remove this if you don't need go generate
-    # - go generate ./...
+
 builds:
   - env:
       - CGO_ENABLED=0
@@ -16,14 +14,16 @@ builds:
     goarch:
       - amd64
       - arm64
-    ignore:
-      - goos: darwin
-        goarch: "386"
     ldflags:
       - -s -w -X github.com/KevinGong2013/apkgo/cmd.Version={{ .Version }} -X github.com/KevinGong2013/apkgo/cmd.Commit={{ .Commit }} -X github.com/KevinGong2013/apkgo/cmd.Date={{ .Date }} -X github.com/KevinGong2013/apkgo/cmd.BuiltBy=goreleaser
+
 archives:
-  - format: tar.gz
-    # this name template makes the OS and Arch compatible with the results of uname.
+  - formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -31,42 +31,29 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # use zip for windows archives
-    format_overrides:
-      - goos: windows
-        format: zip
+
 checksum:
   name_template: "checksums.txt"
-snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+
 changelog:
   sort: asc
   filters:
     exclude:
       - "^docs:"
       - "^test:"
-# The lines beneath this are called `modelines`. See `:help modeline`
-# Feel free to remove those if you don't want/use them.
-# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
-# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
 brews:
   - name: apkgo
-    homepage: https://apkgo.com.cn
-    description: Upload apk to anywhere
+    homepage: https://github.com/KevinGong2013/apkgo
+    description: Upload APK to multiple Android app stores. Designed for CI/CD and AI agents.
     license: "Apache-2.0"
     repository:
       owner: KevinGong2013
       name: homebrew-tap
       branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     commit_author:
       name: Kevin.Gong
       email: aoxianglele@cloud.com
     install: |-
       bin.install "apkgo"
-# dockers:
-#   - dockerfile: docker/Dockerfile
-#     image_templates:
-#       - ghcr.io/kevingong2013/apkgo:{{ .Tag }}
-#   - dockerfile: docker/Dockerfile
-#     image_templates:
-#       - ghcr.io/kevingong2013/apkgo:latest
