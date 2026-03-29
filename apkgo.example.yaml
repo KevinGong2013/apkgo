@@ -1,0 +1,32 @@
+# apkgo configuration example
+# Copy this file to apkgo.yaml and fill in your credentials.
+
+stores:
+  huawei:
+    client_id: ""
+    client_secret: ""
+    # app_id is optional; auto-detected from package name if omitted
+    # app_id: ""
+
+  xiaomi:
+    email: ""
+    private_key: ""
+
+  oppo:
+    client_id: ""
+    client_secret: ""
+
+  vivo:
+    access_key: ""
+    access_secret: ""
+
+  honor:
+    client_id: ""
+    client_secret: ""
+    app_id: ""
+
+  # custom:
+  #   url: "https://your-server.com/api/upload"
+  #   method: "POST"
+  #   field_name: "file"
+  #   header_Authorization: "Bearer your-token"

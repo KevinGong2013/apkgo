@@ -1,7 +1,21 @@
-.apkgo.json
-demo_plugin
+# Binary
+apkgo
+apkgo.exe
 dist/
+
+# Config with secrets
+apkgo.yaml
+secrets.json
+
+# APK files
 *.apk
-apkgo-cams
-.vscode
-test.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

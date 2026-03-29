@@ -1,72 +1,81 @@
-/*
-Copyright © 2023 Kevin Gong <aoxianglele@icloud.com>
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-	http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
-	"path/filepath"
+	"time"
 
-	"github.com/jedib0t/go-pretty/v6/text"
-	"github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
+)
+
+var (
+	flagConfig  string
+	flagOutput  string
+	flagVerbose bool
+	flagTimeout time.Duration
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "apkgo",
-	Short: fmt.Sprintf("中国安卓应用分发渠道更新工具。项目主页：%s", text.FgCyan.Sprint("https://apkgo.com.cn")),
+	Short: "Upload APKs to multiple Android app stores",
+	Long:  "A CLI tool for distributing APK packages to Huawei, Xiaomi, OPPO, vivo, Honor, and custom servers. Designed for AI agent integration.",
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Configure slog to stderr so stdout stays clean for structured output
+		level := slog.LevelWarn
+		if flagVerbose {
+			level = slog.LevelDebug
+		}
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	},
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
-
-var isDebugMode = true
-
-func Execute(isRelease bool) {
-	isDebugMode = !isRelease
-	if isDebugMode {
-		fmt.Println(text.FgHiYellow.Sprint("Debug mode will use mock publisher \n"))
-	}
-	err := rootCmd.Execute()
-
-	if err != nil {
-		os.Exit(1)
-	}
-}
-
-var (
-	developMode bool
-	secretsFile string
-)
 
 func init() {
-
-	rootCmd.PersistentFlags().StringVar(&secretsFile, "secrets_file", "", "指定各应用商店秘钥文件路径，默认为 $HOME/.apkgo/secrets.json")
-	rootCmd.PersistentFlags().BoolVar(&developMode, "develop_mode", false, "开发者模式打开，会输出Trace级别的plugin日志")
-
-	rootCmd.CompletionOptions.DisableDefaultCmd = true
-
-	if len(secretsFile) == 0 {
-		home, err := homedir.Dir()
-		if err != nil {
-			panic(err)
-		}
-		secretsFile = filepath.Join(home, ".apkgo", "secrets.json")
-	}
-
-	cobra.OnInitialize(initConfig)
+	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "apkgo.yaml", "config file path")
+	rootCmd.PersistentFlags().StringVarP(&flagOutput, "output", "o", "json", "output format: json or text")
+	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "verbose logging to stderr")
+	rootCmd.PersistentFlags().DurationVarP(&flagTimeout, "timeout", "t", 10*time.Minute, "global timeout for upload operations")
 }
 
-func initConfig() {
-	fmt.Println(text.FgCyan.Sprint("store secrets config file path: ", secretsFile))
+// Execute runs the root command and returns an exit code.
+func Execute() int {
+	if err := rootCmd.Execute(); err != nil {
+		writeError(err)
+		return 3
+	}
+	return exitCode
+}
+
+// exitCode is set by subcommands to indicate partial/full failure.
+var exitCode int
+
+// writeOutput writes v to stdout as JSON or text.
+func writeOutput(v any) {
+	if flagOutput == "text" {
+		fmt.Fprintln(os.Stdout, v)
+		return
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	enc.Encode(v)
+}
+
+// writeError writes an error to stdout as structured JSON.
+func writeError(err error) {
+	if flagOutput == "text" {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	enc.Encode(map[string]string{"error": err.Error()})
+}
+
+// discardLog suppresses all log output (useful for non-verbose mode).
+func discardLog() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 }

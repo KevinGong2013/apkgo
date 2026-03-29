@@ -20,7 +20,7 @@ builds:
       - goos: darwin
         goarch: "386"
     ldflags:
-      - -s -w -X main.os={{ tolower .Os }} -X main.arch={{ .Arch }} -X main.version={{ .Version }} -X main.release=true -X main.date={{.Date}}
+      - -s -w -X github.com/KevinGong2013/apkgo/cmd.Version={{ .Version }} -X github.com/KevinGong2013/apkgo/cmd.Commit={{ .Commit }} -X github.com/KevinGong2013/apkgo/cmd.Date={{ .Date }} -X github.com/KevinGong2013/apkgo/cmd.BuiltBy=goreleaser
 archives:
   - format: tar.gz
     # this name template makes the OS and Arch compatible with the results of uname.
@@ -63,14 +63,10 @@ brews:
       email: aoxianglele@cloud.com
     install: |-
       bin.install "apkgo"
-dockers:
-  - dockerfile: docker/Dockerfile
-    image_templates:
-      - ghcr.io/kevingong2013/apkgo:{{ .Tag }}
-    extra_files:
-      - docker/entrypoint.sh
-  - dockerfile: docker/Dockerfile
-    image_templates:
-      - ghcr.io/kevingong2013/apkgo:latest
-    extra_files:
-      - docker/entrypoint.sh
+# dockers:
+#   - dockerfile: docker/Dockerfile
+#     image_templates:
+#       - ghcr.io/kevingong2013/apkgo:{{ .Tag }}
+#   - dockerfile: docker/Dockerfile
+#     image_templates:
+#       - ghcr.io/kevingong2013/apkgo:latest

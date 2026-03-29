@@ -1,43 +1,450 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>apkgo</title>
-  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
-  <meta name="description" content="Description">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
-  <link href="https://cdn.bootcdn.net/ajax/libs/docsify-darklight-theme/3.2.0/style.min.css" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>apkgo - 一行命令发布 APK 到所有应用商店</title>
+  <meta name="description" content="将 APK 一键发布到华为、小米、OPPO、vivo、荣耀等主流安卓应用商店。为 CI/CD 和 AI Agent 设计。">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #141414;
+      --border: #262626;
+      --text: #ededed;
+      --text-secondary: #a0a0a0;
+      --accent: #3b82f6;
+      --accent-dim: #1e3a5f;
+      --green: #22c55e;
+      --red: #ef4444;
+      --yellow: #eab308;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 0.9em;
+    }
+
+    /* Hero */
+    .hero {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 80px 24px 60px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: 3.5rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 16px;
+    }
+    .hero h1 span { color: var(--accent); }
+    .hero p {
+      font-size: 1.25rem;
+      color: var(--text-secondary);
+      max-width: 560px;
+      margin: 0 auto 40px;
+    }
+    .hero-buttons {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 500;
+      transition: all 0.15s;
+      border: 1px solid transparent;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { background: #2563eb; text-decoration: none; }
+    .btn-secondary {
+      background: var(--surface);
+      color: var(--text);
+      border-color: var(--border);
+    }
+    .btn-secondary:hover { border-color: var(--text-secondary); text-decoration: none; }
+
+    /* Terminal */
+    .terminal-wrapper {
+      max-width: 680px;
+      margin: 0 auto 80px;
+      padding: 0 24px;
+    }
+    .terminal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .terminal-dot {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: var(--border);
+    }
+    .terminal-dot:nth-child(1) { background: var(--red); }
+    .terminal-dot:nth-child(2) { background: var(--yellow); }
+    .terminal-dot:nth-child(3) { background: var(--green); }
+    .terminal-body {
+      padding: 20px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.875rem;
+      line-height: 1.7;
+      overflow-x: auto;
+    }
+    .terminal-body .prompt { color: var(--green); }
+    .terminal-body .cmd { color: var(--text); }
+    .terminal-body .comment { color: #525252; }
+    .terminal-body .output { color: var(--text-secondary); }
+    .terminal-body .json-key { color: var(--accent); }
+    .terminal-body .json-val-true { color: var(--green); }
+    .terminal-body .json-val-false { color: var(--red); }
+    .terminal-body .json-val-str { color: var(--yellow); }
+
+    /* Stores */
+    .section {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 24px 80px;
+    }
+    .section h2 {
+      font-size: 1.75rem;
+      font-weight: 600;
+      margin-bottom: 32px;
+      text-align: center;
+    }
+    .store-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 16px;
+    }
+    .store-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+    }
+    .store-card h3 {
+      font-size: 1.1rem;
+      margin-bottom: 6px;
+    }
+    .store-card p {
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+    }
+    .store-tag {
+      display: inline-block;
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      margin-top: 8px;
+    }
+
+    /* Features */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 16px;
+    }
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+    }
+    .feature-card h3 {
+      font-size: 1rem;
+      margin-bottom: 8px;
+    }
+    .feature-card p {
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+    }
+    .feature-icon {
+      font-size: 1.5rem;
+      margin-bottom: 12px;
+    }
+
+    /* Install */
+    .install-block {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+    .install-block h3 {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .install-block code {
+      display: block;
+      font-size: 0.95rem;
+      color: var(--green);
+    }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+    }
+
+    /* Agent section */
+    .agent-output {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      font-family: 'SF Mono', monospace;
+      font-size: 0.85rem;
+      line-height: 1.7;
+      overflow-x: auto;
+      margin-top: 24px;
+    }
+
+    /* Exit codes */
+    .exit-codes {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 24px;
+    }
+    .exit-code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+    }
+    .exit-code .code {
+      font-family: 'SF Mono', monospace;
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+    .exit-code .label {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+    .exit-code:nth-child(1) .code { color: var(--green); }
+    .exit-code:nth-child(2) .code { color: var(--yellow); }
+    .exit-code:nth-child(3) .code { color: var(--red); }
+    .exit-code:nth-child(4) .code { color: var(--text-secondary); }
+
+    @media (max-width: 600px) {
+      .hero h1 { font-size: 2.25rem; }
+      .hero { padding: 60px 20px 40px; }
+      .exit-codes { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
 </head>
 <body>
-  <div id="app"></div>
-  <script>
-    window.$docsify = {
-      name: 'apkgo',
-      repo: 'https://github.com/KevinGong2013/apkgo',
-      darklightTheme: {
-        defaultTheme : 'light | dark',
-        codeFontFamily : 'Roboto Mono, Monaco, courier, monospace',
-      },
-      tabs: {
-        persist    : true,      // default
-        sync       : true,      // default
-        theme      : 'classic', // default
-        tabComments: true,      // default
-        tabHeadings: true       // default
-      },
-      loadFooter: '_footer.md'
-    }
-  </script>
-  <!-- Docsify v4 -->
-  <script src="https://cdn.jsdelivr.net/npm/docsify@4"></script>
-  <script src="https://cdn.bootcdn.net/ajax/libs/docsify-darklight-theme/3.2.0/index.min.js"></script>
-  <script src="//cdn.jsdelivr.net/npm/docsify-edit-on-github"></script>
-  <script src="//cdn.jsdelivr.net/npm/prismjs@1/components/prism-bash.min.js"></script>
-  <script src="//cdn.jsdelivr.net/npm/prismjs@1/components/prism-json.min.js"></script>
-  <script src="//cdn.jsdelivr.net/npm/prismjs@1/components/prism-yaml.min.js"></script>
-  <script src="//cdn.jsdelivr.net/npm/prismjs@1/components/prism-go.min.js"></script>
-  <script src="//cdn.jsdelivr.net/npm/docsify-copy-code/dist/docsify-copy-code.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/docsify-tabs@1"></script>
-  <script src="//cdn.jsdelivr.net/npm/@alertbox/docsify-footer/dist/docsify-footer.min.js"></script>
+
+  <!-- Hero -->
+  <section class="hero">
+    <h1><span>apkgo</span></h1>
+    <p>一行命令，将 APK 发布到华为、小米、OPPO、vivo、荣耀等所有主流安卓应用商店</p>
+    <div class="hero-buttons">
+      <a href="https://github.com/KevinGong2013/apkgo" class="btn btn-primary">GitHub</a>
+      <a href="https://github.com/KevinGong2013/apkgo/releases" class="btn btn-secondary">Download</a>
+    </div>
+  </section>
+
+  <!-- Terminal Demo -->
+  <div class="terminal-wrapper">
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+        <div class="terminal-dot"></div>
+      </div>
+      <div class="terminal-body">
+        <span class="comment"># Generate config</span><br>
+        <span class="prompt">$</span> <span class="cmd">apkgo init --store huawei,xiaomi,oppo</span><br>
+        <br>
+        <span class="comment"># Upload to all stores</span><br>
+        <span class="prompt">$</span> <span class="cmd">apkgo upload -f app-release.apk --notes-file CHANGELOG.md</span><br>
+        <br>
+        <span class="output">{</span><br>
+        <span class="output">&nbsp;&nbsp;<span class="json-key">"apk"</span>: { <span class="json-key">"package"</span>: <span class="json-val-str">"com.example.app"</span>, <span class="json-key">"version_name"</span>: <span class="json-val-str">"2.1.0"</span> },</span><br>
+        <span class="output">&nbsp;&nbsp;<span class="json-key">"results"</span>: [</span><br>
+        <span class="output">&nbsp;&nbsp;&nbsp;&nbsp;{ <span class="json-key">"store"</span>: <span class="json-val-str">"huawei"</span>, <span class="json-key">"success"</span>: <span class="json-val-true">true</span>, <span class="json-key">"duration_ms"</span>: 18420 },</span><br>
+        <span class="output">&nbsp;&nbsp;&nbsp;&nbsp;{ <span class="json-key">"store"</span>: <span class="json-val-str">"xiaomi"</span>, <span class="json-key">"success"</span>: <span class="json-val-true">true</span>, <span class="json-key">"duration_ms"</span>: 5230 },</span><br>
+        <span class="output">&nbsp;&nbsp;&nbsp;&nbsp;{ <span class="json-key">"store"</span>: <span class="json-val-str">"oppo"</span>, <span class="json-key">"success"</span>: <span class="json-val-true">true</span>, <span class="json-key">"duration_ms"</span>: 12100 }</span><br>
+        <span class="output">&nbsp;&nbsp;]</span><br>
+        <span class="output">}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stores -->
+  <section class="section">
+    <h2>支持的商店</h2>
+    <div class="store-grid">
+      <div class="store-card">
+        <h3>华为 AppGallery</h3>
+        <p>AppGallery Connect Publishing API v2</p>
+        <span class="store-tag">OAuth2</span>
+      </div>
+      <div class="store-card">
+        <h3>小米开放平台</h3>
+        <p>应用自动发布接口</p>
+        <span class="store-tag">RSA 签名</span>
+      </div>
+      <div class="store-card">
+        <h3>OPPO 开放平台</h3>
+        <p>应用发布 OpenAPI</p>
+        <span class="store-tag">HMAC-SHA256</span>
+      </div>
+      <div class="store-card">
+        <h3>vivo 开放平台</h3>
+        <p>应用分发接口</p>
+        <span class="store-tag">HMAC-SHA256</span>
+      </div>
+      <div class="store-card">
+        <h3>荣耀开发者平台</h3>
+        <p>应用发布 API</p>
+        <span class="store-tag">OAuth2</span>
+      </div>
+      <div class="store-card">
+        <h3>自定义服务器</h3>
+        <p>任意 HTTP 端点，可配置 Header 和字段名</p>
+        <span class="store-tag">HTTP</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="section">
+    <h2>为什么选择 apkgo</h2>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">&#9889;</div>
+        <h3>并发上传</h3>
+        <p>同时上传到所有商店，不串行等待</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#129302;</div>
+        <h3>AI Agent 友好</h3>
+        <p>JSON 输出、语义化退出码、可发现的配置 schema、零交互</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128736;</div>
+        <h3>CI/CD 就绪</h3>
+        <p>单二进制，无依赖。GitHub Actions、Jenkins、GitLab CI 直接集成</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128268;</div>
+        <h3>可扩展</h3>
+        <p>自注册 registry 架构，新增商店只需一个文件</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128274;</div>
+        <h3>安全</h3>
+        <p>凭证存储在本地 YAML，不上报任何数据</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128230;</div>
+        <h3>单二进制</h3>
+        <p>Go 编译，跨平台。macOS / Linux / Windows，amd64 / arm64</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- AI Agent -->
+  <section class="section">
+    <h2>AI Agent 集成</h2>
+    <p style="text-align:center;color:var(--text-secondary);margin-bottom:12px;">apkgo 的每一个设计决策都考虑了机器消费场景</p>
+
+    <div class="exit-codes">
+      <div class="exit-code">
+        <div class="code">0</div>
+        <div class="label">全部成功</div>
+      </div>
+      <div class="exit-code">
+        <div class="code">1</div>
+        <div class="label">部分失败</div>
+      </div>
+      <div class="exit-code">
+        <div class="code">2</div>
+        <div class="label">全部失败</div>
+      </div>
+      <div class="exit-code">
+        <div class="code">3</div>
+        <div class="label">输入错误</div>
+      </div>
+    </div>
+
+    <div class="agent-output">
+      <span class="comment"># Agent 可自动发现每个商店需要的配置</span><br>
+      <span style="color:var(--green)">$</span> apkgo stores<br>
+      <br>
+      <span style="color:var(--text-secondary)">{</span><br>
+      <span style="color:var(--text-secondary)">&nbsp;&nbsp;<span style="color:var(--accent)">"stores"</span>: [</span><br>
+      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;{</span><br>
+      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--accent)">"name"</span>: <span style="color:var(--yellow)">"huawei"</span>,</span><br>
+      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--accent)">"fields"</span>: [</span><br>
+      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{ <span style="color:var(--accent)">"key"</span>: <span style="color:var(--yellow)">"client_id"</span>, <span style="color:var(--accent)">"required"</span>: <span style="color:var(--green)">true</span> },</span><br>
+      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{ <span style="color:var(--accent)">"key"</span>: <span style="color:var(--yellow)">"client_secret"</span>, <span style="color:var(--accent)">"required"</span>: <span style="color:var(--green)">true</span> }</span><br>
+      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]</span><br>
+      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;}, ...</span><br>
+      <span style="color:var(--text-secondary)">&nbsp;&nbsp;]</span><br>
+      <span style="color:var(--text-secondary)">}</span>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section class="section">
+    <h2>安装</h2>
+    <div class="install-block">
+      <h3>Homebrew</h3>
+      <code>brew install KevinGong2013/tap/apkgo</code>
+    </div>
+    <div class="install-block">
+      <h3>Go Install</h3>
+      <code>go install github.com/KevinGong2013/apkgo@latest</code>
+    </div>
+    <div class="install-block">
+      <h3>Binary</h3>
+      <code><a href="https://github.com/KevinGong2013/apkgo/releases">github.com/KevinGong2013/apkgo/releases</a></code>
+    </div>
+  </section>
+
+  <footer>
+    <p>Apache License 2.0 &middot; <a href="https://github.com/KevinGong2013/apkgo">GitHub</a></p>
+  </footer>
+
 </body>
 </html>

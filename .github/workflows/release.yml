@@ -1,42 +1,28 @@
-name: goreleaser
+name: release
 
 on:
   push:
-    # run only against tags
     tags:
-      - "*"
+      - "v*"
 
 permissions:
   contents: write
-  # packages: write
-  # issues: write
 
 jobs:
-  goreleaser:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - run: git fetch --force --tags
-      - uses: actions/setup-go@v3
+      - uses: actions/setup-go@v5
         with:
-          go-version: ">=1.20.1"
+          go-version: ">=1.22"
           cache: true
-      # More assembly might be required: Docker logins, GPG, etc. It all depends
-      - name: Log in to the Container registry
-        uses: docker/login-action@v2.1.0
+      - uses: goreleaser/goreleaser-action@v6
         with:
-          registry: ghcr.io
-          username: KevinGong2013
-          password: ${{ secrets.GH_PAT }}
-
-      # on your needs.
-      - uses: goreleaser/goreleaser-action@v4
-        with:
-          # either 'goreleaser' (default) or 'goreleaser-pro':
-          distribution: goreleaser
           version: latest
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
