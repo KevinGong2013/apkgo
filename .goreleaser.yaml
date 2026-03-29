@@ -49,15 +49,7 @@ dockers:
     dockerfile: Dockerfile
     build_flag_templates:
       - "--pull"
-      - "--platform=linux/amd64"
     goarch: amd64
-  - image_templates:
-      - "ghcr.io/kevingong2013/apkgo:{{ .Tag }}-arm64"
-    dockerfile: Dockerfile
-    build_flag_templates:
-      - "--pull"
-      - "--platform=linux/arm64"
-    goarch: arm64
 
 brews:
   - name: apkgo
