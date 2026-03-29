@@ -12,9 +12,6 @@ Upload APK files to multiple Android app stores in one command.
 Detect the platform and install accordingly:
 
 ```bash
-# macOS / Linux (Homebrew)
-brew install KevinGong2013/tap/apkgo
-
 # Linux (direct binary)
 curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Linux_x86_64.tar.gz | tar xz -C /usr/local/bin apkgo
 

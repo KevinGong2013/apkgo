@@ -5,8 +5,8 @@ CLI tool for uploading APK files to Chinese Android app stores. All output is st
 ## Install
 
 ```bash
-brew install KevinGong2013/tap/apkgo
-# or: go install github.com/KevinGong2013/apkgo@latest
+go install github.com/KevinGong2013/apkgo@latest
+# or download binary from https://github.com/KevinGong2013/apkgo/releases
 ```
 
 ## Commands
