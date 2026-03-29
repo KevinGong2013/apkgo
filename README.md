@@ -24,6 +24,9 @@ brew install KevinGong2013/tap/apkgo
 # Go install
 go install github.com/KevinGong2013/apkgo@latest
 
+# Docker
+docker pull ghcr.io/kevingong2013/apkgo:latest
+
 # 或从 Releases 页面下载预编译二进制
 ```
 
@@ -189,6 +192,16 @@ apkgo stores  # 返回每个商店需要的配置字段
       --notes-file CHANGELOG.md \
       --store huawei,xiaomi \
       --timeout 15m
+```
+
+### Docker
+
+```bash
+docker run --rm \
+  -v $(pwd)/apkgo.yaml:/apkgo.yaml \
+  -v $(pwd)/app.apk:/app.apk \
+  ghcr.io/kevingong2013/apkgo:latest \
+  upload -f /app.apk --notes "Bug fixes"
 ```
 
 ## 全部命令
