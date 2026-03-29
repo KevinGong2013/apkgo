@@ -13,6 +13,7 @@
 | OPPO 开放平台 | HMAC-SHA256 |
 | vivo 开放平台 | HMAC-SHA256 |
 | 荣耀开发者平台 | OAuth2 |
+| 腾讯应用宝 | HMAC-SHA256 |
 | 自定义服务器 | HTTP Header |
 
 ## 安装
@@ -115,6 +116,12 @@ stores:
     client_secret: "your-client-secret"
     app_id: "your-app-id"
 
+  tencent:
+    user_id: "your-user-id"
+    access_secret: "your-access-secret"
+    app_id: "your-app-id"
+    package_name: "com.example.app"
+
   custom:
     url: "https://your-server.com/api/upload"
     method: "POST"
@@ -147,6 +154,7 @@ apkgo upload -f app.apk --store huawei
 | OPPO | [OPPO 开放平台](https://open.oppomobile.com) | 管理中心 > API 密钥管理 |
 | vivo | [vivo 开放平台](https://dev.vivo.com.cn) | 账号管理 > API 管理 |
 | 荣耀 | [荣耀开发者平台](https://developer.honor.com) | API 管理 |
+| 腾讯 | [腾讯开放平台](https://app.open.qq.com) | 账户管理 > API 发布接口 > 申请开通 |
 
 ## AI Agent 集成
 

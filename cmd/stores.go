@@ -12,6 +12,7 @@ import (
 	_ "github.com/KevinGong2013/apkgo/pkg/store/honor"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/huawei"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/oppo"
+	_ "github.com/KevinGong2013/apkgo/pkg/store/tencent"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/vivo"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/xiaomi"
 )
