@@ -25,7 +25,8 @@ import (
 
 func init() {
 	store.Register("tencent", store.ConfigSchema{
-		Name: "tencent",
+		Name:       "tencent",
+		ConsoleURL: "https://app.open.qq.com",
 		Fields: []store.FieldSchema{
 			{Key: "user_id", Required: true, Desc: "Tencent open platform user ID"},
 			{Key: "access_secret", Required: true, Desc: "API access secret from open.qq.com"},

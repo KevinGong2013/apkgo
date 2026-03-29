@@ -25,7 +25,8 @@ import (
 
 func init() {
 	store.Register("xiaomi", store.ConfigSchema{
-		Name: "xiaomi",
+		Name:       "xiaomi",
+		ConsoleURL: "https://dev.mi.com/distribute/doc/details?pId=1134",
 		Fields: []store.FieldSchema{
 			{Key: "email", Required: true, Desc: "Xiaomi developer account email"},
 			{Key: "private_key", Required: true, Desc: "Xiaomi API private key"},

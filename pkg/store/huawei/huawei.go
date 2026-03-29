@@ -12,7 +12,8 @@ import (
 
 func init() {
 	store.Register("huawei", store.ConfigSchema{
-		Name: "huawei",
+		Name:       "huawei",
+		ConsoleURL: "https://developer.huawei.com/consumer/cn/service/josp/agc/index.html#/myApp",
 		Fields: []store.FieldSchema{
 			{Key: "client_id", Required: true, Desc: "AppGallery Connect API client ID"},
 			{Key: "client_secret", Required: true, Desc: "AppGallery Connect API client secret"},

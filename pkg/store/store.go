@@ -52,8 +52,9 @@ func ErrResult(storeName string, start time.Time, err error) *UploadResult {
 // ConfigSchema describes the configuration fields a store requires.
 // Used by `apkgo stores` for agent discoverability.
 type ConfigSchema struct {
-	Name   string        `json:"name"`
-	Fields []FieldSchema `json:"fields"`
+	Name       string        `json:"name"`
+	Fields     []FieldSchema `json:"fields"`
+	ConsoleURL string        `json:"console_url"` // developer console URL where credentials are managed
 }
 
 type FieldSchema struct {

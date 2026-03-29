@@ -12,7 +12,8 @@ import (
 
 func init() {
 	store.Register("honor", store.ConfigSchema{
-		Name: "honor",
+		Name:       "honor",
+		ConsoleURL: "https://developer.honor.com/cn/doc/guides/101159",
 		Fields: []store.FieldSchema{
 			{Key: "client_id", Required: true, Desc: "Honor developer API client ID"},
 			{Key: "client_secret", Required: true, Desc: "Honor developer API client secret"},

@@ -19,7 +19,8 @@ import (
 
 func init() {
 	store.Register("oppo", store.ConfigSchema{
-		Name: "oppo",
+		Name:       "oppo",
+		ConsoleURL: "https://open.oppomobile.com/new/developmentDoc/info?id=10998",
 		Fields: []store.FieldSchema{
 			{Key: "client_id", Required: true, Desc: "OPPO open platform client ID"},
 			{Key: "client_secret", Required: true, Desc: "OPPO open platform client secret"},

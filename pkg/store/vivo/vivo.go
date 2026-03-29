@@ -20,7 +20,8 @@ import (
 
 func init() {
 	store.Register("vivo", store.ConfigSchema{
-		Name: "vivo",
+		Name:       "vivo",
+		ConsoleURL: "https://dev.vivo.com.cn/documentCenter/doc/326",
 		Fields: []store.FieldSchema{
 			{Key: "access_key", Required: true, Desc: "vivo open platform access key"},
 			{Key: "access_secret", Required: true, Desc: "vivo open platform access secret"},
