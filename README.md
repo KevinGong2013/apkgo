@@ -215,11 +215,24 @@ docker run --rm \
   upload -f /app.apk --notes "Bug fixes"
 ```
 
+## Web GUI
+
+不想用命令行？`apkgo serve` 启动本地 Web 界面：
+
+```bash
+apkgo serve                    # http://localhost:8080
+apkgo serve -p 9090            # 自定义端口
+apkgo serve -c production.yaml # 指定配置文件
+```
+
+打开浏览器，拖拽 APK、勾选商店、填写更新日志、点击上传。适合运营人员使用。
+
 ## 全部命令
 
 ```
 apkgo init      [-s store1,store2] [-c config.yaml]
 apkgo upload    -f <apk> [--file64 <apk>] [-s stores] [-n notes] [--notes-file path] [--dry-run] [-t timeout]
+apkgo serve     [-p port] [-c config.yaml]
 apkgo stores    [-o json|text]
 apkgo version   [-o json|text]
 ```

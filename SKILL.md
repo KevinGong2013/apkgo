@@ -35,13 +35,13 @@ docker pull ghcr.io/kevingong2013/apkgo:latest
 
 Use this skill when the user wants to:
 - Upload/publish/distribute an APK to Android app stores
-- Release an Android app to Huawei, Xiaomi, OPPO, vivo, or Honor stores
+- Release an Android app to Huawei, Xiaomi, OPPO, vivo, Honor, or Tencent stores
 - Automate APK distribution in CI/CD pipelines
 - Upload an APK to a custom server endpoint
 
 ## Supported stores
 
-huawei, xiaomi, oppo, vivo, honor, custom
+huawei, xiaomi, oppo, vivo, honor, tencent, custom
 
 ## Commands
 
@@ -49,6 +49,7 @@ huawei, xiaomi, oppo, vivo, honor, custom
 apkgo stores                    # Discover config schema for each store (JSON)
 apkgo init [--store names]      # Generate config file with comments
 apkgo upload -f <apk> [flags]   # Upload APK to configured stores
+apkgo serve [-p port]           # Start web GUI for uploading
 apkgo version                   # Version info
 ```
 
@@ -87,6 +88,11 @@ stores:
     client_id: ""       # required - from developer.honor.com
     client_secret: ""   # required
     app_id: ""          # required
+  tencent:
+    user_id: ""         # required - from app.open.qq.com
+    access_secret: ""   # required - API access secret
+    app_id: ""          # required
+    package_name: ""    # required
   custom:
     url: ""             # required - upload endpoint
     method: "POST"

@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>apkgo</title>
+<style>
+  :root {
+    --bg: #0a0a0a; --surface: #141414; --border: #262626;
+    --text: #ededed; --dim: #a0a0a0; --accent: #3b82f6;
+    --green: #22c55e; --red: #ef4444; --yellow: #eab308;
+    --radius: 10px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 640px; margin: 0 auto; padding: 40px 20px; }
+  h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 24px; }
+  h1 span { color: var(--accent); }
+
+  /* Drop zone */
+  .drop-zone {
+    border: 2px dashed var(--border); border-radius: var(--radius);
+    padding: 40px 20px; text-align: center; cursor: pointer;
+    transition: all 0.15s; margin-bottom: 16px; position: relative;
+  }
+  .drop-zone:hover, .drop-zone.over { border-color: var(--accent); background: #0d1b2a; }
+  .drop-zone.has-file { border-color: var(--green); border-style: solid; padding: 20px; }
+  .drop-zone input[type="file"] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+  }
+  .drop-zone .label { color: var(--dim); font-size: 0.95rem; }
+  .drop-zone .file-info { text-align: left; }
+  .drop-zone .file-info .name { font-weight: 600; margin-bottom: 4px; }
+  .drop-zone .file-info .meta { color: var(--dim); font-size: 0.85rem; font-family: monospace; }
+  .drop-zone-sm { padding: 20px; }
+  .drop-zone-sm .label { font-size: 0.85rem; }
+
+  /* Stores */
+  .section { margin-bottom: 20px; }
+  .section-label { font-size: 0.8rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .store-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .store-chip {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; font-size: 0.875rem; cursor: pointer; transition: all 0.1s;
+    user-select: none;
+  }
+  .store-chip:hover { border-color: var(--dim); }
+  .store-chip.selected { border-color: var(--accent); background: #0d1b2a; }
+  .store-chip input { display: none; }
+  .store-chip .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--border); transition: background 0.1s;
+  }
+  .store-chip.selected .dot { background: var(--accent); }
+
+  /* Notes */
+  textarea {
+    width: 100%; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); padding: 12px;
+    font-family: inherit; font-size: 0.9rem; resize: vertical; min-height: 80px;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  textarea::placeholder { color: #525252; }
+
+  /* Button */
+  .btn-upload {
+    width: 100%; padding: 14px; border: none; border-radius: var(--radius);
+    background: var(--accent); color: #fff; font-size: 1rem; font-weight: 600;
+    cursor: pointer; transition: background 0.15s; margin-top: 20px;
+  }
+  .btn-upload:hover:not(:disabled) { background: #2563eb; }
+  .btn-upload:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Results */
+  .results { margin-top: 24px; }
+  .result-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 8px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .result-card .store-name { font-weight: 600; }
+  .result-card .duration { color: var(--dim); font-size: 0.8rem; font-family: monospace; }
+  .result-card .status { font-size: 0.85rem; font-weight: 500; }
+  .result-card .status.ok { color: var(--green); }
+  .result-card .status.fail { color: var(--red); }
+  .result-card .error-msg { color: var(--red); font-size: 0.8rem; margin-top: 4px; }
+
+  /* Spinner */
+  .spinner {
+    display: inline-block; width: 18px; height: 18px;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.6s linear infinite;
+    vertical-align: middle; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* APK info banner */
+  .apk-banner {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px;
+    font-family: monospace; font-size: 0.85rem; line-height: 1.8;
+  }
+  .apk-banner .k { color: var(--dim); }
+  .apk-banner .v { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1><span>apkgo</span> upload</h1>
+
+  <!-- Primary APK -->
+  <div class="drop-zone" id="dropZone">
+    <input type="file" accept=".apk" id="fileInput">
+    <div class="label" id="dropLabel">Drop APK here or click to select</div>
+    <div class="file-info" id="fileInfo" style="display:none">
+      <div class="name" id="fileName"></div>
+      <div class="meta" id="fileMeta"></div>
+    </div>
+  </div>
+
+  <!-- 64-bit APK (optional) -->
+  <div class="drop-zone drop-zone-sm" id="dropZone64">
+    <input type="file" accept=".apk" id="fileInput64">
+    <div class="label" id="dropLabel64">64-bit APK (optional)</div>
+    <div class="file-info" id="fileInfo64" style="display:none">
+      <div class="name" id="fileName64"></div>
+    </div>
+  </div>
+
+  <!-- Stores -->
+  <div class="section">
+    <div class="section-label">Stores</div>
+    <div class="store-grid" id="storeGrid">
+      <div class="label" style="color:var(--dim);font-size:0.85rem">Loading...</div>
+    </div>
+  </div>
+
+  <!-- Release notes -->
+  <div class="section">
+    <div class="section-label">Release Notes</div>
+    <textarea id="notes" placeholder="What's new in this version..."></textarea>
+  </div>
+
+  <!-- Upload button -->
+  <button class="btn-upload" id="uploadBtn" disabled>Upload</button>
+
+  <!-- Results -->
+  <div class="results" id="results"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let selectedFile = null, selectedFile64 = null, storeNames = [];
+
+// Load stores
+fetch('/api/stores').then(r => r.json()).then(data => {
+  storeNames = data.stores || [];
+  const grid = $('#storeGrid');
+  grid.innerHTML = '';
+  storeNames.forEach(name => {
+    const chip = document.createElement('label');
+    chip.className = 'store-chip selected';
+    chip.innerHTML = `<input type="checkbox" value="${name}" checked><span class="dot"></span>${name}`;
+    chip.addEventListener('click', () => {
+      setTimeout(() => {
+        const cb = chip.querySelector('input');
+        chip.classList.toggle('selected', cb.checked);
+      }, 0);
+    });
+    grid.appendChild(chip);
+  });
+});
+
+// Drop zone - primary
+function setupDrop(zoneId, inputId, labelId, infoId, nameId, metaId, onFile) {
+  const zone = $(zoneId), input = $(inputId);
+  ['dragover','dragenter'].forEach(e => zone.addEventListener(e, ev => { ev.preventDefault(); zone.classList.add('over'); }));
+  ['dragleave','drop'].forEach(e => zone.addEventListener(e, () => zone.classList.remove('over')));
+  zone.addEventListener('drop', ev => { ev.preventDefault(); if (ev.dataTransfer.files.length) onFile(ev.dataTransfer.files[0]); });
+  input.addEventListener('change', () => { if (input.files.length) onFile(input.files[0]); });
+}
+
+setupDrop('#dropZone', '#fileInput', '#dropLabel', '#fileInfo', '#fileName', '#fileMeta',
+  file => {
+    selectedFile = file;
+    $('#dropLabel').style.display = 'none';
+    $('#fileInfo').style.display = 'block';
+    $('#fileName').textContent = file.name;
+    $('#fileMeta').textContent = `${(file.size / 1048576).toFixed(1)} MB`;
+    $('#dropZone').classList.add('has-file');
+    $('#uploadBtn').disabled = false;
+  }
+);
+
+setupDrop('#dropZone64', '#fileInput64', '#dropLabel64', '#fileInfo64', '#fileName64', null,
+  file => {
+    selectedFile64 = file;
+    $('#dropLabel64').style.display = 'none';
+    $('#fileInfo64').style.display = 'block';
+    $('#fileName64').textContent = file.name;
+    $('#dropZone64').classList.add('has-file');
+  }
+);
+
+// Upload
+$('#uploadBtn').addEventListener('click', async () => {
+  if (!selectedFile) return;
+
+  const btn = $('#uploadBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Uploading...';
+  $('#results').innerHTML = '';
+
+  const checked = [...document.querySelectorAll('.store-chip input:checked')].map(cb => cb.value);
+  const form = new FormData();
+  form.append('file', selectedFile);
+  if (selectedFile64) form.append('file64', selectedFile64);
+  if (checked.length && checked.length < storeNames.length) form.append('stores', checked.join(','));
+  const notes = $('#notes').value.trim();
+  if (notes) form.append('notes', notes);
+
+  try {
+    const resp = await fetch('/api/upload', { method: 'POST', body: form });
+    const data = await resp.json();
+
+    if (data.error) {
+      $('#results').innerHTML = `<div class="result-card"><span class="status fail">${data.error}</span></div>`;
+      return;
+    }
+
+    // Show APK info
+    let html = '';
+    if (data.apk) {
+      html += `<div class="apk-banner">
+        <span class="k">package:</span> <span class="v">${data.apk.package}</span><br>
+        <span class="k">version:</span> <span class="v">${data.apk.version_name} (${data.apk.version_code})</span><br>
+        <span class="k">app:</span> <span class="v">${data.apk.app_name}</span>
+      </div>`;
+    }
+
+    // Show results
+    (data.results || []).forEach(r => {
+      const cls = r.success ? 'ok' : 'fail';
+      const icon = r.success ? 'OK' : 'FAIL';
+      const dur = r.duration_ms ? `${(r.duration_ms / 1000).toFixed(1)}s` : '';
+      html += `<div class="result-card">
+        <div>
+          <div class="store-name">${r.store}</div>
+          ${r.error ? `<div class="error-msg">${r.error}</div>` : ''}
+        </div>
+        <div style="text-align:right">
+          <div class="status ${cls}">${icon}</div>
+          <div class="duration">${dur}</div>
+        </div>
+      </div>`;
+    });
+
+    $('#results').innerHTML = html;
+  } catch (err) {
+    $('#results').innerHTML = `<div class="result-card"><span class="status fail">${err.message}</span></div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Upload';
+  }
+});
+</script>
+</body>
+</html>
