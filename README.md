@@ -18,8 +18,14 @@
 ## 安装
 
 ```bash
+# AI Agent Skill (支持 Claude Code、Cursor、Windsurf 等 40+ agent)
+npx skills add KevinGong2013/apkgo
+
 # Homebrew (macOS / Linux)
 brew install KevinGong2013/tap/apkgo
+
+# Linux (direct download)
+curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Linux_x86_64.tar.gz | tar xz -C /usr/local/bin apkgo
 
 # Go install
 go install github.com/KevinGong2013/apkgo@latest
