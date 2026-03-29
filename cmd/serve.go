@@ -29,6 +29,7 @@ var serveCmd = &cobra.Command{
 			Config:     cfg,
 			ConfigPath: flagConfig,
 			Timeout:    flagTimeout,
+			Version:    Version,
 		}
 
 		fmt.Fprintf(cmd.ErrOrStderr(), "apkgo server running at http://localhost:%d\n", flagPort)

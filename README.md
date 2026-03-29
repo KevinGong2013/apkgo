@@ -240,11 +240,26 @@ apkgo version   [-o json|text]
 ## 全局参数
 
 ```
--c, --config     配置文件路径 (默认: apkgo.yaml)
--o, --output     输出格式: json 或 text (默认: json)
--t, --timeout    全局超时 (默认: 10m)
--v, --verbose    详细日志输出到 stderr
+-c, --config        配置文件路径 (默认: apkgo.yaml)
+-o, --output        输出格式: json 或 text (默认: json)
+-t, --timeout       全局超时 (默认: 10m)
+-v, --verbose       详细日志输出到 stderr
+    --no-telemetry  禁用匿名使用统计
 ```
+
+## 隐私
+
+apkgo 收集匿名使用统计以改进产品，**不收集任何敏感信息**：
+
+| 收集 | 不收集 |
+|------|--------|
+| 匿名安装 ID (随机 UUID) | 账号、凭证 |
+| 使用的商店名称 | 包名、应用名 |
+| 上传成功/失败 | APK 文件内容 |
+| CLI/GUI 使用方式 | 更新日志内容 |
+| apkgo 版本、OS/架构 | IP 地址 |
+
+关闭方式：`--no-telemetry` 或 `APKGO_TELEMETRY=off`
 
 ## License
 

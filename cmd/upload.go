@@ -12,6 +12,7 @@ import (
 	"github.com/KevinGong2013/apkgo/pkg/apk"
 	"github.com/KevinGong2013/apkgo/pkg/config"
 	"github.com/KevinGong2013/apkgo/pkg/store"
+	"github.com/KevinGong2013/apkgo/pkg/telemetry"
 	"github.com/KevinGong2013/apkgo/pkg/uploader"
 )
 
@@ -134,6 +135,18 @@ var uploadCmd = &cobra.Command{
 		results := u.Run(ctx, req)
 
 		writeOutput(uploadOutput{APK: info, Results: results})
+
+		// Send anonymous telemetry
+		storeResults := make([]telemetry.StoreResult, len(results))
+		for i, r := range results {
+			storeResults[i] = telemetry.StoreResult{Name: r.Store, Success: r.Success}
+		}
+		telemetry.Send(telemetry.Event{
+			Event:   "upload",
+			Source:  "cli",
+			Version: Version,
+			Stores:  storeResults,
+		})
 
 		// Set exit code based on results
 		failures := 0

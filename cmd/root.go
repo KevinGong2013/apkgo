@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/KevinGong2013/apkgo/pkg/telemetry"
 )
 
 var (
@@ -39,6 +41,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagOutput, "output", "o", "json", "output format: json or text")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "verbose logging to stderr")
 	rootCmd.PersistentFlags().DurationVarP(&flagTimeout, "timeout", "t", 10*time.Minute, "global timeout for upload operations")
+	rootCmd.PersistentFlags().BoolVar(&telemetry.Disabled, "no-telemetry", false, "disable anonymous usage statistics")
 }
 
 // Execute runs the root command and returns an exit code.

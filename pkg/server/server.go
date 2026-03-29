@@ -18,6 +18,7 @@ import (
 	"github.com/KevinGong2013/apkgo/pkg/apk"
 	"github.com/KevinGong2013/apkgo/pkg/config"
 	"github.com/KevinGong2013/apkgo/pkg/store"
+	"github.com/KevinGong2013/apkgo/pkg/telemetry"
 	"github.com/KevinGong2013/apkgo/pkg/uploader"
 )
 
@@ -29,6 +30,7 @@ type Server struct {
 	Config     *config.Config
 	ConfigPath string
 	Timeout    time.Duration
+	Version    string
 	mu         sync.RWMutex
 }
 
@@ -41,6 +43,12 @@ func (s *Server) Start(port int) error {
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("POST /api/config", s.handleSaveConfig)
 	mux.HandleFunc("POST /api/upload", s.handleUpload)
+
+	telemetry.Send(telemetry.Event{
+		Event:   "serve_start",
+		Source:  "gui",
+		Version: s.Version,
+	})
 
 	addr := fmt.Sprintf(":%d", port)
 	slog.Info("starting server", "addr", fmt.Sprintf("http://localhost%s", addr))
@@ -195,6 +203,18 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	u := &uploader.Uploader{Stores: stores}
 	results := u.Run(ctx, req)
+
+	// Anonymous telemetry
+	storeResults := make([]telemetry.StoreResult, len(results))
+	for i, r := range results {
+		storeResults[i] = telemetry.StoreResult{Name: r.Store, Success: r.Success}
+	}
+	telemetry.Send(telemetry.Event{
+		Event:   "upload",
+		Source:  "gui",
+		Version: s.Version,
+		Stores:  storeResults,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"apk":     info,
