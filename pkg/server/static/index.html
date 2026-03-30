@@ -140,6 +140,25 @@
   }
   .toast.show { opacity: 1; }
 
+  /* History */
+  .history-item {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px;
+  }
+  .history-header {
+    display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
+  }
+  .history-header .pkg { font-weight: 600; font-size: 0.95rem; }
+  .history-header .ver { color: var(--dim); font-family: monospace; font-size: 0.8rem; }
+  .history-time { color: var(--dim); font-size: 0.75rem; margin-bottom: 8px; }
+  .history-stores { display: flex; flex-wrap: wrap; gap: 6px; }
+  .history-store {
+    font-size: 0.78rem; padding: 2px 8px; border-radius: 4px; font-family: monospace;
+  }
+  .history-store.ok { background: #122a12; color: var(--green); }
+  .history-store.fail { background: #2a1212; color: var(--red); }
+  .history-empty { color: var(--dim); font-size: 0.9rem; text-align: center; padding: 40px 0; }
+
   /* Spinner */
   .spinner {
     display: inline-block; width: 18px; height: 18px;
@@ -156,6 +175,7 @@
 
   <div class="tabs">
     <div class="tab active" data-tab="upload">Upload</div>
+    <div class="tab" data-tab="history">History</div>
     <div class="tab" data-tab="settings">Settings</div>
   </div>
 
@@ -194,6 +214,11 @@
     <div class="results" id="results"></div>
   </div>
 
+  <!-- History Tab -->
+  <div class="tab-content" id="tab-history">
+    <div id="historyContainer"></div>
+  </div>
+
   <!-- Settings Tab -->
   <div class="tab-content" id="tab-settings">
     <div id="settingsContainer"></div>
@@ -215,6 +240,7 @@ $$('.tab').forEach(tab => {
     $$('.tab-content').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     $(`#tab-${tab.dataset.tab}`).classList.add('active');
+    if (tab.dataset.tab === 'history') loadHistory();
   });
 });
 
@@ -412,6 +438,32 @@ $('#uploadBtn').addEventListener('click', async () => {
     btn.textContent = 'Upload';
   }
 });
+
+// History
+function loadHistory() {
+  fetch('/api/history').then(r => r.json()).then(data => {
+    const container = $('#historyContainer');
+    const records = data.records || [];
+    if (records.length === 0) {
+      container.innerHTML = '<div class="history-empty">No upload history yet.</div>';
+      return;
+    }
+    container.innerHTML = records.map(r => {
+      const stores = (r.results || []).map(res =>
+        `<span class="history-store ${res.success ? 'ok' : 'fail'}">${res.store} ${res.success ? '✓' : '✗'}${res.duration_ms ? ' ' + (res.duration_ms/1000).toFixed(1)+'s' : ''}</span>`
+      ).join('');
+      const time = r.timestamp ? r.timestamp.replace('T',' ').substring(0,19) : '';
+      return `<div class="history-item">
+        <div class="history-header">
+          <span class="pkg">${r.apk?.package || '-'}</span>
+          <span class="ver">${r.apk?.version_name || ''} (${r.apk?.version_code || ''})</span>
+        </div>
+        <div class="history-time">${time}</div>
+        <div class="history-stores">${stores}</div>
+      </div>`;
+    }).join('');
+  });
+}
 
 // Init
 loadStores();

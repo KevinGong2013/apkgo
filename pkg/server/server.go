@@ -17,6 +17,7 @@ import (
 
 	"github.com/KevinGong2013/apkgo/pkg/apk"
 	"github.com/KevinGong2013/apkgo/pkg/config"
+	"github.com/KevinGong2013/apkgo/pkg/history"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 	"github.com/KevinGong2013/apkgo/pkg/telemetry"
 	"github.com/KevinGong2013/apkgo/pkg/uploader"
@@ -43,6 +44,7 @@ func (s *Server) Start(port int) error {
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("POST /api/config", s.handleSaveConfig)
 	mux.HandleFunc("POST /api/upload", s.handleUpload)
+	mux.HandleFunc("GET /api/history", s.handleHistory)
 
 	telemetry.Send(telemetry.Event{
 		Event:   "serve_start",
@@ -220,6 +222,23 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		"apk":     info,
 		"results": results,
 	})
+}
+
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	records, err := history.Read(history.DefaultPath())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	// Return last 50 records, newest first
+	if len(records) > 50 {
+		records = records[len(records)-50:]
+	}
+	// Reverse for newest-first
+	for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
+		records[i], records[j] = records[j], records[i]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"records": records})
 }
 
 func saveFormFile(r *http.Request, fieldName string) (string, error) {
