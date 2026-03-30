@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -12,7 +14,8 @@ import (
 
 // Config is the top-level YAML configuration.
 type Config struct {
-	Stores map[string]map[string]string `yaml:"stores"`
+	Stores      map[string]map[string]string `yaml:"stores"`
+	UpdateCheck string                       `yaml:"update_check,omitempty"` // e.g. "30d", "7d", "0" to disable
 }
 
 // Load reads a YAML config file and merges environment variable overrides.
@@ -97,6 +100,32 @@ func mergeEnv(cfg *Config) {
 		}
 		cfg.Stores[storeName][fieldKey] = value
 	}
+}
+
+// UpdateCheckInterval parses the update_check field.
+// Returns 0 to disable, or the default (30 days) if not set.
+func (c *Config) UpdateCheckInterval(defaultInterval time.Duration) time.Duration {
+	s := strings.TrimSpace(c.UpdateCheck)
+	if s == "" {
+		return defaultInterval
+	}
+	if s == "0" || strings.EqualFold(s, "false") || strings.EqualFold(s, "off") {
+		return 0
+	}
+
+	// Support "30d", "7d", "1d"
+	if strings.HasSuffix(s, "d") {
+		if days, err := strconv.Atoi(s[:len(s)-1]); err == nil {
+			return time.Duration(days) * 24 * time.Hour
+		}
+	}
+
+	// Fallback to Go duration: "720h", "168h"
+	if d, err := time.ParseDuration(s); err == nil {
+		return d
+	}
+
+	return defaultInterval
 }
 
 // CreateStores instantiates Store implementations from config.

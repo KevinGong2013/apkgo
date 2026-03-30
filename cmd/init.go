@@ -63,6 +63,9 @@ var initCmd = &cobra.Command{
 			b.WriteString("\n")
 		}
 
+		b.WriteString("# Update check interval: 30d (default), 7d, 0 to disable\n")
+		b.WriteString("# update_check: 30d\n")
+
 		if included == 0 {
 			return fmt.Errorf("no matching stores found; available: %s", strings.Join(store.Names(), ", "))
 		}

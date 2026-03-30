@@ -10,16 +10,16 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/KevinGong2013/apkgo/pkg/config"
 	"github.com/KevinGong2013/apkgo/pkg/telemetry"
 	"github.com/KevinGong2013/apkgo/pkg/update"
 )
 
 var (
-	flagConfig         string
-	flagOutput         string
-	flagVerbose        bool
-	flagTimeout        time.Duration
-	flagUpdateInterval time.Duration
+	flagConfig  string
+	flagOutput  string
+	flagVerbose bool
+	flagTimeout time.Duration
 )
 
 var rootCmd = &cobra.Command{
@@ -36,7 +36,8 @@ var rootCmd = &cobra.Command{
 
 		// Non-blocking update check (skipped for upgrade command itself)
 		if cmd.Name() != "upgrade" {
-			update.CheckAndRemind(Version, flagUpdateInterval)
+			cfg := config.LoadOrEmpty(flagConfig)
+			update.CheckAndRemind(Version, cfg.UpdateCheckInterval(update.DefaultCheck))
 		}
 	},
 	SilenceUsage:  true,
@@ -49,7 +50,6 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "verbose logging to stderr")
 	rootCmd.PersistentFlags().DurationVarP(&flagTimeout, "timeout", "t", 10*time.Minute, "global timeout for upload operations")
 	rootCmd.PersistentFlags().BoolVar(&telemetry.Disabled, "no-telemetry", false, "disable anonymous usage statistics")
-	rootCmd.PersistentFlags().DurationVar(&flagUpdateInterval, "update-check", update.DefaultCheck, "update check interval (0 to disable)")
 }
 
 // Execute runs the root command and returns an exit code.
