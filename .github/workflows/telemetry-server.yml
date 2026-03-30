@@ -1,0 +1,32 @@
+name: telemetry-server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - cmd/telemetry-server/**
+      - pkg/telemetry/**
+
+permissions:
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: KevinGong2013
+          password: ${{ secrets.GH_PAT }}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: cmd/telemetry-server/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/kevingong2013/apkgo-telemetry:latest
+            ghcr.io/kevingong2013/apkgo-telemetry:${{ github.sha }}
