@@ -35,7 +35,7 @@ apkgo version                                     # Version info (JSON)
 
 ## Supported stores
 
-huawei, xiaomi, oppo, vivo, honor, tencent, custom
+huawei, xiaomi, oppo, vivo, honor, tencent, pgyer, fir, custom
 
 ## Configuration
 
