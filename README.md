@@ -238,14 +238,46 @@ apkgo serve -c production.yaml # 指定配置文件
 
 打开浏览器，拖拽 APK、勾选商店、填写更新日志、点击上传。适合运营人员使用。
 
+## 跨机器同步配置
+
+通过加密导出/导入，安全地在多台机器或 CI 间共享商店凭证：
+
+```bash
+# 机器 A：加密导出
+apkgo config export --out config.enc
+# 输入密码（或设置 APKGO_CONFIG_KEY 环境变量）
+
+# 提交到私有仓库
+git add config.enc && git commit -m "sync config" && git push
+
+# 机器 B：解密导入
+git pull
+apkgo config import config.enc
+```
+
+CI 中使用环境变量免交互：
+
+```yaml
+- name: Import apkgo config
+  env:
+    APKGO_CONFIG_KEY: ${{ secrets.APKGO_CONFIG_KEY }}
+  run: apkgo config import config.enc
+```
+
+加密方式：AES-256-GCM + scrypt 密钥派生，密码错误会明确提示。
+
 ## 全部命令
 
 ```
-apkgo init      [-s store1,store2] [-c config.yaml]
-apkgo upload    -f <apk> [--file64 <apk>] [-s stores] [-n notes] [--notes-file path] [--dry-run] [-t timeout]
-apkgo serve     [-p port] [-c config.yaml]
-apkgo stores    [-o json|text]
-apkgo version   [-o json|text]
+apkgo init          [-s store1,store2] [-c config.yaml]
+apkgo upload        -f <apk> [--file64 <apk>] [-s stores] [-n notes] [--notes-file path] [--dry-run] [-t timeout]
+apkgo serve         [-p port] [-c config.yaml]
+apkgo config export --out <file>
+apkgo config import <file>
+apkgo stores        [-o json|text]
+apkgo history       [-n limit]
+apkgo upgrade
+apkgo version       [-o json|text]
 ```
 
 ## 全局参数
