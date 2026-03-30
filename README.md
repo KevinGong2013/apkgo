@@ -14,6 +14,8 @@
 | vivo 开放平台 | HMAC-SHA256 |
 | 荣耀开发者平台 | OAuth2 |
 | 腾讯应用宝 | HMAC-SHA256 |
+| Google Play | Service Account JWT |
+| Samsung Galaxy Store | Service Account JWT |
 | 蒲公英 (Pgyer) | API Key |
 | fir.im | API Token |
 | 自定义服务器 | HTTP Header |

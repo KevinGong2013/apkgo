@@ -10,10 +10,12 @@ import (
 	// Import all store packages to trigger init() registration.
 	_ "github.com/KevinGong2013/apkgo/pkg/store/custom"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/fir"
+	_ "github.com/KevinGong2013/apkgo/pkg/store/googleplay"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/honor"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/huawei"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/oppo"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/pgyer"
+	_ "github.com/KevinGong2013/apkgo/pkg/store/samsung"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/tencent"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/vivo"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/xiaomi"
