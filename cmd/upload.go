@@ -11,6 +11,7 @@ import (
 
 	"github.com/KevinGong2013/apkgo/pkg/apk"
 	"github.com/KevinGong2013/apkgo/pkg/config"
+	"github.com/KevinGong2013/apkgo/pkg/history"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 	"github.com/KevinGong2013/apkgo/pkg/telemetry"
 	"github.com/KevinGong2013/apkgo/pkg/uploader"
@@ -135,6 +136,11 @@ var uploadCmd = &cobra.Command{
 		results := u.Run(ctx, req)
 
 		writeOutput(uploadOutput{APK: info, Results: results})
+
+		// Save to local history
+		if err := history.Append(history.DefaultPath(), info, results); err != nil {
+			slog.Warn("failed to save history", "error", err)
+		}
 
 		// Send anonymous telemetry
 		storeResults := make([]telemetry.StoreResult, len(results))
