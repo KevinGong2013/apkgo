@@ -379,6 +379,140 @@ a:hover { text-decoration: underline; }
 
 .install-item code a { color: var(--accent); }
 
+/* ═══ DASHBOARD ═══ */
+.dash-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  max-width: 700px;
+  margin: 0 auto 32px;
+}
+
+.dash-stat {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 16px;
+  text-align: center;
+}
+
+.dash-stat .val {
+  font-family: var(--mono);
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.dash-stat .lbl {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin-top: 6px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dash-chart {
+  max-width: 700px;
+  margin: 0 auto 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 24px;
+}
+
+.dash-chart-title {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 16px;
+}
+
+.chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 100px;
+}
+
+.chart-bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-bar {
+  width: 100%;
+  min-height: 2px;
+  background: var(--accent);
+  border-radius: 3px 3px 0 0;
+  opacity: 0.8;
+  transition: opacity 0.15s;
+}
+
+.chart-bar:hover { opacity: 1; }
+
+.chart-bar-label {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  color: var(--text-muted);
+  writing-mode: vertical-lr;
+  transform: rotate(180deg);
+  height: 42px;
+}
+
+.dash-stores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.dash-store {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 18px;
+  text-align: center;
+  min-width: 100px;
+}
+
+.dash-store .name {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.dash-store .count {
+  font-family: var(--mono);
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.dash-store .rate {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--green);
+}
+
+.dash-loading {
+  text-align: center;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  padding: 40px 0;
+}
+
 /* ═══ FOOTER ═══ */
 footer {
   text-align: center;
@@ -562,9 +696,105 @@ footer {
   </div>
 </section>
 
+<div class="divider"></div>
+
+<section class="section">
+  <div class="container">
+    <h2 class="section-title">Usage <span class="accent">Dashboard</span></h2>
+    <p class="section-desc">apkgo 全球使用实况</p>
+    <div id="dashboard">
+      <div class="dash-loading">Loading stats...</div>
+    </div>
+  </div>
+</section>
+
 <footer>
   Apache License 2.0 &middot; <a href="https://github.com/KevinGong2013/apkgo">KevinGong2013/apkgo</a>
 </footer>
+
+<script>
+(function() {
+  const API = 'https://telemetry.apkgo.com.cn/v1/stats';
+  const dash = document.getElementById('dashboard');
+
+  fetch(API).then(r => r.json()).then(data => {
+    const installs = data.unique_installs || 0;
+    const events = data.total_events || 0;
+    const stores = data.store_counts || {};
+    const success = data.store_success || {};
+    const versions = data.version_counts || {};
+    const osCounts = data.os_counts || {};
+    const trend = data.daily_trend || {};
+
+    const storeTotal = Object.values(stores).reduce((a,b) => a+b, 0);
+    const successTotal = Object.values(success).reduce((a,b) => a+b, 0);
+    const rate = storeTotal > 0 ? Math.round(successTotal / storeTotal * 100) : 0;
+    const topVer = Object.entries(versions).sort((a,b) => b[1]-a[1])[0];
+
+    // Stats cards
+    let html = '<div class="dash-stats">';
+    html += `<div class="dash-stat"><div class="val">${fmtNum(installs)}</div><div class="lbl">Installs</div></div>`;
+    html += `<div class="dash-stat"><div class="val">${fmtNum(events)}</div><div class="lbl">Uploads</div></div>`;
+    html += `<div class="dash-stat"><div class="val">${rate}%</div><div class="lbl">Success Rate</div></div>`;
+    html += `<div class="dash-stat"><div class="val">${topVer ? topVer[0] : '-'}</div><div class="lbl">Top Version</div></div>`;
+    html += '</div>';
+
+    // Trend chart (last 30 days)
+    const days = getLast30Days();
+    const maxCount = Math.max(1, ...days.map(d => trend[d] || 0));
+    html += '<div class="dash-chart">';
+    html += '<div class="dash-chart-title">Daily uploads (30 days)</div>';
+    html += '<div class="chart-bars">';
+    days.forEach(d => {
+      const count = trend[d] || 0;
+      const h = Math.max(2, (count / maxCount) * 100);
+      const label = d.substring(5); // MM-DD
+      html += `<div class="chart-bar-col" title="${d}: ${count}">
+        <div class="chart-bar" style="height:${h}px"></div>
+        <div class="chart-bar-label">${label}</div>
+      </div>`;
+    });
+    html += '</div></div>';
+
+    // Store breakdown
+    const storeNames = Object.keys(stores).sort((a,b) => stores[b] - stores[a]);
+    if (storeNames.length) {
+      html += '<div class="dash-stores">';
+      storeNames.forEach(name => {
+        const count = stores[name];
+        const succ = success[name] || 0;
+        const r = count > 0 ? Math.round(succ / count * 100) : 0;
+        html += `<div class="dash-store">
+          <div class="name">${name}</div>
+          <div class="count">${fmtNum(count)}</div>
+          <div class="rate">${r}% success</div>
+        </div>`;
+      });
+      html += '</div>';
+    }
+
+    dash.innerHTML = html;
+  }).catch(() => {
+    dash.innerHTML = '<div class="dash-loading">Dashboard unavailable</div>';
+  });
+
+  function fmtNum(n) {
+    if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n/1000).toFixed(1) + 'K';
+    return String(n);
+  }
+
+  function getLast30Days() {
+    const days = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      days.push(d.toISOString().substring(0, 10));
+    }
+    return days;
+  }
+})();
+</script>
 
 </body>
 </html>
