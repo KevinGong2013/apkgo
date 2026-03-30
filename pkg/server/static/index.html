@@ -5,173 +5,297 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>apkgo</title>
 <style>
-  :root {
-    --bg: #0a0a0a; --surface: #141414; --border: #262626;
-    --text: #ededed; --dim: #a0a0a0; --accent: #3b82f6;
-    --green: #22c55e; --red: #ef4444; --yellow: #eab308;
-    --radius: 10px;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    background: var(--bg); color: var(--text); line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-  }
-  .container { max-width: 640px; margin: 0 auto; padding: 40px 20px; }
-  h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; }
-  h1 span { color: var(--accent); }
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
 
-  /* Tabs */
-  .tabs { display: flex; gap: 0; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
-  .tab {
-    padding: 10px 20px; cursor: pointer; font-size: 0.9rem;
-    color: var(--dim); border-bottom: 2px solid transparent;
-    transition: all 0.15s;
-  }
-  .tab:hover { color: var(--text); }
-  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-  .tab-content { display: none; }
-  .tab-content.active { display: block; }
+:root {
+  --bg: #06080c;
+  --bg-el: #0c1018;
+  --bg-card: #101620;
+  --bg-card-h: #151d2a;
+  --border: #1a2435;
+  --border-b: #243044;
+  --text: #e8edf5;
+  --dim: #6b7d99;
+  --muted: #3d4f66;
+  --accent: #00e5ff;
+  --accent-g: rgba(0,229,255,0.15);
+  --green: #00e676;
+  --red: #ff3d5a;
+  --yellow: #ffd740;
+  --radius: 8px;
+  --mono: 'JetBrains Mono', 'SF Mono', monospace;
+  --sans: 'Noto Sans SC', -apple-system, sans-serif;
+}
 
-  /* Drop zone */
-  .drop-zone {
-    border: 2px dashed var(--border); border-radius: var(--radius);
-    padding: 40px 20px; text-align: center; cursor: pointer;
-    transition: all 0.15s; margin-bottom: 16px; position: relative;
-  }
-  .drop-zone:hover, .drop-zone.over { border-color: var(--accent); background: #0d1b2a; }
-  .drop-zone.has-file { border-color: var(--green); border-style: solid; padding: 20px; }
-  .drop-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-  .drop-zone .label { color: var(--dim); font-size: 0.95rem; }
-  .drop-zone .file-info { text-align: left; }
-  .drop-zone .file-info .name { font-weight: 600; margin-bottom: 4px; }
-  .drop-zone .file-info .meta { color: var(--dim); font-size: 0.85rem; font-family: monospace; }
-  .drop-zone-sm { padding: 20px; }
-  .drop-zone-sm .label { font-size: 0.85rem; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-  /* Stores */
-  .section { margin-bottom: 20px; }
-  .section-label { font-size: 0.8rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
-  .store-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-  .store-chip {
-    display: flex; align-items: center; gap: 6px;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-    padding: 6px 12px; font-size: 0.875rem; cursor: pointer; transition: all 0.1s; user-select: none;
-  }
-  .store-chip:hover { border-color: var(--dim); }
-  .store-chip.selected { border-color: var(--accent); background: #0d1b2a; }
-  .store-chip input { display: none; }
-  .store-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); transition: background 0.1s; }
-  .store-chip.selected .dot { background: var(--accent); }
-  .no-stores { color: var(--dim); font-size: 0.85rem; padding: 8px 0; }
+body {
+  font-family: var(--sans);
+  background: var(--bg); color: var(--text);
+  line-height: 1.6; -webkit-font-smoothing: antialiased;
+}
 
-  /* Notes */
-  textarea, input[type="text"], input[type="password"] {
-    width: 100%; background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); color: var(--text); padding: 10px 12px;
-    font-family: inherit; font-size: 0.9rem;
-  }
-  textarea { resize: vertical; min-height: 80px; }
-  textarea:focus, input:focus { outline: none; border-color: var(--accent); }
-  textarea::placeholder, input::placeholder { color: #525252; }
+.shell { max-width: 640px; margin: 0 auto; padding: 32px 20px 60px; }
 
-  /* Buttons */
-  .btn {
-    width: 100%; padding: 12px; border: none; border-radius: var(--radius);
-    font-size: 1rem; font-weight: 600; cursor: pointer; transition: background 0.15s;
-  }
-  .btn-primary { background: var(--accent); color: #fff; margin-top: 20px; }
-  .btn-primary:hover:not(:disabled) { background: #2563eb; }
-  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-  .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); margin-top: 12px; }
-  .btn-secondary:hover { border-color: var(--dim); }
+/* Header */
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 24px;
+}
 
-  /* Results */
-  .results { margin-top: 24px; }
-  .result-card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 8px;
-    display: flex; justify-content: space-between; align-items: center;
-  }
-  .result-card .store-name { font-weight: 600; }
-  .result-card .duration { color: var(--dim); font-size: 0.8rem; font-family: monospace; }
-  .result-card .status { font-size: 0.85rem; font-weight: 500; }
-  .result-card .status.ok { color: var(--green); }
-  .result-card .status.fail { color: var(--red); }
-  .result-card .error-msg { color: var(--red); font-size: 0.8rem; margin-top: 4px; word-break: break-all; }
+.header h1 {
+  font-family: var(--mono);
+  font-size: 1.4rem; font-weight: 800;
+  letter-spacing: -0.03em;
+}
 
-  /* APK info banner */
-  .apk-banner {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px;
-    font-family: monospace; font-size: 0.85rem; line-height: 1.8;
-  }
-  .apk-banner .k { color: var(--dim); }
+.header h1::after { content: '_'; color: var(--accent); animation: blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
 
-  /* Settings */
-  .store-config {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); margin-bottom: 12px; overflow: hidden;
-  }
-  .store-config-header {
-    padding: 12px 16px; cursor: pointer; display: flex; justify-content: space-between;
-    align-items: center; font-weight: 500;
-  }
-  .store-config-header:hover { background: #1a1a1a; }
-  .store-config-header .arrow { color: var(--dim); font-size: 0.8rem; transition: transform 0.15s; }
-  .store-config-header .arrow.open { transform: rotate(90deg); }
-  .store-config-header .badge {
-    font-size: 0.7rem; padding: 2px 6px; border-radius: 4px;
-    background: #1a2e1a; color: var(--green);
-  }
-  .store-config-header .badge.empty { background: #2a2020; color: var(--dim); }
-  .store-config-body { padding: 0 16px 16px; display: none; }
-  .store-config-body.open { display: block; }
-  .field-group { margin-bottom: 12px; }
-  .field-label {
-    font-size: 0.8rem; color: var(--dim); margin-bottom: 4px;
-    display: flex; justify-content: space-between;
-  }
-  .field-label .req { color: var(--red); font-size: 0.7rem; }
-  .toast {
-    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-    background: var(--green); color: #000; padding: 10px 24px; border-radius: 8px;
-    font-weight: 500; font-size: 0.9rem; opacity: 0; transition: opacity 0.3s; pointer-events: none;
-  }
-  .toast.show { opacity: 1; }
+.header .ver {
+  font-family: var(--mono);
+  font-size: 0.7rem; color: var(--muted);
+}
 
-  /* History */
-  .history-item {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px;
-  }
-  .history-header {
-    display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
-  }
-  .history-header .pkg { font-weight: 600; font-size: 0.95rem; }
-  .history-header .ver { color: var(--dim); font-family: monospace; font-size: 0.8rem; }
-  .history-time { color: var(--dim); font-size: 0.75rem; margin-bottom: 8px; }
-  .history-stores { display: flex; flex-wrap: wrap; gap: 6px; }
-  .history-store {
-    font-size: 0.78rem; padding: 2px 8px; border-radius: 4px; font-family: monospace;
-  }
-  .history-store.ok { background: #122a12; color: var(--green); }
-  .history-store.fail { background: #2a1212; color: var(--red); }
-  .history-empty { color: var(--dim); font-size: 0.9rem; text-align: center; padding: 40px 0; }
+/* Tabs */
+.tabs {
+  display: flex; gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
 
-  /* Spinner */
-  .spinner {
-    display: inline-block; width: 18px; height: 18px;
-    border: 2px solid var(--border); border-top-color: var(--accent);
-    border-radius: 50%; animation: spin 0.6s linear infinite;
-    vertical-align: middle; margin-right: 8px;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
+.tab {
+  padding: 10px 20px; cursor: pointer;
+  font-family: var(--mono); font-size: 0.8rem; font-weight: 500;
+  color: var(--dim); border-bottom: 2px solid transparent;
+  transition: all 0.15s; user-select: none;
+}
+
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* Drop zone */
+.drop-zone {
+  border: 1px dashed var(--border-b);
+  border-radius: var(--radius);
+  padding: 36px 20px; text-align: center;
+  cursor: pointer; transition: all 0.15s;
+  margin-bottom: 14px; position: relative;
+  background: var(--bg-el);
+}
+
+.drop-zone:hover, .drop-zone.over {
+  border-color: var(--accent); border-style: solid;
+  background: rgba(0,229,255,0.03);
+}
+
+.drop-zone.has-file {
+  border-color: var(--green); border-style: solid;
+  padding: 20px;
+}
+
+.drop-zone input[type="file"] {
+  position: absolute; inset: 0; opacity: 0; cursor: pointer;
+}
+
+.drop-zone .label {
+  color: var(--muted);
+  font-family: var(--mono); font-size: 0.82rem;
+}
+
+.drop-zone .file-info { text-align: left; }
+.drop-zone .file-info .name {
+  font-weight: 600; margin-bottom: 4px;
+  font-family: var(--mono); font-size: 0.88rem;
+}
+.drop-zone .file-info .meta {
+  color: var(--dim);
+  font-family: var(--mono); font-size: 0.78rem;
+}
+
+.drop-sm { padding: 20px; }
+.drop-sm .label { font-size: 0.75rem; }
+
+/* Stores chips */
+.sec { margin-bottom: 18px; }
+.sec-label {
+  font-family: var(--mono); font-size: 0.68rem; font-weight: 700;
+  color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.08em; margin-bottom: 8px;
+}
+
+.chip-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.chip {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 14px;
+  font-family: var(--mono); font-size: 0.8rem;
+  cursor: pointer; transition: all 0.1s; user-select: none;
+}
+
+.chip:hover { border-color: var(--dim); }
+.chip.sel { border-color: var(--accent); background: rgba(0,229,255,0.05); }
+.chip input { display: none; }
+
+.chip .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--muted); transition: background 0.1s;
+}
+
+.chip.sel .dot { background: var(--accent); box-shadow: 0 0 6px rgba(0,229,255,0.5); }
+.no-stores { color: var(--muted); font-size: 0.82rem; }
+
+/* Inputs */
+textarea, input[type="text"], input[type="password"] {
+  width: 100%; background: var(--bg-el);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text); padding: 10px 14px;
+  font-family: var(--mono); font-size: 0.82rem;
+}
+textarea { resize: vertical; min-height: 80px; font-family: var(--sans); }
+textarea:focus, input:focus { outline: none; border-color: var(--accent); }
+textarea::placeholder, input::placeholder { color: var(--muted); }
+
+/* Buttons */
+.btn {
+  width: 100%; padding: 12px; border: none; border-radius: var(--radius);
+  font-family: var(--mono); font-size: 0.88rem; font-weight: 700;
+  cursor: pointer; transition: all 0.15s;
+}
+
+.btn-pri {
+  background: var(--accent); color: var(--bg); margin-top: 20px;
+  box-shadow: 0 0 16px rgba(0,229,255,0.15);
+}
+.btn-pri:hover:not(:disabled) { box-shadow: 0 0 24px rgba(0,229,255,0.3); }
+.btn-pri:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Results */
+.results { margin-top: 24px; }
+
+.apk-info {
+  background: var(--bg-el); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+  margin-bottom: 12px;
+  font-family: var(--mono); font-size: 0.8rem; line-height: 1.9;
+}
+.apk-info .k { color: var(--dim); }
+
+.result-row {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 16px; margin-bottom: 8px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+
+.result-row .store-name { font-family: var(--mono); font-weight: 600; font-size: 0.88rem; }
+.result-row .dur { color: var(--dim); font-family: var(--mono); font-size: 0.72rem; }
+.result-row .st { font-family: var(--mono); font-size: 0.8rem; font-weight: 700; }
+.result-row .st.ok { color: var(--green); }
+.result-row .st.fail { color: var(--red); }
+.result-row .err-msg { color: var(--red); font-size: 0.75rem; margin-top: 4px; word-break: break-all; }
+
+/* History */
+.hist-item {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px;
+}
+
+.hist-head {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;
+}
+
+.hist-head .pkg { font-family: var(--mono); font-weight: 600; font-size: 0.88rem; }
+.hist-head .ver { font-family: var(--mono); color: var(--dim); font-size: 0.75rem; }
+
+.hist-time {
+  color: var(--muted); font-family: var(--mono); font-size: 0.7rem;
+  margin-bottom: 8px;
+}
+
+.hist-stores { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.hist-badge {
+  font-family: var(--mono); font-size: 0.72rem; font-weight: 600;
+  padding: 2px 8px; border-radius: 4px;
+}
+
+.hist-badge.ok { background: rgba(0,230,118,0.1); color: var(--green); }
+.hist-badge.fail { background: rgba(255,61,90,0.1); color: var(--red); }
+.hist-empty { color: var(--muted); text-align: center; padding: 40px 0; font-size: 0.88rem; }
+
+/* Settings */
+.cfg-block {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); margin-bottom: 10px; overflow: hidden;
+}
+
+.cfg-head {
+  padding: 12px 16px; cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: var(--mono); font-weight: 600; font-size: 0.88rem;
+  transition: background 0.1s;
+}
+
+.cfg-head:hover { background: var(--bg-card-h); }
+
+.cfg-head .arrow {
+  color: var(--muted); font-size: 0.7rem;
+  transition: transform 0.15s;
+}
+
+.cfg-head .arrow.open { transform: rotate(90deg); }
+
+.cfg-head .badge {
+  font-family: var(--mono); font-size: 0.62rem; font-weight: 700;
+  padding: 2px 8px; border-radius: 4px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+
+.cfg-head .badge.on { background: rgba(0,230,118,0.1); color: var(--green); }
+.cfg-head .badge.off { background: rgba(59,79,102,0.2); color: var(--muted); }
+
+.cfg-body { padding: 0 16px 16px; display: none; }
+.cfg-body.open { display: block; }
+
+.field { margin-bottom: 12px; }
+
+.field-label {
+  font-family: var(--mono); font-size: 0.72rem; color: var(--dim);
+  margin-bottom: 4px; display: flex; justify-content: space-between;
+}
+
+.field-label .req { color: var(--red); font-size: 0.65rem; font-weight: 700; }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: var(--green); color: var(--bg); padding: 10px 28px;
+  border-radius: 6px; font-family: var(--mono); font-weight: 700;
+  font-size: 0.82rem; opacity: 0; transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.toast.show { opacity: 1; }
+
+/* Spinner */
+.spinner {
+  display: inline-block; width: 16px; height: 16px;
+  border: 2px solid var(--border); border-top-color: var(--bg);
+  border-radius: 50%; animation: spin 0.5s linear infinite;
+  vertical-align: middle; margin-right: 8px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
-<div class="container">
-  <h1><span>apkgo</span></h1>
+<div class="shell">
+  <div class="header">
+    <h1>apkgo</h1>
+  </div>
 
   <div class="tabs">
     <div class="tab active" data-tab="upload">Upload</div>
@@ -179,50 +303,50 @@
     <div class="tab" data-tab="settings">Settings</div>
   </div>
 
-  <!-- Upload Tab -->
+  <!-- Upload -->
   <div class="tab-content active" id="tab-upload">
-    <div class="drop-zone" id="dropZone">
-      <input type="file" accept=".apk" id="fileInput">
-      <div class="label" id="dropLabel">Drop APK here or click to select</div>
-      <div class="file-info" id="fileInfo" style="display:none">
-        <div class="name" id="fileName"></div>
-        <div class="meta" id="fileMeta"></div>
+    <div class="drop-zone" id="dz">
+      <input type="file" accept=".apk" id="fi">
+      <div class="label" id="dl">Drop APK here or click to select</div>
+      <div class="file-info" id="finfo" style="display:none">
+        <div class="name" id="fname"></div>
+        <div class="meta" id="fmeta"></div>
       </div>
     </div>
 
-    <div class="drop-zone drop-zone-sm" id="dropZone64">
-      <input type="file" accept=".apk" id="fileInput64">
-      <div class="label" id="dropLabel64">64-bit APK (optional)</div>
-      <div class="file-info" id="fileInfo64" style="display:none">
-        <div class="name" id="fileName64"></div>
+    <div class="drop-zone drop-sm" id="dz64">
+      <input type="file" accept=".apk" id="fi64">
+      <div class="label" id="dl64">64-bit APK (optional)</div>
+      <div class="file-info" id="finfo64" style="display:none">
+        <div class="name" id="fname64"></div>
       </div>
     </div>
 
-    <div class="section">
-      <div class="section-label">Stores</div>
-      <div class="store-grid" id="storeGrid">
-        <div class="no-stores" id="noStores">No stores configured. Go to Settings to add credentials.</div>
+    <div class="sec">
+      <div class="sec-label">Stores</div>
+      <div class="chip-grid" id="storeGrid">
+        <div class="no-stores" id="noStores">No stores configured — go to Settings</div>
       </div>
     </div>
 
-    <div class="section">
-      <div class="section-label">Release Notes</div>
+    <div class="sec">
+      <div class="sec-label">Release Notes</div>
       <textarea id="notes" placeholder="What's new in this version..."></textarea>
     </div>
 
-    <button class="btn btn-primary" id="uploadBtn" disabled>Upload</button>
+    <button class="btn btn-pri" id="uploadBtn" disabled>UPLOAD</button>
     <div class="results" id="results"></div>
   </div>
 
-  <!-- History Tab -->
+  <!-- History -->
   <div class="tab-content" id="tab-history">
-    <div id="historyContainer"></div>
+    <div id="histBox"></div>
   </div>
 
-  <!-- Settings Tab -->
+  <!-- Settings -->
   <div class="tab-content" id="tab-settings">
-    <div id="settingsContainer"></div>
-    <button class="btn btn-primary" id="saveBtn">Save</button>
+    <div id="cfgBox"></div>
+    <button class="btn btn-pri" id="saveBtn">SAVE</button>
   </div>
 </div>
 
@@ -231,7 +355,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
-let selectedFile = null, selectedFile64 = null, configuredStores = [], allSchemas = [];
+let selFile = null, selFile64 = null, cfgStores = [], schemas = [];
 
 // Tabs
 $$('.tab').forEach(tab => {
@@ -244,222 +368,187 @@ $$('.tab').forEach(tab => {
   });
 });
 
-function showToast(msg) {
+function toast(msg) {
   const t = $('#toast');
   t.textContent = msg;
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2000);
+  setTimeout(() => t.classList.remove('show'), 2200);
 }
 
-// Load configured stores for upload tab
+// Stores
 function loadStores() {
   fetch('/api/stores').then(r => r.json()).then(data => {
-    configuredStores = data.stores || [];
-    const grid = $('#storeGrid');
-    grid.innerHTML = '';
-    if (configuredStores.length === 0) {
-      grid.innerHTML = '<div class="no-stores">No stores configured. Go to Settings to add credentials.</div>';
+    cfgStores = data.stores || [];
+    const g = $('#storeGrid');
+    g.innerHTML = '';
+    if (!cfgStores.length) {
+      g.innerHTML = '<div class="no-stores">No stores configured — go to Settings</div>';
       return;
     }
-    configuredStores.forEach(name => {
-      const chip = document.createElement('label');
-      chip.className = 'store-chip selected';
-      chip.innerHTML = `<input type="checkbox" value="${name}" checked><span class="dot"></span>${name}`;
-      chip.addEventListener('click', () => {
-        setTimeout(() => chip.classList.toggle('selected', chip.querySelector('input').checked), 0);
-      });
-      grid.appendChild(chip);
+    cfgStores.forEach(name => {
+      const c = document.createElement('label');
+      c.className = 'chip sel';
+      c.innerHTML = `<input type="checkbox" value="${name}" checked><span class="dot"></span>${name}`;
+      c.addEventListener('click', () => setTimeout(() => c.classList.toggle('sel', c.querySelector('input').checked), 0));
+      g.appendChild(c);
     });
   });
 }
 
-// Load schemas + current config for settings tab
+// Settings
 function loadSettings() {
   Promise.all([
     fetch('/api/stores/schema').then(r => r.json()),
     fetch('/api/config').then(r => r.json())
-  ]).then(([schemaData, configData]) => {
-    allSchemas = schemaData.stores || [];
-    const currentConfig = configData.stores || {};
-    const container = $('#settingsContainer');
-    container.innerHTML = '';
-
-    allSchemas.forEach(schema => {
-      const isConfigured = !!currentConfig[schema.name];
-      const div = document.createElement('div');
-      div.className = 'store-config';
-      const badge = isConfigured
-        ? '<span class="badge">configured</span>'
-        : '<span class="badge empty">not set</span>';
-      div.innerHTML = `
-        <div class="store-config-header" data-store="${schema.name}">
-          <div>${schema.name} ${badge}</div>
+  ]).then(([sd, cd]) => {
+    schemas = sd.stores || [];
+    const cur = cd.stores || {};
+    const box = $('#cfgBox');
+    box.innerHTML = '';
+    schemas.forEach(s => {
+      const on = !!cur[s.name];
+      const d = document.createElement('div');
+      d.className = 'cfg-block';
+      d.innerHTML = `
+        <div class="cfg-head" data-store="${s.name}">
+          <div>${s.name} <span class="badge ${on?'on':'off'}">${on?'configured':'not set'}</span></div>
           <span class="arrow">&#9654;</span>
         </div>
-        <div class="store-config-body" id="cfg-${schema.name}">
-          ${schema.fields.map(f => `
-            <div class="field-group">
-              <div class="field-label">
-                <span>${f.key}</span>
-                ${f.required ? '<span class="req">required</span>' : ''}
-              </div>
-              <input type="${f.key.includes('secret') || f.key.includes('private') ? 'password' : 'text'}"
-                placeholder="${f.desc}"
-                data-store="${schema.name}" data-key="${f.key}"
-                value="">
+        <div class="cfg-body" id="cfg-${s.name}">
+          ${s.fields.map(f => `
+            <div class="field">
+              <div class="field-label"><span>${f.key}</span>${f.required?'<span class="req">REQUIRED</span>':''}</div>
+              <input type="${f.key.includes('secret')||f.key.includes('private')?'password':'text'}"
+                placeholder="${f.desc}" data-store="${s.name}" data-key="${f.key}" value="">
             </div>
           `).join('')}
-        </div>
-      `;
-      container.appendChild(div);
-
-      // Toggle
-      div.querySelector('.store-config-header').addEventListener('click', () => {
-        const body = div.querySelector('.store-config-body');
-        const arrow = div.querySelector('.arrow');
-        body.classList.toggle('open');
-        arrow.classList.toggle('open');
+        </div>`;
+      box.appendChild(d);
+      d.querySelector('.cfg-head').addEventListener('click', () => {
+        d.querySelector('.cfg-body').classList.toggle('open');
+        d.querySelector('.arrow').classList.toggle('open');
       });
     });
   });
 }
 
-// Save settings
+// Save
 $('#saveBtn').addEventListener('click', async () => {
   const stores = {};
-  $$('#settingsContainer input').forEach(input => {
-    const s = input.dataset.store, k = input.dataset.key, v = input.value.trim();
-    if (v) {
-      if (!stores[s]) stores[s] = {};
-      stores[s][k] = v;
-    }
+  $$('#cfgBox input').forEach(i => {
+    const s = i.dataset.store, k = i.dataset.key, v = i.value.trim();
+    if (v) { if (!stores[s]) stores[s] = {}; stores[s][k] = v; }
   });
-
   try {
-    const resp = await fetch('/api/config', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+    const r = await fetch('/api/config', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({stores})
     });
-    const data = await resp.json();
-    if (data.error) {
-      showToast('Error: ' + data.error);
-    } else {
-      showToast('Saved to ' + data.saved);
-      loadStores();
-      loadSettings();
-    }
-  } catch (e) {
-    showToast('Error: ' + e.message);
-  }
+    const d = await r.json();
+    if (d.error) toast('Error: ' + d.error);
+    else { toast('Saved'); loadStores(); loadSettings(); }
+  } catch(e) { toast('Error: ' + e.message); }
 });
 
 // Drop zones
-function setupDrop(zoneId, inputId, labelId, infoId, nameId, onFile) {
-  const zone = $(zoneId), input = $(inputId);
-  ['dragover','dragenter'].forEach(e => zone.addEventListener(e, ev => { ev.preventDefault(); zone.classList.add('over'); }));
-  ['dragleave','drop'].forEach(e => zone.addEventListener(e, () => zone.classList.remove('over')));
-  zone.addEventListener('drop', ev => { ev.preventDefault(); if (ev.dataTransfer.files.length) onFile(ev.dataTransfer.files[0]); });
-  input.addEventListener('change', () => { if (input.files.length) onFile(input.files[0]); });
+function setupDrop(zoneId, inputId, onFile) {
+  const z = $(zoneId), inp = $(inputId);
+  ['dragover','dragenter'].forEach(e => z.addEventListener(e, ev => { ev.preventDefault(); z.classList.add('over'); }));
+  ['dragleave','drop'].forEach(e => z.addEventListener(e, () => z.classList.remove('over')));
+  z.addEventListener('drop', ev => { ev.preventDefault(); if (ev.dataTransfer.files.length) onFile(ev.dataTransfer.files[0]); });
+  inp.addEventListener('change', () => { if (inp.files.length) onFile(inp.files[0]); });
 }
 
-setupDrop('#dropZone', '#fileInput', '#dropLabel', '#fileInfo', '#fileName',
-  file => {
-    selectedFile = file;
-    $('#dropLabel').style.display = 'none';
-    $('#fileInfo').style.display = 'block';
-    $('#fileName').textContent = file.name;
-    $('#fileMeta').textContent = `${(file.size / 1048576).toFixed(1)} MB`;
-    $('#dropZone').classList.add('has-file');
-    $('#uploadBtn').disabled = configuredStores.length === 0;
-  }
-);
+setupDrop('#dz', '#fi', file => {
+  selFile = file;
+  $('#dl').style.display = 'none';
+  $('#finfo').style.display = 'block';
+  $('#fname').textContent = file.name;
+  $('#fmeta').textContent = `${(file.size/1048576).toFixed(1)} MB`;
+  $('#dz').classList.add('has-file');
+  $('#uploadBtn').disabled = cfgStores.length === 0;
+});
 
-setupDrop('#dropZone64', '#fileInput64', '#dropLabel64', '#fileInfo64', '#fileName64',
-  file => {
-    selectedFile64 = file;
-    $('#dropLabel64').style.display = 'none';
-    $('#fileInfo64').style.display = 'block';
-    $('#fileName64').textContent = file.name;
-    $('#dropZone64').classList.add('has-file');
-  }
-);
+setupDrop('#dz64', '#fi64', file => {
+  selFile64 = file;
+  $('#dl64').style.display = 'none';
+  $('#finfo64').style.display = 'block';
+  $('#fname64').textContent = file.name;
+  $('#dz64').classList.add('has-file');
+});
 
 // Upload
 $('#uploadBtn').addEventListener('click', async () => {
-  if (!selectedFile) return;
+  if (!selFile) return;
   const btn = $('#uploadBtn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Uploading...';
+  btn.innerHTML = '<span class="spinner"></span>UPLOADING...';
   $('#results').innerHTML = '';
 
-  const checked = [...$$('.store-chip input:checked')].map(cb => cb.value);
+  const checked = [...$$('.chip input:checked')].map(cb => cb.value);
   const form = new FormData();
-  form.append('file', selectedFile);
-  if (selectedFile64) form.append('file64', selectedFile64);
-  if (checked.length && checked.length < configuredStores.length) form.append('stores', checked.join(','));
-  const notes = $('#notes').value.trim();
-  if (notes) form.append('notes', notes);
+  form.append('file', selFile);
+  if (selFile64) form.append('file64', selFile64);
+  if (checked.length && checked.length < cfgStores.length) form.append('stores', checked.join(','));
+  const n = $('#notes').value.trim();
+  if (n) form.append('notes', n);
 
   try {
     const resp = await fetch('/api/upload', { method: 'POST', body: form });
     const data = await resp.json();
     if (data.error) {
-      $('#results').innerHTML = `<div class="result-card"><span class="status fail">${data.error}</span></div>`;
+      $('#results').innerHTML = `<div class="result-row"><span class="st fail">${data.error}</span></div>`;
       return;
     }
     let html = '';
     if (data.apk) {
-      html += `<div class="apk-banner">
+      html += `<div class="apk-info">
         <span class="k">package:</span> ${data.apk.package}<br>
         <span class="k">version:</span> ${data.apk.version_name} (${data.apk.version_code})<br>
         <span class="k">app:</span> ${data.apk.app_name}
       </div>`;
     }
-    (data.results || []).forEach(r => {
+    (data.results||[]).forEach(r => {
       const cls = r.success ? 'ok' : 'fail';
-      const dur = r.duration_ms ? `${(r.duration_ms / 1000).toFixed(1)}s` : '';
-      html += `<div class="result-card">
+      const dur = r.duration_ms ? `${(r.duration_ms/1000).toFixed(1)}s` : '';
+      html += `<div class="result-row">
         <div>
           <div class="store-name">${r.store}</div>
-          ${r.error ? `<div class="error-msg">${r.error}</div>` : ''}
+          ${r.error ? `<div class="err-msg">${r.error}</div>` : ''}
         </div>
         <div style="text-align:right">
-          <div class="status ${cls}">${r.success ? 'OK' : 'FAIL'}</div>
-          <div class="duration">${dur}</div>
+          <div class="st ${cls}">${r.success?'OK':'FAIL'}</div>
+          <div class="dur">${dur}</div>
         </div>
       </div>`;
     });
     $('#results').innerHTML = html;
-  } catch (err) {
-    $('#results').innerHTML = `<div class="result-card"><span class="status fail">${err.message}</span></div>`;
+  } catch(err) {
+    $('#results').innerHTML = `<div class="result-row"><span class="st fail">${err.message}</span></div>`;
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Upload';
+    btn.textContent = 'UPLOAD';
   }
 });
 
 // History
 function loadHistory() {
   fetch('/api/history').then(r => r.json()).then(data => {
-    const container = $('#historyContainer');
-    const records = data.records || [];
-    if (records.length === 0) {
-      container.innerHTML = '<div class="history-empty">No upload history yet.</div>';
-      return;
-    }
-    container.innerHTML = records.map(r => {
-      const stores = (r.results || []).map(res =>
-        `<span class="history-store ${res.success ? 'ok' : 'fail'}">${res.store} ${res.success ? '✓' : '✗'}${res.duration_ms ? ' ' + (res.duration_ms/1000).toFixed(1)+'s' : ''}</span>`
+    const box = $('#histBox');
+    const recs = data.records || [];
+    if (!recs.length) { box.innerHTML = '<div class="hist-empty">No upload history yet.</div>'; return; }
+    box.innerHTML = recs.map(r => {
+      const stores = (r.results||[]).map(s =>
+        `<span class="hist-badge ${s.success?'ok':'fail'}">${s.store} ${s.success?'\u2713':'\u2717'}${s.duration_ms?' '+(s.duration_ms/1000).toFixed(1)+'s':''}</span>`
       ).join('');
-      const time = r.timestamp ? r.timestamp.replace('T',' ').substring(0,19) : '';
-      return `<div class="history-item">
-        <div class="history-header">
-          <span class="pkg">${r.apk?.package || '-'}</span>
-          <span class="ver">${r.apk?.version_name || ''} (${r.apk?.version_code || ''})</span>
+      const t = r.timestamp ? r.timestamp.replace('T',' ').substring(0,19) : '';
+      return `<div class="hist-item">
+        <div class="hist-head">
+          <span class="pkg">${r.apk?.package||'-'}</span>
+          <span class="ver">${r.apk?.version_name||''} (${r.apk?.version_code||''})</span>
         </div>
-        <div class="history-time">${time}</div>
-        <div class="history-stores">${stores}</div>
+        <div class="hist-time">${t}</div>
+        <div class="hist-stores">${stores}</div>
       </div>`;
     }).join('');
   });

@@ -1,471 +1,570 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>apkgo - 一行命令发布 APK 到所有应用商店</title>
-  <meta name="description" content="将 APK 一键发布到华为、小米、OPPO、vivo、荣耀等主流安卓应用商店。为 CI/CD 和 AI Agent 设计。">
-  <style>
-    :root {
-      --bg: #0a0a0a;
-      --surface: #141414;
-      --border: #262626;
-      --text: #ededed;
-      --text-secondary: #a0a0a0;
-      --accent: #3b82f6;
-      --accent-dim: #1e3a5f;
-      --green: #22c55e;
-      --red: #ef4444;
-      --yellow: #eab308;
-    }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-    }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    code {
-      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-      font-size: 0.9em;
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>apkgo — 一行命令发布 APK 到所有应用商店</title>
+<meta name="description" content="将 APK 一键发布到华为、小米、OPPO、vivo、荣耀、腾讯应用宝等主流安卓应用商店。为 CI/CD 和 AI Agent 设计。">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
 
-    /* Hero */
-    .hero {
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 80px 24px 60px;
-      text-align: center;
-    }
-    .hero h1 {
-      font-size: 3.5rem;
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      margin-bottom: 16px;
-    }
-    .hero h1 span { color: var(--accent); }
-    .hero p {
-      font-size: 1.25rem;
-      color: var(--text-secondary);
-      max-width: 560px;
-      margin: 0 auto 40px;
-    }
-    .hero-buttons {
-      display: flex;
-      gap: 12px;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 24px;
-      border-radius: 8px;
-      font-size: 1rem;
-      font-weight: 500;
-      transition: all 0.15s;
-      border: 1px solid transparent;
-    }
-    .btn-primary {
-      background: var(--accent);
-      color: #fff;
-    }
-    .btn-primary:hover { background: #2563eb; text-decoration: none; }
-    .btn-secondary {
-      background: var(--surface);
-      color: var(--text);
-      border-color: var(--border);
-    }
-    .btn-secondary:hover { border-color: var(--text-secondary); text-decoration: none; }
+:root {
+  --bg: #06080c;
+  --bg-elevated: #0c1018;
+  --bg-card: #101620;
+  --bg-card-hover: #151d2a;
+  --border: #1a2435;
+  --border-bright: #243044;
+  --text: #e8edf5;
+  --text-dim: #6b7d99;
+  --text-muted: #3d4f66;
+  --accent: #00e5ff;
+  --accent-glow: rgba(0, 229, 255, 0.15);
+  --accent-dim: #004d57;
+  --green: #00e676;
+  --red: #ff3d5a;
+  --yellow: #ffd740;
+  --orange: #ff9100;
+  --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  --sans: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+}
 
-    /* Terminal */
-    .terminal-wrapper {
-      max-width: 680px;
-      margin: 0 auto 80px;
-      padding: 0 24px;
-    }
-    .terminal {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      overflow: hidden;
-    }
-    .terminal-bar {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border);
-    }
-    .terminal-dot {
-      width: 12px; height: 12px;
-      border-radius: 50%;
-      background: var(--border);
-    }
-    .terminal-dot:nth-child(1) { background: var(--red); }
-    .terminal-dot:nth-child(2) { background: var(--yellow); }
-    .terminal-dot:nth-child(3) { background: var(--green); }
-    .terminal-body {
-      padding: 20px;
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      font-size: 0.875rem;
-      line-height: 1.7;
-      overflow-x: auto;
-    }
-    .terminal-body .prompt { color: var(--green); }
-    .terminal-body .cmd { color: var(--text); }
-    .terminal-body .comment { color: #525252; }
-    .terminal-body .output { color: var(--text-secondary); }
-    .terminal-body .json-key { color: var(--accent); }
-    .terminal-body .json-val-true { color: var(--green); }
-    .terminal-body .json-val-false { color: var(--red); }
-    .terminal-body .json-val-str { color: var(--yellow); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-    /* Stores */
-    .section {
-      max-width: 900px;
-      margin: 0 auto;
-      padding: 0 24px 80px;
-    }
-    .section h2 {
-      font-size: 1.75rem;
-      font-weight: 600;
-      margin-bottom: 32px;
-      text-align: center;
-    }
-    .store-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 16px;
-    }
-    .store-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 24px;
-    }
-    .store-card h3 {
-      font-size: 1.1rem;
-      margin-bottom: 6px;
-    }
-    .store-card p {
-      color: var(--text-secondary);
-      font-size: 0.875rem;
-    }
-    .store-tag {
-      display: inline-block;
-      font-size: 0.75rem;
-      padding: 2px 8px;
-      border-radius: 4px;
-      background: var(--accent-dim);
-      color: var(--accent);
-      margin-top: 8px;
-    }
+html { scroll-behavior: smooth; }
 
-    /* Features */
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 16px;
-    }
-    .feature-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 24px;
-    }
-    .feature-card h3 {
-      font-size: 1rem;
-      margin-bottom: 8px;
-    }
-    .feature-card p {
-      color: var(--text-secondary);
-      font-size: 0.875rem;
-    }
-    .feature-icon {
-      font-size: 1.5rem;
-      margin-bottom: 12px;
-    }
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
 
-    /* Install */
-    .install-block {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 24px;
-      margin-bottom: 16px;
-    }
-    .install-block h3 {
-      font-size: 0.875rem;
-      color: var(--text-secondary);
-      margin-bottom: 8px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .install-block code {
-      display: block;
-      font-size: 0.95rem;
-      color: var(--green);
-    }
+/* Noise overlay */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+}
 
-    /* Footer */
-    footer {
-      text-align: center;
-      padding: 40px 24px;
-      border-top: 1px solid var(--border);
-      color: var(--text-secondary);
-      font-size: 0.875rem;
-    }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
 
-    /* Agent section */
-    .agent-output {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 24px;
-      font-family: 'SF Mono', monospace;
-      font-size: 0.85rem;
-      line-height: 1.7;
-      overflow-x: auto;
-      margin-top: 24px;
-    }
+.container { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
 
-    /* Exit codes */
-    .exit-codes {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-      margin-top: 24px;
-    }
-    .exit-code {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 16px;
-      text-align: center;
-    }
-    .exit-code .code {
-      font-family: 'SF Mono', monospace;
-      font-size: 1.5rem;
-      font-weight: 700;
-    }
-    .exit-code .label {
-      font-size: 0.8rem;
-      color: var(--text-secondary);
-      margin-top: 4px;
-    }
-    .exit-code:nth-child(1) .code { color: var(--green); }
-    .exit-code:nth-child(2) .code { color: var(--yellow); }
-    .exit-code:nth-child(3) .code { color: var(--red); }
-    .exit-code:nth-child(4) .code { color: var(--text-secondary); }
+/* ═══ HERO ═══ */
+.hero {
+  text-align: center;
+  padding: 100px 24px 80px;
+  position: relative;
+}
 
-    @media (max-width: 600px) {
-      .hero h1 { font-size: 2.25rem; }
-      .hero { padding: 60px 20px 40px; }
-      .exit-codes { grid-template-columns: repeat(2, 1fr); }
-    }
-  </style>
+.hero::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 50%; transform: translateX(-50%);
+  width: 600px; height: 600px;
+  background: radial-gradient(circle, rgba(0,229,255,0.06) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.logo {
+  font-family: var(--mono);
+  font-size: 4.5rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--text);
+  position: relative;
+  display: inline-block;
+}
+
+.logo::after {
+  content: '_';
+  color: var(--accent);
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink { 50% { opacity: 0; } }
+
+.hero .tagline {
+  font-size: 1.3rem;
+  color: var(--text-dim);
+  margin: 16px auto 0;
+  max-width: 500px;
+  font-weight: 400;
+}
+
+.hero-buttons {
+  display: flex; gap: 12px; justify-content: center;
+  margin-top: 40px; flex-wrap: wrap;
+}
+
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 12px 28px; border-radius: 6px;
+  font-family: var(--mono); font-size: 0.88rem; font-weight: 600;
+  transition: all 0.2s; border: 1px solid transparent;
+  text-decoration: none;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--bg);
+  box-shadow: 0 0 20px rgba(0,229,255,0.2);
+}
+.btn-primary:hover { box-shadow: 0 0 30px rgba(0,229,255,0.35); transform: translateY(-1px); text-decoration: none; }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border-bright);
+}
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+
+/* ═══ TERMINAL ═══ */
+.terminal-section { padding: 0 24px 100px; }
+
+.terminal {
+  max-width: 720px; margin: 0 auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,229,255,0.05);
+}
+
+.terminal-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0,0,0,0.3);
+}
+
+.terminal-dot { width: 12px; height: 12px; border-radius: 50%; }
+.terminal-dot:nth-child(1) { background: #ff5f57; }
+.terminal-dot:nth-child(2) { background: #febc2e; }
+.terminal-dot:nth-child(3) { background: #28c840; }
+.terminal-title {
+  flex: 1; text-align: center;
+  font-family: var(--mono); font-size: 0.75rem; color: var(--text-muted);
+}
+
+.terminal-body {
+  padding: 24px;
+  font-family: var(--mono); font-size: 0.82rem;
+  line-height: 1.9; overflow-x: auto;
+}
+
+.t-comment { color: var(--text-muted); }
+.t-prompt { color: var(--green); }
+.t-cmd { color: var(--text); }
+.t-flag { color: var(--yellow); }
+.t-key { color: var(--accent); }
+.t-str { color: var(--yellow); }
+.t-bool-true { color: var(--green); }
+.t-bool-false { color: var(--red); }
+.t-num { color: var(--orange); }
+.t-dim { color: var(--text-muted); }
+
+/* ═══ SECTION ═══ */
+.section {
+  padding: 80px 24px;
+}
+
+.section-title {
+  font-family: var(--mono);
+  font-size: 1.5rem;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 12px;
+  letter-spacing: -0.02em;
+}
+
+.section-title .accent { color: var(--accent); }
+
+.section-desc {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  margin-bottom: 48px;
+  max-width: 560px;
+  margin-left: auto; margin-right: auto;
+}
+
+/* ═══ STORES GRID ═══ */
+.grid-7 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.store-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 20px 16px;
+  transition: all 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.store-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.store-card:hover { border-color: var(--border-bright); transform: translateY(-2px); }
+.store-card:hover::before { opacity: 1; }
+
+.store-card h3 {
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.store-card p {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.store-tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--accent-glow);
+  color: var(--accent);
+  margin-top: 10px;
+  letter-spacing: 0.02em;
+}
+
+/* ═══ FEATURES ═══ */
+.grid-6 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.feature-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  transition: all 0.2s;
+}
+
+.feature-card:hover { border-color: var(--border-bright); }
+
+.feature-icon {
+  font-size: 1.6rem;
+  margin-bottom: 12px;
+  display: block;
+  width: 42px; height: 42px;
+  line-height: 42px; text-align: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.feature-card h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.feature-card p {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+/* ═══ AGENT SECTION ═══ */
+.exit-codes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  max-width: 560px;
+  margin: 0 auto 32px;
+}
+
+.exit-code {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 12px;
+  text-align: center;
+}
+
+.exit-code .code {
+  font-family: var(--mono);
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.exit-code .label {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-top: 6px;
+}
+
+.exit-code:nth-child(1) .code { color: var(--green); }
+.exit-code:nth-child(2) .code { color: var(--yellow); }
+.exit-code:nth-child(3) .code { color: var(--red); }
+.exit-code:nth-child(4) .code { color: var(--text-muted); }
+
+.agent-demo {
+  max-width: 620px; margin: 0 auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.9;
+  overflow-x: auto;
+}
+
+/* ═══ INSTALL ═══ */
+.install-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.install-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.install-item .method {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.install-item code {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--green);
+  word-break: break-all;
+}
+
+.install-item code a { color: var(--accent); }
+
+/* ═══ FOOTER ═══ */
+footer {
+  text-align: center;
+  padding: 40px 24px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-family: var(--mono);
+}
+
+/* ═══ DIVIDER ═══ */
+.divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-bright) 20%, var(--border-bright) 80%, transparent);
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+/* ═══ RESPONSIVE ═══ */
+@media (max-width: 640px) {
+  .logo { font-size: 3rem; }
+  .hero .tagline { font-size: 1.05rem; }
+  .hero { padding: 70px 20px 50px; }
+  .section { padding: 60px 16px; }
+  .exit-codes { grid-template-columns: repeat(2, 1fr); }
+  .install-item { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .install-item .method { min-width: auto; }
+  .terminal-body { font-size: 0.72rem; padding: 16px; }
+}
+
+/* ═══ ANIMATIONS ═══ */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.hero { animation: fadeUp 0.6s ease-out; }
+.terminal { animation: fadeUp 0.6s ease-out 0.15s both; }
+</style>
 </head>
 <body>
 
-  <!-- Hero -->
-  <section class="hero">
-    <h1><span>apkgo</span></h1>
-    <p>一行命令，将 APK 发布到华为、小米、OPPO、vivo、荣耀等所有主流安卓应用商店</p>
-    <div class="hero-buttons">
-      <a href="https://github.com/KevinGong2013/apkgo" class="btn btn-primary">GitHub</a>
-      <a href="https://github.com/KevinGong2013/apkgo/releases" class="btn btn-secondary">Download</a>
-    </div>
-  </section>
+<section class="hero">
+  <div class="logo">apkgo</div>
+  <p class="tagline">一行命令，将 APK 发布到所有主流安卓应用商店</p>
+  <div class="hero-buttons">
+    <a href="https://github.com/KevinGong2013/apkgo" class="btn btn-primary">GitHub</a>
+    <a href="https://github.com/KevinGong2013/apkgo/releases" class="btn btn-ghost">Download</a>
+  </div>
+</section>
 
-  <!-- Terminal Demo -->
-  <div class="terminal-wrapper">
-    <div class="terminal">
-      <div class="terminal-bar">
-        <div class="terminal-dot"></div>
-        <div class="terminal-dot"></div>
-        <div class="terminal-dot"></div>
-      </div>
-      <div class="terminal-body">
-        <span class="comment"># Generate config</span><br>
-        <span class="prompt">$</span> <span class="cmd">apkgo init --store huawei,xiaomi,oppo</span><br>
-        <br>
-        <span class="comment"># Upload to all stores</span><br>
-        <span class="prompt">$</span> <span class="cmd">apkgo upload -f app-release.apk --notes-file CHANGELOG.md</span><br>
-        <br>
-        <span class="output">{</span><br>
-        <span class="output">&nbsp;&nbsp;<span class="json-key">"apk"</span>: { <span class="json-key">"package"</span>: <span class="json-val-str">"com.example.app"</span>, <span class="json-key">"version_name"</span>: <span class="json-val-str">"2.1.0"</span> },</span><br>
-        <span class="output">&nbsp;&nbsp;<span class="json-key">"results"</span>: [</span><br>
-        <span class="output">&nbsp;&nbsp;&nbsp;&nbsp;{ <span class="json-key">"store"</span>: <span class="json-val-str">"huawei"</span>, <span class="json-key">"success"</span>: <span class="json-val-true">true</span>, <span class="json-key">"duration_ms"</span>: 18420 },</span><br>
-        <span class="output">&nbsp;&nbsp;&nbsp;&nbsp;{ <span class="json-key">"store"</span>: <span class="json-val-str">"xiaomi"</span>, <span class="json-key">"success"</span>: <span class="json-val-true">true</span>, <span class="json-key">"duration_ms"</span>: 5230 },</span><br>
-        <span class="output">&nbsp;&nbsp;&nbsp;&nbsp;{ <span class="json-key">"store"</span>: <span class="json-val-str">"oppo"</span>, <span class="json-key">"success"</span>: <span class="json-val-true">true</span>, <span class="json-key">"duration_ms"</span>: 12100 }</span><br>
-        <span class="output">&nbsp;&nbsp;]</span><br>
-        <span class="output">}</span>
-      </div>
+<section class="terminal-section">
+  <div class="terminal">
+    <div class="terminal-bar">
+      <div class="terminal-dot"></div>
+      <div class="terminal-dot"></div>
+      <div class="terminal-dot"></div>
+      <span class="terminal-title">apkgo</span>
+    </div>
+    <div class="terminal-body">
+      <span class="t-comment"># 生成配置</span><br>
+      <span class="t-prompt">$</span> <span class="t-cmd">apkgo init</span> <span class="t-flag">--store</span> <span class="t-str">huawei,xiaomi,oppo</span><br><br>
+      <span class="t-comment"># 一键上传到所有商店</span><br>
+      <span class="t-prompt">$</span> <span class="t-cmd">apkgo upload</span> <span class="t-flag">-f</span> <span class="t-str">app-release.apk</span> <span class="t-flag">--notes-file</span> <span class="t-str">CHANGELOG.md</span><br><br>
+      <span class="t-dim">{</span><br>
+      &nbsp;&nbsp;<span class="t-key">"apk"</span><span class="t-dim">:</span> { <span class="t-key">"package"</span><span class="t-dim">:</span> <span class="t-str">"com.example.app"</span><span class="t-dim">,</span> <span class="t-key">"version_name"</span><span class="t-dim">:</span> <span class="t-str">"2.1.0"</span> }<span class="t-dim">,</span><br>
+      &nbsp;&nbsp;<span class="t-key">"results"</span><span class="t-dim">:</span> [<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;{ <span class="t-key">"store"</span><span class="t-dim">:</span> <span class="t-str">"huawei"</span><span class="t-dim">,</span> <span class="t-key">"success"</span><span class="t-dim">:</span> <span class="t-bool-true">true</span><span class="t-dim">,</span> <span class="t-key">"duration_ms"</span><span class="t-dim">:</span> <span class="t-num">18420</span> }<span class="t-dim">,</span><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;{ <span class="t-key">"store"</span><span class="t-dim">:</span> <span class="t-str">"xiaomi"</span><span class="t-dim">,</span> <span class="t-key">"success"</span><span class="t-dim">:</span> <span class="t-bool-true">true</span><span class="t-dim">,</span> <span class="t-key">"duration_ms"</span><span class="t-dim">:</span> <span class="t-num">5230</span> }<span class="t-dim">,</span><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;{ <span class="t-key">"store"</span><span class="t-dim">:</span> <span class="t-str">"oppo"</span><span class="t-dim">,</span> <span class="t-key">"success"</span><span class="t-dim">:</span> <span class="t-bool-true">true</span><span class="t-dim">,</span> <span class="t-key">"duration_ms"</span><span class="t-dim">:</span> <span class="t-num">12100</span> }<br>
+      &nbsp;&nbsp;]<br>
+      <span class="t-dim">}</span>
     </div>
   </div>
+</section>
 
-  <!-- Stores -->
-  <section class="section">
-    <h2>支持的商店</h2>
-    <div class="store-grid">
-      <div class="store-card">
-        <h3>华为 AppGallery</h3>
-        <p>AppGallery Connect Publishing API v2</p>
-        <span class="store-tag">OAuth2</span>
-      </div>
-      <div class="store-card">
-        <h3>小米开放平台</h3>
-        <p>应用自动发布接口</p>
-        <span class="store-tag">RSA 签名</span>
-      </div>
-      <div class="store-card">
-        <h3>OPPO 开放平台</h3>
-        <p>应用发布 OpenAPI</p>
-        <span class="store-tag">HMAC-SHA256</span>
-      </div>
-      <div class="store-card">
-        <h3>vivo 开放平台</h3>
-        <p>应用分发接口</p>
-        <span class="store-tag">HMAC-SHA256</span>
-      </div>
-      <div class="store-card">
-        <h3>荣耀开发者平台</h3>
-        <p>应用发布 API</p>
-        <span class="store-tag">OAuth2</span>
-      </div>
-      <div class="store-card">
-        <h3>腾讯应用宝</h3>
-        <p>开放平台 API 发布接口</p>
-        <span class="store-tag">HMAC-SHA256</span>
-      </div>
-      <div class="store-card">
-        <h3>自定义服务器</h3>
-        <p>任意 HTTP 端点，可配置 Header 和字段名</p>
-        <span class="store-tag">HTTP</span>
-      </div>
+<div class="divider"></div>
+
+<section class="section">
+  <div class="container">
+    <h2 class="section-title">支持的<span class="accent">商店</span></h2>
+    <p class="section-desc">覆盖国内主流安卓分发渠道，支持自定义 HTTP 端点</p>
+    <div class="grid-7">
+      <div class="store-card"><h3>华为 AppGallery</h3><p>AppGallery Connect Publishing API v2</p><span class="store-tag">OAuth2</span></div>
+      <div class="store-card"><h3>小米开放平台</h3><p>应用自动发布接口</p><span class="store-tag">RSA 签名</span></div>
+      <div class="store-card"><h3>OPPO 开放平台</h3><p>应用发布 OpenAPI</p><span class="store-tag">HMAC-SHA256</span></div>
+      <div class="store-card"><h3>vivo 开放平台</h3><p>应用分发接口</p><span class="store-tag">HMAC-SHA256</span></div>
+      <div class="store-card"><h3>荣耀开发者平台</h3><p>应用发布 API</p><span class="store-tag">OAuth2</span></div>
+      <div class="store-card"><h3>腾讯应用宝</h3><p>开放平台 API 发布接口</p><span class="store-tag">HMAC-SHA256</span></div>
+      <div class="store-card"><h3>自定义服务器</h3><p>任意 HTTP 端点，可配置 Header</p><span class="store-tag">HTTP</span></div>
     </div>
-  </section>
+  </div>
+</section>
 
-  <!-- Features -->
-  <section class="section">
-    <h2>为什么选择 apkgo</h2>
-    <div class="features-grid">
+<div class="divider"></div>
+
+<section class="section">
+  <div class="container">
+    <h2 class="section-title">为什么选择 <span class="accent">apkgo</span></h2>
+    <div class="grid-6">
       <div class="feature-card">
-        <div class="feature-icon">&#9889;</div>
+        <span class="feature-icon">&#9889;</span>
         <h3>并发上传</h3>
-        <p>同时上传到所有商店，不串行等待</p>
+        <p>同时上传到所有商店，goroutine 并行执行，不串行等待</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">&#129302;</div>
+        <span class="feature-icon">&#129302;</span>
         <h3>AI Agent 友好</h3>
         <p>JSON 输出、语义化退出码、可发现的配置 schema、零交互</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">&#128736;</div>
+        <span class="feature-icon">&#9881;</span>
         <h3>CI/CD 就绪</h3>
         <p>单二进制，无依赖。GitHub Actions、Jenkins、GitLab CI 直接集成</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">&#128268;</div>
+        <span class="feature-icon">&#128268;</span>
         <h3>可扩展</h3>
-        <p>自注册 registry 架构，新增商店只需一个文件</p>
+        <p>自注册 registry 架构，新增商店只需一个文件，零改动主流程</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">&#128274;</div>
+        <span class="feature-icon">&#128274;</span>
         <h3>安全</h3>
-        <p>凭证存储在本地 YAML，不上报任何数据</p>
+        <p>凭证本地 YAML 存储，不上报任何应用数据，可禁用遥测</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">&#128230;</div>
+        <span class="feature-icon">&#128230;</span>
         <h3>单二进制</h3>
-        <p>Go 编译，跨平台。macOS / Linux / Windows，amd64 / arm64</p>
+        <p>Go 编译，跨平台分发。macOS / Linux / Windows，amd64 / arm64</p>
       </div>
     </div>
-  </section>
+  </div>
+</section>
 
-  <!-- AI Agent -->
-  <section class="section">
-    <h2>AI Agent 集成</h2>
-    <p style="text-align:center;color:var(--text-secondary);margin-bottom:12px;">apkgo 的每一个设计决策都考虑了机器消费场景</p>
+<div class="divider"></div>
+
+<section class="section">
+  <div class="container">
+    <h2 class="section-title">AI Agent <span class="accent">集成</span></h2>
+    <p class="section-desc">每一个设计决策都考虑了机器消费场景</p>
 
     <div class="exit-codes">
-      <div class="exit-code">
-        <div class="code">0</div>
-        <div class="label">全部成功</div>
-      </div>
-      <div class="exit-code">
-        <div class="code">1</div>
-        <div class="label">部分失败</div>
-      </div>
-      <div class="exit-code">
-        <div class="code">2</div>
-        <div class="label">全部失败</div>
-      </div>
-      <div class="exit-code">
-        <div class="code">3</div>
-        <div class="label">输入错误</div>
-      </div>
+      <div class="exit-code"><div class="code">0</div><div class="label">全部成功</div></div>
+      <div class="exit-code"><div class="code">1</div><div class="label">部分失败</div></div>
+      <div class="exit-code"><div class="code">2</div><div class="label">全部失败</div></div>
+      <div class="exit-code"><div class="code">3</div><div class="label">输入错误</div></div>
     </div>
 
-    <div class="agent-output">
-      <span class="comment"># Agent 可自动发现每个商店需要的配置</span><br>
-      <span style="color:var(--green)">$</span> apkgo stores<br>
-      <br>
-      <span style="color:var(--text-secondary)">{</span><br>
-      <span style="color:var(--text-secondary)">&nbsp;&nbsp;<span style="color:var(--accent)">"stores"</span>: [</span><br>
-      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;{</span><br>
-      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--accent)">"name"</span>: <span style="color:var(--yellow)">"huawei"</span>,</span><br>
-      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--accent)">"fields"</span>: [</span><br>
-      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{ <span style="color:var(--accent)">"key"</span>: <span style="color:var(--yellow)">"client_id"</span>, <span style="color:var(--accent)">"required"</span>: <span style="color:var(--green)">true</span> },</span><br>
-      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{ <span style="color:var(--accent)">"key"</span>: <span style="color:var(--yellow)">"client_secret"</span>, <span style="color:var(--accent)">"required"</span>: <span style="color:var(--green)">true</span> }</span><br>
-      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]</span><br>
-      <span style="color:var(--text-secondary)">&nbsp;&nbsp;&nbsp;&nbsp;}, ...</span><br>
-      <span style="color:var(--text-secondary)">&nbsp;&nbsp;]</span><br>
-      <span style="color:var(--text-secondary)">}</span>
+    <div class="agent-demo">
+      <span class="t-comment"># Agent 可自动发现每个商店需要的配置</span><br>
+      <span class="t-prompt">$</span> <span class="t-cmd">apkgo stores</span><br><br>
+      <span class="t-dim">{</span><br>
+      &nbsp;&nbsp;<span class="t-key">"stores"</span><span class="t-dim">:</span> [<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;{<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="t-key">"name"</span><span class="t-dim">:</span> <span class="t-str">"huawei"</span><span class="t-dim">,</span><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="t-key">"console_url"</span><span class="t-dim">:</span> <span class="t-str">"https://developer.huawei.com/..."</span><span class="t-dim">,</span><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="t-key">"fields"</span><span class="t-dim">:</span> [<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{ <span class="t-key">"key"</span><span class="t-dim">:</span> <span class="t-str">"client_id"</span><span class="t-dim">,</span> <span class="t-key">"required"</span><span class="t-dim">:</span> <span class="t-bool-true">true</span> }<span class="t-dim">,</span><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{ <span class="t-key">"key"</span><span class="t-dim">:</span> <span class="t-str">"client_secret"</span><span class="t-dim">,</span> <span class="t-key">"required"</span><span class="t-dim">:</span> <span class="t-bool-true">true</span> }<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;}<span class="t-dim">, ...</span><br>
+      &nbsp;&nbsp;]<br>
+      <span class="t-dim">}</span>
     </div>
-  </section>
+  </div>
+</section>
 
-  <!-- Install -->
-  <section class="section">
-    <h2>安装</h2>
-    <div class="install-block">
-      <h3>AI Agent Skill</h3>
-      <code>npx skills add KevinGong2013/apkgo</code>
-    </div>
-    <div class="install-block">
-      <h3>macOS (Apple Silicon)</h3>
-      <code>curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Darwin_arm64.tar.gz | tar xz -C /usr/local/bin apkgo</code>
-    </div>
-    <div class="install-block">
-      <h3>macOS (Intel)</h3>
-      <code>curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Darwin_x86_64.tar.gz | tar xz -C /usr/local/bin apkgo</code>
-    </div>
-    <div class="install-block">
-      <h3>Linux (x86_64)</h3>
-      <code>curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Linux_x86_64.tar.gz | tar xz -C /usr/local/bin apkgo</code>
-    </div>
-    <div class="install-block">
-      <h3>Windows</h3>
-      <code><a href="https://github.com/KevinGong2013/apkgo/releases/latest">Download apkgo_Windows_x86_64.zip</a></code>
-    </div>
-    <div class="install-block">
-      <h3>Go</h3>
-      <code>go install github.com/KevinGong2013/apkgo@latest</code>
-    </div>
-    <div class="install-block">
-      <h3>Docker</h3>
-      <code>docker pull ghcr.io/kevingong2013/apkgo:latest</code>
-    </div>
-  </section>
+<div class="divider"></div>
 
-  <footer>
-    <p>Apache License 2.0 &middot; <a href="https://github.com/KevinGong2013/apkgo">GitHub</a></p>
-  </footer>
+<section class="section">
+  <div class="container">
+    <h2 class="section-title">安装</h2>
+    <div class="install-grid">
+      <div class="install-item"><span class="method">Skill</span><code>npx skills add KevinGong2013/apkgo</code></div>
+      <div class="install-item"><span class="method">Linux</span><code>curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Linux_x86_64.tar.gz | tar xz -C /usr/local/bin apkgo</code></div>
+      <div class="install-item"><span class="method">macOS</span><code>curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Darwin_arm64.tar.gz | tar xz -C /usr/local/bin apkgo</code></div>
+      <div class="install-item"><span class="method">Go</span><code>go install github.com/KevinGong2013/apkgo@latest</code></div>
+      <div class="install-item"><span class="method">Docker</span><code>docker pull ghcr.io/kevingong2013/apkgo:latest</code></div>
+      <div class="install-item"><span class="method">Binary</span><code><a href="https://github.com/KevinGong2013/apkgo/releases">github.com/KevinGong2013/apkgo/releases</a></code></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Apache License 2.0 &middot; <a href="https://github.com/KevinGong2013/apkgo">KevinGong2013/apkgo</a>
+</footer>
 
 </body>
 </html>

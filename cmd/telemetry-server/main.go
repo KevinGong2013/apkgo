@@ -6,23 +6,23 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
 
-// Event matches the CLI telemetry payload.
 type Event struct {
-	InstallID string        `json:"install_id"`
-	Event     string        `json:"event"`
-	Source    string        `json:"source"`
-	Version  string        `json:"version"`
-	OS       string        `json:"os"`
-	Arch     string        `json:"arch"`
-	Stores   []StoreResult `json:"stores,omitempty"`
-	Timestamp int64        `json:"ts"`
-	// Server-added fields
-	ReceivedAt string `json:"received_at,omitempty"`
-	RemoteAddr string `json:"remote_addr,omitempty"`
+	InstallID  string        `json:"install_id"`
+	Event      string        `json:"event"`
+	Source     string        `json:"source"`
+	Version   string        `json:"version"`
+	OS        string        `json:"os"`
+	Arch      string        `json:"arch"`
+	Stores    []StoreResult `json:"stores,omitempty"`
+	Timestamp int64         `json:"ts"`
+	ReceivedAt string       `json:"received_at,omitempty"`
+	RemoteAddr string       `json:"remote_addr,omitempty"`
 }
 
 type StoreResult struct {
@@ -30,71 +30,80 @@ type StoreResult struct {
 	Success bool   `json:"ok"`
 }
 
-// Stats tracks aggregate metrics in memory.
+// Stats aggregates metrics in memory, rebuilt from disk on startup.
 type Stats struct {
-	mu            sync.RWMutex
-	TotalEvents   int64                    `json:"total_events"`
-	UniqueInstalls map[string]bool          `json:"-"`
-	InstallCount  int64                    `json:"unique_installs"`
-	EventCounts   map[string]int64         `json:"event_counts"`
-	StoreCounts   map[string]int64         `json:"store_counts"`
-	StoreSuccess  map[string]int64         `json:"store_success"`
-	VersionCounts map[string]int64         `json:"version_counts"`
-	OSCounts      map[string]int64         `json:"os_counts"`
-	LastEvent     string                   `json:"last_event_at"`
+	mu             sync.RWMutex
+	TotalEvents    int64
+	Installs       map[string]bool
+	EventCounts    map[string]int64
+	StoreCounts    map[string]int64
+	StoreSuccess   map[string]int64
+	VersionCounts  map[string]int64
+	OSCounts       map[string]int64
+	DailyCounts    map[string]int64 // "2026-03-30" → count
+	LastEvent      string
 }
 
-func NewStats() *Stats {
+func newStats() *Stats {
 	return &Stats{
-		UniqueInstalls: make(map[string]bool),
-		EventCounts:    make(map[string]int64),
-		StoreCounts:    make(map[string]int64),
-		StoreSuccess:   make(map[string]int64),
-		VersionCounts:  make(map[string]int64),
-		OSCounts:       make(map[string]int64),
+		Installs:      make(map[string]bool),
+		EventCounts:   make(map[string]int64),
+		StoreCounts:   make(map[string]int64),
+		StoreSuccess:  make(map[string]int64),
+		VersionCounts: make(map[string]int64),
+		OSCounts:      make(map[string]int64),
+		DailyCounts:   make(map[string]int64),
 	}
 }
 
-func (s *Stats) Record(e *Event) {
+func (s *Stats) record(e *Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.TotalEvents++
 	s.LastEvent = e.ReceivedAt
-
-	if !s.UniqueInstalls[e.InstallID] {
-		s.UniqueInstalls[e.InstallID] = true
-		s.InstallCount++
-	}
-
+	s.Installs[e.InstallID] = true
 	s.EventCounts[e.Event]++
+
 	if e.Version != "" {
 		s.VersionCounts[e.Version]++
 	}
 	if e.OS != "" {
 		s.OSCounts[e.OS+"/"+e.Arch]++
 	}
-
-	for _, store := range e.Stores {
-		s.StoreCounts[store.Name]++
-		if store.Success {
-			s.StoreSuccess[store.Name]++
+	if len(e.ReceivedAt) >= 10 {
+		s.DailyCounts[e.ReceivedAt[:10]]++
+	}
+	for _, st := range e.Stores {
+		s.StoreCounts[st.Name]++
+		if st.Success {
+			s.StoreSuccess[st.Name]++
 		}
 	}
 }
 
-func (s *Stats) Snapshot() map[string]any {
+func (s *Stats) snapshot() map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// Last 30 days trend
+	trend := make(map[string]int64)
+	cutoff := time.Now().UTC().AddDate(0, 0, -30).Format("2006-01-02")
+	for day, count := range s.DailyCounts {
+		if day >= cutoff {
+			trend[day] = count
+		}
+	}
+
 	return map[string]any{
 		"total_events":    s.TotalEvents,
-		"unique_installs": s.InstallCount,
+		"unique_installs": len(s.Installs),
 		"event_counts":    s.EventCounts,
 		"store_counts":    s.StoreCounts,
 		"store_success":   s.StoreSuccess,
 		"version_counts":  s.VersionCounts,
 		"os_counts":       s.OSCounts,
+		"daily_trend":     trend,
 		"last_event_at":   s.LastEvent,
 	}
 }
@@ -102,18 +111,16 @@ func (s *Stats) Snapshot() map[string]any {
 var (
 	dataDir string
 	stats   *Stats
+	writeMu sync.Mutex
 )
 
 func main() {
 	port := getEnv("PORT", "8080")
 	dataDir = getEnv("DATA_DIR", "/data")
-
 	os.MkdirAll(dataDir, 0755)
 
-	stats = NewStats()
-
-	// Replay existing events to rebuild stats
-	replayEvents()
+	stats = newStats()
+	replayAll()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/events", handleEvent)
@@ -122,7 +129,7 @@ func main() {
 	mux.HandleFunc("GET /healthz", handleHealth)
 
 	slog.Info("telemetry server starting", "port", port, "data_dir", dataDir)
-	if err := http.ListenAndServe(":"+port, corsMiddleware(mux)); err != nil {
+	if err := http.ListenAndServe(":"+port, cors(mux)); err != nil {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
 	}
@@ -131,81 +138,76 @@ func main() {
 func handleEvent(w http.ResponseWriter, r *http.Request) {
 	var event Event
 	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
-		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		writeJSON(w, 400, map[string]string{"error": "invalid json"})
 		return
 	}
 
 	event.ReceivedAt = time.Now().UTC().Format(time.RFC3339)
 	event.RemoteAddr = r.RemoteAddr
 
-	// Append to daily log file (JSONL)
-	filename := fmt.Sprintf("events_%s.jsonl", time.Now().UTC().Format("2006-01-02"))
 	line, _ := json.Marshal(event)
 	line = append(line, '\n')
 
-	f, err := os.OpenFile(dataDir+"/"+filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	filename := fmt.Sprintf("events_%s.jsonl", time.Now().UTC().Format("2006-01-02"))
+
+	writeMu.Lock()
+	err := appendFile(filepath.Join(dataDir, filename), line)
+	writeMu.Unlock()
+
 	if err != nil {
-		slog.Error("write event failed", "error", err)
-		http.Error(w, `{"error":"storage"}`, http.StatusInternalServerError)
+		slog.Error("write event", "error", err)
+		writeJSON(w, 500, map[string]string{"error": "storage"})
 		return
 	}
-	f.Write(line)
-	f.Close()
 
-	// Update in-memory stats
-	stats.Record(&event)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"ok":true}`))
+	stats.record(&event)
+	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
 func handleStats(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats.Snapshot())
+	writeJSON(w, 200, stats.snapshot())
 }
 
 func handleListEvents(w http.ResponseWriter, r *http.Request) {
-	// Return today's events
-	filename := fmt.Sprintf("events_%s.jsonl", time.Now().UTC().Format("2006-01-02"))
-	data, err := os.ReadFile(dataDir + "/" + filename)
+	// Default: today. ?date=2026-03-30 for specific day
+	day := r.URL.Query().Get("date")
+	if day == "" {
+		day = time.Now().UTC().Format("2006-01-02")
+	}
+
+	filename := filepath.Join(dataDir, fmt.Sprintf("events_%s.jsonl", day))
+	data, err := os.ReadFile(filename)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"events":[]}`))
+		writeJSON(w, 200, map[string]any{"events": []any{}, "date": day})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/jsonl")
-	w.Write(data)
+	var events []json.RawMessage
+	for _, line := range splitLines(data) {
+		if len(line) > 0 {
+			events = append(events, json.RawMessage(line))
+		}
+	}
+	writeJSON(w, 200, map[string]any{"events": events, "date": day, "count": len(events)})
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte(`{"status":"ok"}`))
+	writeJSON(w, 200, map[string]string{"status": "ok"})
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
+// --- helpers ---
+
+func replayAll() {
+	entries, _ := os.ReadDir(dataDir)
+	// Sort to replay in chronological order
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
 	})
-}
-
-func replayEvents() {
-	entries, err := os.ReadDir(dataDir)
-	if err != nil {
-		return
-	}
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		data, err := os.ReadFile(dataDir + "/" + entry.Name())
+		data, err := os.ReadFile(filepath.Join(dataDir, entry.Name()))
 		if err != nil {
 			continue
 		}
@@ -215,11 +217,21 @@ func replayEvents() {
 			}
 			var event Event
 			if json.Unmarshal(line, &event) == nil {
-				stats.Record(&event)
+				stats.record(&event)
 			}
 		}
 	}
-	slog.Info("replayed events", "total", stats.TotalEvents, "installs", stats.InstallCount)
+	slog.Info("replay complete", "events", stats.TotalEvents, "installs", len(stats.Installs))
+}
+
+func appendFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write(data)
+	return err
 }
 
 func splitLines(data []byte) [][]byte {
@@ -235,6 +247,25 @@ func splitLines(data []byte) [][]byte {
 		lines = append(lines, data[start:])
 	}
 	return lines
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+func cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(204)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func getEnv(key, fallback string) string {
