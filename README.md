@@ -148,6 +148,37 @@ stores:
     command: "./notify-dingtalk.sh"
 ```
 
+### Hooks
+
+上传前后执行自定义脚本，通过 stdin 接收 JSON 上下文：
+
+```yaml
+hooks:
+  before: "./scripts/validate.sh"   # 所有上传前执行
+  after: "./scripts/notify.sh"      # 所有上传后执行
+
+stores:
+  huawei:
+    client_id: "..."
+    before: "./scripts/before-huawei.sh"  # 该商店上传前执行
+    after: "./scripts/after-huawei.sh"    # 该商店上传后执行
+```
+
+- `before` hook 失败（非零退出码）→ 中止上传
+- `after` hook 失败 → 仅记录警告，不影响结果
+- 自动注入环境变量：`APKGO_STORE`、`APKGO_PACKAGE`、`APKGO_VERSION`
+
+Hook 脚本示例（上传完成后发送钉钉通知）：
+
+```bash
+#!/bin/bash
+input=$(cat)
+results=$(echo "$input" | jq -r '.results[] | "\(.store): \(if .success then "✓" else "✗ "+.error end)"')
+curl -s -X POST "$DINGTALK_WEBHOOK" \
+  -H "Content-Type: application/json" \
+  -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"APK 发布完成 v${APKGO_VERSION}\n${results}\"}}"
+```
+
 ### 环境变量
 
 CI/CD 环境中可通过环境变量配置凭证，无需配置文件：

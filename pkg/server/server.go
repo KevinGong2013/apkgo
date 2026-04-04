@@ -18,6 +18,7 @@ import (
 	"github.com/KevinGong2013/apkgo/pkg/apk"
 	"github.com/KevinGong2013/apkgo/pkg/config"
 	"github.com/KevinGong2013/apkgo/pkg/history"
+	"github.com/KevinGong2013/apkgo/pkg/hooks"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 	"github.com/KevinGong2013/apkgo/pkg/telemetry"
 	"github.com/KevinGong2013/apkgo/pkg/uploader"
@@ -183,11 +184,19 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.RLock()
-	stores, err := s.Config.CreateStores(filter)
+	storesWithHooks, err := s.Config.CreateStores(filter)
+	globalHooks := s.Config.Hooks
 	s.mu.RUnlock()
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
+	}
+
+	entries := make([]uploader.StoreEntry, len(storesWithHooks))
+	storeNames := make([]string, len(storesWithHooks))
+	for i, swh := range storesWithHooks {
+		entries[i] = uploader.StoreEntry{Store: swh.Store, Before: swh.Before, After: swh.After}
+		storeNames[i] = swh.Store.Name()
 	}
 
 	req := &store.UploadRequest{
@@ -203,8 +212,30 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), s.Timeout)
 	defer cancel()
 
-	u := &uploader.Uploader{Stores: stores}
-	results := u.Run(ctx, req)
+	hookEnv := map[string]string{
+		"APKGO_PACKAGE": info.PackageName,
+		"APKGO_VERSION": info.VersionName,
+	}
+
+	// Global before hook
+	if globalHooks.Before != "" {
+		payload := hooks.BeforeAllPayload{FilePath: apkPath, APK: info, Stores: storeNames}
+		if err := hooks.RunHook(ctx, globalHooks.Before, payload, hookEnv); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "global before hook: " + err.Error()})
+			return
+		}
+	}
+
+	u := &uploader.Uploader{Stores: entries}
+	results := u.Run(ctx, req, info)
+
+	// Global after hook
+	if globalHooks.After != "" {
+		payload := hooks.AfterAllPayload{FilePath: apkPath, APK: info, Results: results}
+		if err := hooks.RunHook(ctx, globalHooks.After, payload, hookEnv); err != nil {
+			slog.Warn("global after hook failed", "error", err)
+		}
+	}
 
 	// Anonymous telemetry
 	storeResults := make([]telemetry.StoreResult, len(results))

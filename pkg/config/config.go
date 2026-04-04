@@ -12,10 +12,24 @@ import (
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
+// HookConfig holds before/after hook commands.
+type HookConfig struct {
+	Before string `yaml:"before,omitempty"`
+	After  string `yaml:"after,omitempty"`
+}
+
 // Config is the top-level YAML configuration.
 type Config struct {
+	Hooks       HookConfig                   `yaml:"hooks,omitempty"`
 	Stores      map[string]map[string]string `yaml:"stores"`
 	UpdateCheck string                       `yaml:"update_check,omitempty"` // e.g. "30d", "7d", "0" to disable
+}
+
+// StoreWithHooks pairs a store instance with its per-store hook commands.
+type StoreWithHooks struct {
+	Store  store.Store
+	Before string
+	After  string
 }
 
 // Load reads a YAML config file and merges environment variable overrides.
@@ -130,22 +144,31 @@ func (c *Config) UpdateCheckInterval(defaultInterval time.Duration) time.Duratio
 
 // CreateStores instantiates Store implementations from config.
 // If filter is non-empty, only those stores are created.
-func (c *Config) CreateStores(filter []string) ([]store.Store, error) {
+// Per-store "before" and "after" keys are extracted as hook commands
+// and stripped from the config before passing to the store factory.
+func (c *Config) CreateStores(filter []string) ([]StoreWithHooks, error) {
 	wanted := make(map[string]bool)
 	for _, name := range filter {
 		wanted[name] = true
 	}
 
-	var stores []store.Store
+	var stores []StoreWithHooks
 	for name, cfg := range c.Stores {
 		if len(wanted) > 0 && !wanted[name] {
 			continue
 		}
+
+		// Extract and strip hook keys
+		before := cfg["before"]
+		after := cfg["after"]
+		delete(cfg, "before")
+		delete(cfg, "after")
+
 		s, err := store.Create(name, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("store %q: %w", name, err)
 		}
-		stores = append(stores, s)
+		stores = append(stores, StoreWithHooks{Store: s, Before: before, After: after})
 	}
 
 	if len(stores) == 0 {

@@ -12,6 +12,7 @@ import (
 	"github.com/KevinGong2013/apkgo/pkg/apk"
 	"github.com/KevinGong2013/apkgo/pkg/config"
 	"github.com/KevinGong2013/apkgo/pkg/history"
+	"github.com/KevinGong2013/apkgo/pkg/hooks"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 	"github.com/KevinGong2013/apkgo/pkg/telemetry"
 	"github.com/KevinGong2013/apkgo/pkg/uploader"
@@ -92,7 +93,7 @@ var uploadCmd = &cobra.Command{
 		}
 
 		// Create store instances
-		stores, err := cfg.CreateStores(filter)
+		storesWithHooks, err := cfg.CreateStores(filter)
 		if err != nil {
 			return err
 		}
@@ -108,17 +109,21 @@ var uploadCmd = &cobra.Command{
 			ReleaseNotes: releaseNotes,
 		}
 
+		// Collect store names
+		storeNames := make([]string, len(storesWithHooks))
+		entries := make([]uploader.StoreEntry, len(storesWithHooks))
+		for i, swh := range storesWithHooks {
+			storeNames[i] = swh.Store.Name()
+			entries[i] = uploader.StoreEntry{Store: swh.Store, Before: swh.Before, After: swh.After}
+		}
+
 		// Dry-run: just output what would happen
 		if flagDryRun {
-			storeNames := make([]string, len(stores))
-			for i, s := range stores {
-				storeNames[i] = s.Name()
-			}
 			writeOutput(uploadOutput{
 				APK:    info,
 				DryRun: true,
 				Results: func() []*store.UploadResult {
-					r := make([]*store.UploadResult, len(stores))
+					r := make([]*store.UploadResult, len(storeNames))
 					for i, name := range storeNames {
 						r[i] = &store.UploadResult{Store: name, Success: true}
 					}
@@ -132,8 +137,31 @@ var uploadCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(cmd.Context(), flagTimeout)
 		defer cancel()
 
-		u := &uploader.Uploader{Stores: stores}
-		results := u.Run(ctx, req)
+		hookEnv := map[string]string{
+			"APKGO_PACKAGE": info.PackageName,
+			"APKGO_VERSION": info.VersionName,
+		}
+
+		// Global before hook
+		if cfg.Hooks.Before != "" {
+			slog.Info("running global before hook")
+			payload := hooks.BeforeAllPayload{FilePath: flagFile, APK: info, Stores: storeNames}
+			if err := hooks.RunHook(ctx, cfg.Hooks.Before, payload, hookEnv); err != nil {
+				return fmt.Errorf("global before hook: %w", err)
+			}
+		}
+
+		u := &uploader.Uploader{Stores: entries}
+		results := u.Run(ctx, req, info)
+
+		// Global after hook
+		if cfg.Hooks.After != "" {
+			slog.Info("running global after hook")
+			payload := hooks.AfterAllPayload{FilePath: flagFile, APK: info, Results: results}
+			if err := hooks.RunHook(ctx, cfg.Hooks.After, payload, hookEnv); err != nil {
+				slog.Warn("global after hook failed", "error", err)
+			}
+		}
 
 		writeOutput(uploadOutput{APK: info, Results: results})
 

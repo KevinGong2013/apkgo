@@ -77,6 +77,79 @@ stores:
 
 Env var example: `APKGO_HUAWEI_CLIENT_ID=xxx APKGO_HUAWEI_CLIENT_SECRET=yyy apkgo upload -f app.apk --store huawei`
 
+## Hooks
+
+Shell commands executed before/after uploads. Receive context as JSON on stdin.
+
+### Configuration
+
+```yaml
+hooks:
+  before: "./scripts/before-all.sh"   # runs before any upload
+  after: "./scripts/after-all.sh"     # runs after all uploads
+
+stores:
+  huawei:
+    client_id: "..."
+    before: "./scripts/before-huawei.sh"  # runs before this store
+    after: "./scripts/after-huawei.sh"    # runs after this store
+```
+
+### Protocol
+
+**Exit codes:**
+- `0` — success (continue)
+- non-zero — failure (`before` hooks abort the upload; `after` hooks log warning only)
+
+**Environment variables** (set automatically):
+- `APKGO_STORE` — store name (empty for global hooks)
+- `APKGO_PACKAGE` — package name (e.g. `com.example.app`)
+- `APKGO_VERSION` — version name (e.g. `1.2.0`)
+
+**Errors:** stderr is captured as the error message.
+
+### Stdin JSON schemas
+
+**Global before** (`hooks.before`):
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "stores": ["huawei", "xiaomi"]
+}
+```
+
+**Global after** (`hooks.after`):
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "results": [
+    {"store": "huawei", "success": true, "duration_ms": 12300},
+    {"store": "xiaomi", "success": false, "error": "auth failed", "duration_ms": 400}
+  ]
+}
+```
+
+**Per-store before** (`stores.<name>.before`):
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "store": "huawei"
+}
+```
+
+**Per-store after** (`stores.<name>.after`):
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "store": "huawei",
+  "result": {"store": "huawei", "success": true, "duration_ms": 12300}
+}
+```
+
 ## Output format
 
 stdout is always parseable JSON:
