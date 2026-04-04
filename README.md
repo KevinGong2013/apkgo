@@ -108,11 +108,18 @@ apkgo stores
 `apkgo.yaml`:
 
 ```yaml
+# hooks 为可选配置，不需要可以不写
+hooks:
+  before: "./scripts/validate.sh"          # 所有上传前执行
+  after: "./scripts/notify.sh"             # 所有上传后执行
+
 stores:
   huawei:
     client_id: "your-client-id"
     client_secret: "your-client-secret"
     # app_id: ""  # 可选，不填则自动通过包名查询
+    before: "./scripts/before-huawei.sh"   # 可选，该商店上传前执行
+    after: "./scripts/after-huawei.sh"     # 可选，该商店上传后执行
 
   xiaomi:
     email: "your@email.com"
@@ -148,21 +155,9 @@ stores:
     command: "./notify-dingtalk.sh"
 ```
 
-### Hooks
+#### Hooks 说明
 
-上传前后执行自定义脚本，通过 stdin 接收 JSON 上下文：
-
-```yaml
-hooks:
-  before: "./scripts/validate.sh"   # 所有上传前执行
-  after: "./scripts/notify.sh"      # 所有上传后执行
-
-stores:
-  huawei:
-    client_id: "..."
-    before: "./scripts/before-huawei.sh"  # 该商店上传前执行
-    after: "./scripts/after-huawei.sh"    # 该商店上传后执行
-```
+Hooks 是可选功能，不配置则不生效。Hook 脚本通过 stdin 接收 JSON 上下文，通过退出码控制流程：
 
 - `before` hook 失败（非零退出码）→ 中止上传
 - `after` hook 失败 → 仅记录警告，不影响结果
