@@ -1,5 +1,12 @@
 # apkgo configuration example
 # Copy this file to apkgo.yaml and fill in your credentials.
+# All sections are optional — only configure the stores you need.
+
+# Hooks (optional): shell commands executed before/after uploads.
+# Scripts receive JSON context on stdin; see README for schemas.
+# hooks:
+#   before: "./scripts/validate.sh"
+#   after: "./scripts/notify.sh"
 
 stores:
   huawei:
@@ -7,6 +14,9 @@ stores:
     client_secret: ""
     # app_id is optional; auto-detected from package name if omitted
     # app_id: ""
+    # Per-store hooks (optional):
+    # before: "./scripts/before-huawei.sh"
+    # after: "./scripts/after-huawei.sh"
 
   xiaomi:
     email: ""
@@ -25,8 +35,19 @@ stores:
     client_secret: ""
     app_id: ""
 
-  # custom:
-  #   url: "https://your-server.com/api/upload"
-  #   method: "POST"
-  #   field_name: "file"
-  #   header_Authorization: "Bearer your-token"
+  tencent:
+    user_id: ""
+    access_secret: ""
+    app_id: ""
+    package_name: ""
+
+  # Script store: run any shell command or script.
+  # Receives APK metadata as JSON on stdin; exit 0 = success.
+  # script:
+  #   command: "./deploy.sh"
+
+  # Multiple script instances via "script.<name>" prefix:
+  # script.cdn-upload:
+  #   command: "./upload-cdn.sh"
+  # script.dingtalk:
+  #   command: "./notify-dingtalk.sh"
