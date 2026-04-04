@@ -8,7 +8,7 @@ import (
 	"github.com/KevinGong2013/apkgo/pkg/store"
 
 	// Import all store packages to trigger init() registration.
-	_ "github.com/KevinGong2013/apkgo/pkg/store/custom"
+	_ "github.com/KevinGong2013/apkgo/pkg/store/script"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/fir"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/googleplay"
 	_ "github.com/KevinGong2013/apkgo/pkg/store/honor"

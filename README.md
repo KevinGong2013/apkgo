@@ -18,7 +18,7 @@
 | Samsung Galaxy Store | Service Account JWT |
 | 蒲公英 (Pgyer) | API Key |
 | fir.im | API Token |
-| 自定义服务器 | HTTP Header |
+| 脚本 (Script) | 自定义脚本 |
 
 ## 安装
 
@@ -137,11 +137,15 @@ stores:
     app_id: "your-app-id"
     package_name: "com.example.app"
 
-  custom:
-    url: "https://your-server.com/api/upload"
-    method: "POST"
-    field_name: "file"
-    header_Authorization: "Bearer your-token"
+  # 单个脚本
+  script:
+    command: "./deploy.sh"
+
+  # 多个脚本实例 (script.实例名)
+  script.cdn-upload:
+    command: "./upload-cdn.sh"
+  script.dingtalk:
+    command: "./notify-dingtalk.sh"
 ```
 
 ### 环境变量

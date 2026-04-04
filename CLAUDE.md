@@ -35,7 +35,7 @@ apkgo version                                     # Version info (JSON)
 
 ## Supported stores
 
-huawei, xiaomi, oppo, vivo, honor, tencent, googleplay, samsung, pgyer, fir, custom
+huawei, xiaomi, oppo, vivo, honor, tencent, googleplay, samsung, pgyer, fir, script
 
 ## Configuration
 
@@ -65,11 +65,14 @@ stores:
     access_secret: ""  # required, API access secret
     app_id: ""         # required
     package_name: ""   # required
-  custom:
-    url: ""            # required
-    method: "POST"
-    field_name: "file"
-    header_Authorization: "Bearer token"
+  script:
+    command: "./deploy.sh"  # required, shell command or script path
+
+  # Multiple script instances via "script.<name>" prefix:
+  script.cdn-upload:
+    command: "./upload-cdn.sh"
+  script.dingtalk:
+    command: "./notify-dingtalk.sh"
 ```
 
 Env var example: `APKGO_HUAWEI_CLIENT_ID=xxx APKGO_HUAWEI_CLIENT_SECRET=yyy apkgo upload -f app.apk --store huawei`

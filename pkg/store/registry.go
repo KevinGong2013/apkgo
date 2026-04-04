@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 type entry struct {
@@ -22,8 +23,18 @@ func Register(name string, schema ConfigSchema, f Factory) {
 }
 
 // Create instantiates a store by name with the given config.
+// Supports "type.instance" naming: e.g. "script.cdn-upload" resolves to
+// the "script" store type with instance name "cdn-upload".
 func Create(name string, cfg map[string]string) (Store, error) {
 	e, ok := registry[name]
+	if !ok {
+		if dot := strings.Index(name, "."); dot > 0 {
+			e, ok = registry[name[:dot]]
+			if ok {
+				cfg["_name"] = name[dot+1:]
+			}
+		}
+	}
 	if !ok {
 		return nil, fmt.Errorf("unknown store: %q", name)
 	}
