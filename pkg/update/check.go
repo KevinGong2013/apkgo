@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -99,7 +100,30 @@ func fetchLatest() (string, error) {
 func isNewer(current, latest string) bool {
 	current = strings.TrimPrefix(current, "v")
 	latest = strings.TrimPrefix(latest, "v")
-	return current != latest && current != "dev" && latest != ""
+	if current == "dev" || latest == "" {
+		return false
+	}
+	return compareSemver(latest, current) > 0
+}
+
+// compareSemver compares two semver strings (e.g. "2.3.2", "2.2.1").
+// Returns >0 if a > b, <0 if a < b, 0 if equal.
+func compareSemver(a, b string) int {
+	pa := strings.SplitN(a, ".", 3)
+	pb := strings.SplitN(b, ".", 3)
+	for i := 0; i < 3; i++ {
+		var va, vb int
+		if i < len(pa) {
+			va, _ = strconv.Atoi(pa[i])
+		}
+		if i < len(pb) {
+			vb, _ = strconv.Atoi(pb[i])
+		}
+		if va != vb {
+			return va - vb
+		}
+	}
+	return 0
 }
 
 func remind(latest string) {
