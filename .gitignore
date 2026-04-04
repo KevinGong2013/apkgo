@@ -16,6 +16,9 @@ secrets.json
 *.swp
 *.swo
 
+# Scripts
+scripts/
+
 # OS
 .DS_Store
 Thumbs.db
