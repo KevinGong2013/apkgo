@@ -162,6 +162,51 @@ Hooks 是可选功能，不配置则不生效。Hook 脚本通过 stdin 接收 J
 - `before` hook 失败（非零退出码）→ 中止上传
 - `after` hook 失败 → 仅记录警告，不影响结果
 - 自动注入环境变量：`APKGO_STORE`、`APKGO_PACKAGE`、`APKGO_VERSION`
+- stderr 输出作为错误信息
+
+**全局 before hook** (`hooks.before`) stdin：
+
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "stores": ["huawei", "xiaomi"]
+}
+```
+
+**全局 after hook** (`hooks.after`) stdin：
+
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "results": [
+    {"store": "huawei", "success": true, "duration_ms": 12300},
+    {"store": "xiaomi", "success": false, "error": "auth failed", "duration_ms": 400}
+  ]
+}
+```
+
+**商店 before hook** (`stores.<name>.before`) stdin：
+
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "store": "huawei"
+}
+```
+
+**商店 after hook** (`stores.<name>.after`) stdin：
+
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "store": "huawei",
+  "result": {"store": "huawei", "success": true, "duration_ms": 12300}
+}
+```
 
 Hook 脚本示例（上传完成后发送钉钉通知）：
 
