@@ -1,6 +1,6 @@
 ---
 name: apkgo
-description: Upload APK files to Chinese Android app stores (Huawei, Xiaomi, OPPO, vivo, Honor) and custom servers. Designed for AI agents with structured JSON output, semantic exit codes, and zero interaction.
+description: Upload APK files to Android app stores (Huawei, Xiaomi, OPPO, vivo, Honor, Google Play, Samsung, Pgyer, fir.im) and run custom scripts. Designed for AI agents with structured JSON output, semantic exit codes, and zero interaction.
 ---
 
 # apkgo
@@ -35,13 +35,14 @@ docker pull ghcr.io/kevingong2013/apkgo:latest
 
 Use this skill when the user wants to:
 - Upload/publish/distribute an APK to Android app stores
-- Release an Android app to Huawei, Xiaomi, OPPO, vivo, Honor, or Tencent stores
+- Release an Android app to Huawei, Xiaomi, OPPO, vivo, Honor, Tencent, Google Play, or Samsung stores
+- Upload an APK to Pgyer or fir.im for beta distribution
 - Automate APK distribution in CI/CD pipelines
-- Upload an APK to a custom server endpoint
+- Run custom upload/notify scripts via the script store
 
 ## Supported stores
 
-huawei, xiaomi, oppo, vivo, honor, tencent, custom
+huawei, xiaomi, oppo, vivo, honor, tencent, googleplay, samsung, pgyer, fir, script
 
 ## Commands
 
@@ -71,10 +72,18 @@ apkgo version                   # Version info
 Create `apkgo.yaml` or use environment variables `APKGO_<STORE>_<KEY>`:
 
 ```yaml
+# Hooks (optional): shell commands executed before/after uploads.
+# hooks:
+#   before: "./scripts/validate.sh"
+#   after: "./scripts/notify.sh"
+
 stores:
   huawei:
     client_id: ""       # required - from AppGallery Connect > API key
     client_secret: ""   # required
+    # Per-store hooks (optional):
+    # before: "./scripts/before-huawei.sh"
+    # after: "./scripts/after-huawei.sh"
   xiaomi:
     email: ""           # required - developer account email
     private_key: ""     # required - from dev.mi.com API management
@@ -93,17 +102,93 @@ stores:
     access_secret: ""   # required - API access secret
     app_id: ""          # required
     package_name: ""    # required
-  custom:
-    url: ""             # required - upload endpoint
-    method: "POST"
-    field_name: "file"
-    header_Authorization: "Bearer token"
+  googleplay:
+    json_key_path: ""   # required - service account JSON key file
+    track: "internal"   # release track (default: internal)
+  samsung:
+    service_account_id: ""  # required
+    private_key_path: ""    # required
+
+  # Script store: run any shell command or script.
+  # Receives APK metadata as JSON on stdin; exit 0 = success.
+  # script:
+  #   command: "./deploy.sh"
+
+  # Multiple script instances via "script.<name>" prefix:
+  # script.cdn-upload:
+  #   command: "./upload-cdn.sh"
+  # script.dingtalk:
+  #   command: "./notify-dingtalk.sh"
 ```
 
 Environment variable example:
 ```bash
 APKGO_HUAWEI_CLIENT_ID=xxx APKGO_HUAWEI_CLIENT_SECRET=yyy apkgo upload -f app.apk --store huawei
 ```
+
+## Hooks
+
+Hooks are optional shell commands executed before/after uploads. They receive JSON context on stdin and environment variables `APKGO_STORE`, `APKGO_PACKAGE`, `APKGO_VERSION`.
+
+- `before` hook exit non-zero → abort upload
+- `after` hook exit non-zero → warning only
+
+**Global before** (`hooks.before`) stdin:
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "stores": ["huawei", "xiaomi"]
+}
+```
+
+**Global after** (`hooks.after`) stdin:
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "results": [
+    {"store": "huawei", "success": true, "duration_ms": 12300},
+    {"store": "xiaomi", "success": false, "error": "auth failed", "duration_ms": 400}
+  ]
+}
+```
+
+**Per-store before** (`stores.<name>.before`) stdin:
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "store": "huawei"
+}
+```
+
+**Per-store after** (`stores.<name>.after`) stdin:
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "store": "huawei",
+  "result": {"store": "huawei", "success": true, "duration_ms": 12300}
+}
+```
+
+## Script store stdin
+
+The script store (`command` field) receives the same JSON on stdin:
+```json
+{
+  "file_path": "/path/to/app.apk",
+  "file_64_path": "",
+  "app_name": "MyApp",
+  "package_name": "com.example.app",
+  "version_code": 42,
+  "version_name": "1.2.0",
+  "release_notes": "Bug fixes"
+}
+```
+
+Exit 0 = success, non-zero = failure (stderr as error message).
 
 ## Output format
 
