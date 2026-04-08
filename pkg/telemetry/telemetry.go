@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	endpoint   = "https://apkgo.baici.tech/v1/events"
+	endpoint   = "https://apkgo.baici.tech/telemetry/v1/events"
 	envDisable = "APKGO_TELEMETRY"
 	idFile     = ".apkgo_id"
 )
