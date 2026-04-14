@@ -264,16 +264,32 @@ func (s *Store) uploadAPK(appID, apkPath string, rep progress.Reporter) error {
 	return nil
 }
 
-// pollAndSubmit waits for APK parsing then submits for review.
+// pollAndSubmit tries to submit the app for review, polling if Huawei is
+// still parsing the APK. Huawei's parse step can take ~1–2 minutes for
+// large binaries but is sometimes instant, so we attempt submit once
+// immediately and only enter the polling loop if the server reports the
+// package as still parsing (code 204144660).
 func (s *Store) pollAndSubmit(ctx context.Context, appID string) error {
-	// Wait for async APK parsing (Huawei requires ~2 min)
+	// Immediate attempt so fast-parsing APKs don't wait 30s for nothing.
+	ret := s.submitApp(appID)
+	if ret.Code == 0 {
+		return nil
+	}
+	// 204144660 = "still being parsed" — transient, keep polling.
+	if ret.Code != 204144660 {
+		return fmt.Errorf("submit: [%d] %s", ret.Code, ret.Message)
+	}
+
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for attempt := 0; attempt < 10; attempt++ {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			// APK is already on Huawei's side — only submit-for-review didn't
+			// complete. Surface this explicitly so the operator knows the
+			// upload itself succeeded and can finish the release manually.
+			return fmt.Errorf("submit phase timed out (APK already uploaded; finish review at https://developer.huawei.com/consumer/cn/console): %w", ctx.Err())
 		case <-ticker.C:
 		}
 
@@ -281,7 +297,6 @@ func (s *Store) pollAndSubmit(ctx context.Context, appID string) error {
 		if ret.Code == 0 {
 			return nil
 		}
-		// Code 204144660 means package is still being parsed
 		if ret.Code != 204144660 {
 			return fmt.Errorf("submit: [%d] %s", ret.Code, ret.Message)
 		}
