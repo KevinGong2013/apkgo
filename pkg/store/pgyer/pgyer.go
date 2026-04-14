@@ -3,9 +3,12 @@ package pgyer
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/go-resty/resty/v2"
+
+	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
@@ -49,7 +52,10 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 }
 
 func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
+	rep := progress.Safe(req.Progress)
+
 	// 1. Get COS upload token
+	rep.Phase("auth")
 	var tokenResp struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
@@ -78,9 +84,16 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// 2. Upload to COS endpoint
 	tokenResp.Data.Params["key"] = tokenResp.Data.Key
 
+	rep.Phase("uploading")
+	rc, _, err := progress.OpenFile(req.FilePath, rep)
+	if err != nil {
+		return fmt.Errorf("open apk: %w", err)
+	}
+	defer rc.Close()
+
 	resp, err := s.client.R().
 		SetFormData(tokenResp.Data.Params).
-		SetFile("file", req.FilePath).
+		SetFileReader("file", filepath.Base(req.FilePath), rc).
 		Post(tokenResp.Data.Endpoint)
 	if err != nil {
 		return fmt.Errorf("upload to cos: %w", err)
@@ -90,6 +103,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	}
 
 	// 3. Poll build info until published
+	rep.Phase("processing")
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 

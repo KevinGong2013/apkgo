@@ -11,10 +11,13 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
+
+	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
@@ -84,7 +87,10 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 }
 
 func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
+	rep := progress.Safe(req.Progress)
+
 	// 1. Create upload session
+	rep.Phase("auth")
 	var sessionResp struct {
 		URL       string `json:"url"`
 		SessionID string `json:"sessionId"`
@@ -98,13 +104,20 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	}
 
 	// 2. Upload APK
+	rep.Phase("uploading")
+	rc, _, err := progress.OpenFile(req.FilePath, rep)
+	if err != nil {
+		return fmt.Errorf("open apk: %w", err)
+	}
+	defer rc.Close()
+
 	var uploadResp struct {
 		FileKey string `json:"fileKey"`
 		ErrMsg  string `json:"errorMsg,omitempty"`
 	}
 	_, err = s.client.R().
 		SetQueryParam("sessionId", sessionResp.SessionID).
-		SetFile("file", req.FilePath).
+		SetFileReader("file", filepath.Base(req.FilePath), rc).
 		SetResult(&uploadResp).
 		Post("/seller/fileUpload")
 	if err != nil {
@@ -115,12 +128,13 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	}
 
 	// 3. Update content
+	rep.Phase("publishing")
 	_, err = s.client.R().
 		SetBody(map[string]any{
 			"contentId": s.contentID,
 			"binaryList": []map[string]string{{
-				"fileKey":    uploadResp.FileKey,
-				"gmsYn":      "Y",
+				"fileKey":         uploadResp.FileKey,
+				"gmsYn":           "Y",
 				"nativePlatforms": "APK",
 			}},
 		}).
@@ -130,6 +144,7 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	}
 
 	// 4. Submit for review
+	rep.Phase("submitting")
 	_, err = s.client.R().
 		SetBody(map[string]string{"contentId": s.contentID}).
 		Post("/seller/contentSubmit")

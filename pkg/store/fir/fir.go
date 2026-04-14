@@ -3,10 +3,13 @@ package fir
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/go-resty/resty/v2"
+
+	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
@@ -50,7 +53,10 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 }
 
 func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
+	rep := progress.Safe(req.Progress)
+
 	// 1. Get upload token
+	rep.Phase("auth")
 	var tokenResp struct {
 		Message string `json:"message,omitempty"`
 		ID      string `json:"id"`
@@ -79,6 +85,13 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	}
 
 	// 2. Upload binary
+	rep.Phase("uploading")
+	rc, _, err := progress.OpenFile(req.FilePath, rep)
+	if err != nil {
+		return fmt.Errorf("open apk: %w", err)
+	}
+	defer rc.Close()
+
 	var uploadResp struct {
 		Completed bool `json:"is_completed"`
 	}
@@ -92,7 +105,7 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 			"x:build":     strconv.Itoa(int(req.VersionCode)),
 			"x:changelog": req.ReleaseNotes,
 		}).
-		SetFile("file", req.FilePath).
+		SetFileReader("file", filepath.Base(req.FilePath), rc).
 		SetResult(&uploadResp).
 		Post(tokenResp.Cert.Binary.UploadURL)
 	if err != nil {

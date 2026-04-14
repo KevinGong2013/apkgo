@@ -1,7 +1,6 @@
 package tencent
 
 import (
-	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/md5"
@@ -20,6 +19,8 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+
+	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
@@ -82,8 +83,19 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 }
 
 func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
+	rep := progress.Safe(req.Progress)
+
+	// Pre-declare combined upload bytes for a stable progress bar across
+	// sequential apk + apk64 transfers.
+	total, err := sumFileSizes(req.FilePath, req.File64Path)
+	if err != nil {
+		return fmt.Errorf("stat apk: %w", err)
+	}
+	rep.Phase("uploading")
+	rep.Total(total)
+
 	// 1. Upload APK file → get serial number
-	apkSerial, apkMD5, err := s.uploadFile(req.FilePath, "apk")
+	apkSerial, apkMD5, err := s.uploadFile(req.FilePath, "apk", rep)
 	if err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
@@ -91,23 +103,44 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// 2. Upload 64-bit APK if provided
 	var apk64Serial, apk64MD5 string
 	if req.File64Path != "" {
-		apk64Serial, apk64MD5, err = s.uploadFile(req.File64Path, "apk")
+		apk64Serial, apk64MD5, err = s.uploadFile(req.File64Path, "apk", rep)
 		if err != nil {
 			return fmt.Errorf("upload 64-bit apk: %w", err)
 		}
 	}
 
 	// 3. Submit update
+	rep.Phase("publishing")
 	if err := s.updateApp(req, apkSerial, apkMD5, apk64Serial, apk64MD5); err != nil {
 		return fmt.Errorf("update app: %w", err)
 	}
 
 	// 4. Poll audit status
+	rep.Phase("auditing")
 	return s.pollAuditStatus(ctx)
 }
 
-// uploadFile gets a pre-signed COS URL, uploads the file, and returns the serial number and file MD5.
-func (s *Store) uploadFile(filePath, fileType string) (serialNumber string, fileMd5 string, err error) {
+// sumFileSizes totals the byte sizes of the given paths. Empty paths are ignored.
+func sumFileSizes(paths ...string) (int64, error) {
+	var total int64
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		fi, err := os.Stat(p)
+		if err != nil {
+			return 0, err
+		}
+		total += fi.Size()
+	}
+	return total, nil
+}
+
+// uploadFile gets a pre-signed COS URL, streams the file, and returns the
+// serial number and file MD5. Reads the file in a streaming fashion so
+// memory use stays bounded regardless of APK size, and reports byte-level
+// progress to rep via a progress.Reader wrapper.
+func (s *Store) uploadFile(filePath, fileType string, rep progress.Reporter) (serialNumber string, fileMd5 string, err error) {
 	fileName := filepath.Base(filePath)
 
 	// Get upload info
@@ -130,22 +163,31 @@ func (s *Store) uploadFile(filePath, fileType string) (serialNumber string, file
 		return "", "", fmt.Errorf("[%d] %s", resp.Ret, resp.Msg)
 	}
 
-	// Calculate MD5
+	// Calculate MD5 (streaming, no buffering of the whole file)
 	fileMd5, err = calcFileMD5(filePath)
 	if err != nil {
 		return "", "", fmt.Errorf("calc md5: %w", err)
 	}
 
-	// Upload file to COS via pre-signed URL (PUT with raw bytes)
-	fileContent, err := os.ReadFile(filePath)
+	// Open the file once and stream it to COS. Set ContentLength so the
+	// HTTP client sends a real Content-Length header instead of falling
+	// back to chunked encoding, which COS may reject.
+	f, err := os.Open(filePath)
 	if err != nil {
-		return "", "", fmt.Errorf("read file: %w", err)
+		return "", "", fmt.Errorf("open file: %w", err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", "", fmt.Errorf("stat file: %w", err)
 	}
 
-	httpReq, err := http.NewRequest(http.MethodPut, resp.PreSignURL, bytes.NewReader(fileContent))
+	body := &progress.Reader{R: f, Reporter: progress.Safe(rep)}
+	httpReq, err := http.NewRequest(http.MethodPut, resp.PreSignURL, body)
 	if err != nil {
 		return "", "", fmt.Errorf("create put request: %w", err)
 	}
+	httpReq.ContentLength = fi.Size()
 	httpReq.Header.Set("Content-Type", "application/octet-stream")
 
 	httpClient := &http.Client{Timeout: 5 * time.Minute}

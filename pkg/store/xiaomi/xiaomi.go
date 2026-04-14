@@ -18,9 +18,11 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/KevinGong2013/apkgo/pkg/store"
 	"github.com/shogo82148/androidbinary"
 	"github.com/shogo82148/androidbinary/apk"
+
+	"github.com/KevinGong2013/apkgo/pkg/progress"
+	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
 func init() {
@@ -77,7 +79,10 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 }
 
 func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
+	rep := progress.Safe(req.Progress)
+
 	// Query existing version
+	rep.Phase("query")
 	info, err := s.query(req.PackageName)
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
@@ -91,6 +96,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	}
 
 	// Extract icon from APK
+	rep.Phase("icon")
 	iconPath, err := extractIcon(req.FilePath)
 	if err != nil {
 		return fmt.Errorf("extract icon: %w", err)
@@ -98,7 +104,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	defer os.Remove(iconPath)
 
 	// Push
-	return s.push(synchroType, req, iconPath)
+	return s.push(synchroType, req, iconPath, rep)
 }
 
 func (s *Store) query(packageName string) (*packageInfo, error) {
@@ -120,7 +126,7 @@ func (s *Store) query(packageName string) (*packageInfo, error) {
 	return resp.PackageInfo, err
 }
 
-func (s *Store) push(synchroType int, req *store.UploadRequest, iconPath string) error {
+func (s *Store) push(synchroType int, req *store.UploadRequest, iconPath string, rep progress.Reporter) error {
 	appInfo := map[string]any{
 		"appName":     req.AppName,
 		"packageName": req.PackageName,
@@ -141,21 +147,49 @@ func (s *Store) push(synchroType int, req *store.UploadRequest, iconPath string)
 		"appInfo":     appInfo,
 	}, files)
 
+	// Wrap every streamed file so the same reporter sees combined progress.
+	// Set Total once to the sum of all wrapped file sizes.
+	rep.Phase("uploading")
+	apkRC, apkSize, err := progress.WrapFile(req.FilePath, rep)
+	if err != nil {
+		return fmt.Errorf("open apk: %w", err)
+	}
+	defer apkRC.Close()
+
+	iconRC, iconSize, err := progress.WrapFile(iconPath, rep)
+	if err != nil {
+		return fmt.Errorf("open icon: %w", err)
+	}
+	defer iconRC.Close()
+
+	var (
+		apk64RC   io.ReadCloser
+		apk64Size int64
+	)
+	if req.File64Path != "" {
+		apk64RC, apk64Size, err = progress.WrapFile(req.File64Path, rep)
+		if err != nil {
+			return fmt.Errorf("open apk64: %w", err)
+		}
+		defer apk64RC.Close()
+	}
+	rep.Total(apkSize + iconSize + apk64Size)
+
 	r := s.client.R().
 		SetHeader("Content-Type", "application/x-www-form-urlencoded").
 		SetFormDataFromValues(body).
-		SetFile("apk", req.FilePath).
-		SetFile("icon", iconPath)
+		SetFileReader("apk", filepath.Base(req.FilePath), apkRC).
+		SetFileReader("icon", filepath.Base(iconPath), iconRC)
 
-	if req.File64Path != "" {
-		r.SetFile("secondApkPath", req.File64Path)
+	if apk64RC != nil {
+		r.SetFileReader("secondApkPath", filepath.Base(req.File64Path), apk64RC)
 	}
 
 	var resp struct {
 		Result  int    `json:"result"`
 		Message string `json:"message,omitempty"`
 	}
-	_, err := r.SetResult(&resp).Post("/dev/push")
+	_, err = r.SetResult(&resp).Post("/dev/push")
 	if err != nil {
 		return err
 	}

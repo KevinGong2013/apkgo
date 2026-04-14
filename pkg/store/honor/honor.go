@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+
+	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
@@ -69,17 +71,21 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 }
 
 func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
-	if err := s.uploadAPK(req.FilePath); err != nil {
+	rep := progress.Safe(req.Progress)
+
+	if err := s.uploadAPK(req.FilePath, rep); err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
 
 	// Update release notes
 	if req.ReleaseNotes != "" {
+		rep.Phase("release notes")
 		if err := s.updateAppInfo(req.ReleaseNotes); err != nil {
 			return fmt.Errorf("update release notes: %w", err)
 		}
 	}
 
+	rep.Phase("submitting")
 	return s.pollAndSubmit(ctx)
 }
 
@@ -129,8 +135,9 @@ func (s *Store) getToken(clientID, clientSecret string) (string, error) {
 	return resp.AccessToken, nil
 }
 
-func (s *Store) uploadAPK(apkPath string) error {
+func (s *Store) uploadAPK(apkPath string, rep progress.Reporter) error {
 	// Step 1: Get upload URL
+	rep.Phase("auth")
 	var urlResp struct {
 		Ret      retInfo `json:"ret"`
 		URL      string  `json:"uploadUrl"`
@@ -163,8 +170,14 @@ func (s *Store) uploadAPK(apkPath string) error {
 		} `json:"result"`
 	}
 	filename := filepath.Base(apkPath)
+	rep.Phase("uploading")
+	rc, _, err := progress.OpenFile(apkPath, rep)
+	if err != nil {
+		return fmt.Errorf("open apk: %w", err)
+	}
+	defer rc.Close()
 	_, err = resty.New().R().
-		SetFile("file", apkPath).
+		SetFileReader("file", filename, rc).
 		SetFormData(map[string]string{
 			"authCode":  urlResp.AuthCode,
 			"fileCount": "1",

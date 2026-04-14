@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/vbauerster/mpb/v8"
 
 	"github.com/KevinGong2013/apkgo/pkg/apk"
 	"github.com/KevinGong2013/apkgo/pkg/config"
@@ -39,9 +40,20 @@ func init() {
 }
 
 type uploadOutput struct {
-	APK     *apk.Info              `json:"apk"`
-	DryRun  bool                   `json:"dry_run,omitempty"`
-	Results []*store.UploadResult  `json:"results,omitempty"`
+	APK     *apk.Info             `json:"apk"`
+	DryRun  bool                  `json:"dry_run,omitempty"`
+	Results []*store.UploadResult `json:"results,omitempty"`
+}
+
+// isStderrTTY reports whether stderr is attached to a real terminal.
+// Used to decide whether to render mpb progress bars (which rely on ANSI
+// cursor control codes that would corrupt piped or redirected output).
+func isStderrTTY() bool {
+	fi, err := os.Stderr.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 var uploadCmd = &cobra.Command{
@@ -151,8 +163,29 @@ var uploadCmd = &cobra.Command{
 			}
 		}
 
-		u := &uploader.Uploader{Stores: entries}
+		// Set up multi-bar progress output (stderr). Skip when stderr is not a
+		// terminal (piped/redirected) or when verbose logging is on — slog lines
+		// and bars would fight for the same lines.
+		//
+		// WithAutoRefresh is required: mpb's own terminal detection disables
+		// auto-refresh for non-stdout writers, but we've already verified the
+		// stderr fd is a tty via isStderrTTY() so we force refreshing on.
+		var pm *uploader.Manager
+		if isStderrTTY() && !flagVerbose {
+			p := mpb.New(
+				mpb.WithOutput(os.Stderr),
+				mpb.WithWidth(32),
+				mpb.WithAutoRefresh(),
+			)
+			pm = uploader.NewManager(p)
+			// Route slog through mpb so log lines render above the bars.
+			handler := slog.NewTextHandler(p, &slog.HandlerOptions{Level: slog.LevelWarn})
+			slog.SetDefault(slog.New(handler))
+		}
+
+		u := &uploader.Uploader{Stores: entries, Progress: pm}
 		results := u.Run(ctx, req, info)
+		pm.Wait()
 
 		// Global after hook
 		if cfg.Hooks.After != "" {

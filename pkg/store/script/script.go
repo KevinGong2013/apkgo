@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
@@ -46,6 +47,12 @@ func (s *Store) Name() string { return s.name }
 
 func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.UploadResult {
 	start := time.Now()
+
+	// Script stores don't stream bytes, but we still want the progress bar
+	// to show a meaningful label ("running") instead of the default
+	// "pending". Bytes stay at zero so the bar remains in spinner mode
+	// until the uploader finalizes it with markDone.
+	progress.Safe(req.Progress).Phase("running")
 
 	input, err := json.Marshal(req)
 	if err != nil {

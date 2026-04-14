@@ -21,7 +21,8 @@ type StoreEntry struct {
 
 // Uploader orchestrates concurrent uploads to multiple stores.
 type Uploader struct {
-	Stores []StoreEntry
+	Stores   []StoreEntry
+	Progress *Manager // optional; nil disables progress bars
 }
 
 // Run uploads to all stores concurrently and returns all results.
@@ -31,6 +32,15 @@ func (u *Uploader) Run(ctx context.Context, req *store.UploadRequest, info *apk.
 		wg      sync.WaitGroup
 		results = make([]*store.UploadResult, 0, len(u.Stores))
 	)
+
+	// Pre-allocate progress bars for every store (in configured order)
+	// so the initial display has a stable layout regardless of the goroutines'
+	// schedule.
+	if u.Progress != nil {
+		for _, e := range u.Stores {
+			u.Progress.ReporterFor(e.Store.Name())
+		}
+	}
 
 	envVars := map[string]string{
 		"APKGO_PACKAGE": req.PackageName,
@@ -49,6 +59,12 @@ func (u *Uploader) Run(ctx context.Context, req *store.UploadRequest, info *apk.
 			}
 			storeEnv["APKGO_STORE"] = name
 
+			// Build a per-store upload request carrying its own progress
+			// reporter. A shallow copy is enough since UploadRequest has no
+			// pointer fields the store should mutate.
+			storeReq := *req
+			storeReq.Progress = u.Progress.ReporterFor(name)
+
 			// Per-store before hook
 			if e.Before != "" {
 				slog.Info("running before hook", "store", name)
@@ -60,20 +76,23 @@ func (u *Uploader) Run(ctx context.Context, req *store.UploadRequest, info *apk.
 				if err := hooks.RunHook(ctx, e.Before, payload, storeEnv); err != nil {
 					slog.Error("before hook failed, skipping store", "store", name, "error", err)
 					start := time.Now()
+					res := store.ErrResult(name, start, fmt.Errorf("before hook: %w", err))
+					u.Progress.MarkDone(name, false, res.Error, time.Duration(res.DurationMs)*time.Millisecond)
 					mu.Lock()
-					results = append(results, store.ErrResult(name, start, fmt.Errorf("before hook: %w", err)))
+					results = append(results, res)
 					mu.Unlock()
 					return
 				}
 			}
 
 			slog.Info("uploading", "store", name)
-			result := e.Store.Upload(ctx, req)
+			result := e.Store.Upload(ctx, &storeReq)
 			if result.Success {
 				slog.Info("upload succeeded", "store", name, "duration_ms", result.DurationMs)
 			} else {
 				slog.Error("upload failed", "store", name, "error", result.Error, "duration_ms", result.DurationMs)
 			}
+			u.Progress.MarkDone(name, result.Success, result.Error, time.Duration(result.DurationMs)*time.Millisecond)
 
 			// Per-store after hook
 			if e.After != "" {

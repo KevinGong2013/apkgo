@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"time"
+
+	"github.com/KevinGong2013/apkgo/pkg/progress"
 )
 
 // Store is the interface every app store must implement.
@@ -20,6 +22,12 @@ type UploadRequest struct {
 	VersionCode  int32
 	VersionName  string
 	ReleaseNotes string
+
+	// Progress receives phase and byte-count events during upload.
+	// May be nil; stores must use progress.Safe() to guard against that.
+	// Tagged json:"-" so it's excluded when script-store marshals the
+	// request as stdin for hook scripts.
+	Progress progress.Reporter `json:"-"`
 }
 
 // UploadResult is the machine-readable outcome of a single store upload.

@@ -9,12 +9,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
+
+	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
@@ -65,6 +68,8 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 }
 
 func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
+	rep := progress.Safe(req.Progress)
+
 	updateReq := map[string]string{
 		"packageName":      req.PackageName,
 		"versionCode":      strconv.Itoa(int(req.VersionCode)),
@@ -73,32 +78,59 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		"compatibleDevice": "2",
 	}
 
+	// Pre-declare combined upload bytes so the bar is stable across
+	// sequential 32/64-bit transfers.
+	total, err := sumFileSizes(req.FilePath, req.File64Path)
+	if err != nil {
+		return fmt.Errorf("stat apk: %w", err)
+	}
+	rep.Phase("uploading")
+	rep.Total(total)
+
 	if req.File64Path != "" {
 		// Split package upload
-		resp32, err := s.uploadAPK("app.upload.apk.app.32", req.PackageName, req.FilePath)
+		resp32, err := s.uploadAPK("app.upload.apk.app.32", req.PackageName, req.FilePath, rep)
 		if err != nil {
 			return fmt.Errorf("upload 32-bit: %w", err)
 		}
-		resp64, err := s.uploadAPK("app.upload.apk.app.64", req.PackageName, req.File64Path)
+		resp64, err := s.uploadAPK("app.upload.apk.app.64", req.PackageName, req.File64Path, rep)
 		if err != nil {
 			return fmt.Errorf("upload 64-bit: %w", err)
 		}
 		updateReq["apk32"] = resp32.SerialNumber
 		updateReq["apk64"] = resp64.SerialNumber
+		rep.Phase("publishing")
 		return s.updateApp("app.sync.update.subpackage.app", updateReq)
 	}
 
 	// Single package upload
-	resp, err := s.uploadAPK("app.upload.apk.app", req.PackageName, req.FilePath)
+	resp, err := s.uploadAPK("app.upload.apk.app", req.PackageName, req.FilePath, rep)
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}
 	updateReq["apk"] = resp.SerialNumber
 	updateReq["fileMd5"] = resp.FileMD5
+	rep.Phase("publishing")
 	return s.updateApp("app.sync.update.app", updateReq)
 }
 
-func (s *Store) uploadAPK(method, packageName, filePath string) (*uploadResp, error) {
+// sumFileSizes totals the byte sizes of the given paths. Empty paths are ignored.
+func sumFileSizes(paths ...string) (int64, error) {
+	var total int64
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		fi, err := os.Stat(p)
+		if err != nil {
+			return 0, err
+		}
+		total += fi.Size()
+	}
+	return total, nil
+}
+
+func (s *Store) uploadAPK(method, packageName, filePath string, rep progress.Reporter) (*uploadResp, error) {
 	fileMd5, err := fileMD5(filePath)
 	if err != nil {
 		return nil, err
@@ -109,13 +141,19 @@ func (s *Store) uploadAPK(method, packageName, filePath string) (*uploadResp, er
 		"fileMd5":     fileMd5,
 	})
 
+	rc, _, err := progress.WrapFile(filePath, rep)
+	if err != nil {
+		return nil, fmt.Errorf("open apk: %w", err)
+	}
+	defer rc.Close()
+
 	var resp struct {
 		Code    int         `json:"code"`
 		Message string      `json:"msg"`
 		Data    *uploadResp `json:"data"`
 	}
 	_, err = s.client.R().
-		SetFile("file", filePath).
+		SetFileReader("file", filepath.Base(filePath), rc).
 		SetQueryParams(params).
 		SetResult(&resp).
 		Post("")

@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+
+	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
@@ -97,7 +99,10 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 }
 
 func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
+	rep := progress.Safe(req.Progress)
+
 	// 1. Create edit
+	rep.Phase("edit")
 	var editResp struct {
 		ID string `json:"id"`
 	}
@@ -113,11 +118,13 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		return fmt.Errorf("empty edit ID")
 	}
 
-	// 2. Upload APK
-	apkData, err := os.ReadFile(req.FilePath)
+	// 2. Upload APK (streaming, so progress is reported as bytes flow)
+	rep.Phase("uploading")
+	rc, _, err := progress.OpenFile(req.FilePath, rep)
 	if err != nil {
-		return fmt.Errorf("read apk: %w", err)
+		return fmt.Errorf("open apk: %w", err)
 	}
+	defer rc.Close()
 
 	var apkResp struct {
 		VersionCode int `json:"versionCode"`
@@ -128,7 +135,7 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	)
 	_, err = s.client.R().
 		SetHeader("Content-Type", "application/vnd.android.package-archive").
-		SetBody(apkData).
+		SetBody(rc).
 		SetResult(&apkResp).
 		Post(uploadURL)
 	if err != nil {
@@ -136,6 +143,7 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	}
 
 	// 3. Assign to track
+	rep.Phase("publishing")
 	releaseNotes := []map[string]string{}
 	if req.ReleaseNotes != "" {
 		releaseNotes = append(releaseNotes, map[string]string{
@@ -159,6 +167,7 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	}
 
 	// 4. Commit edit
+	rep.Phase("committing")
 	_, err = s.client.R().
 		Post(fmt.Sprintf("/edits/%s:commit", editID))
 	if err != nil {

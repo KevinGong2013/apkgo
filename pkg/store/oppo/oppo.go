@@ -8,12 +8,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
+
+	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
@@ -86,14 +90,26 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 }
 
 func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
+	rep := progress.Safe(req.Progress)
+
 	// 1. Query app info
+	rep.Phase("query")
 	app, err := s.queryApp(req.PackageName)
 	if err != nil {
 		return fmt.Errorf("query app: %w", err)
 	}
 
+	// Pre-declare the combined upload size so the bar is stable across
+	// apk and apk64 transfers.
+	totalBytes, err := sumFileSizes(req.FilePath, req.File64Path)
+	if err != nil {
+		return fmt.Errorf("stat apk: %w", err)
+	}
+	rep.Phase("uploading")
+	rep.Total(totalBytes)
+
 	// 2. Upload APK
-	uploadResult, err := s.uploadAPK(req.FilePath)
+	uploadResult, err := s.uploadAPK(req.FilePath, rep)
 	if err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
@@ -102,7 +118,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	if req.File64Path != "" {
 		apkInfos[0].CpuCode = 32
-		result64, err := s.uploadAPK(req.File64Path)
+		result64, err := s.uploadAPK(req.File64Path, rep)
 		if err != nil {
 			return fmt.Errorf("upload 64-bit apk: %w", err)
 		}
@@ -110,12 +126,31 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	}
 
 	// 3. Publish
+	rep.Phase("publishing")
 	if err := s.publish(req, app, apkInfos); err != nil {
 		return fmt.Errorf("publish: %w", err)
 	}
 
 	// 4. Poll task state
+	rep.Phase("polling")
 	return s.pollTaskState(ctx, req.PackageName, strconv.Itoa(int(req.VersionCode)))
+}
+
+// sumFileSizes returns the total size in bytes of the given file paths.
+// Empty paths are ignored.
+func sumFileSizes(paths ...string) (int64, error) {
+	var total int64
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		fi, err := os.Stat(p)
+		if err != nil {
+			return 0, err
+		}
+		total += fi.Size()
+	}
+	return total, nil
 }
 
 func (s *Store) queryApp(pkgName string) (*appData, error) {
@@ -138,7 +173,7 @@ func (s *Store) queryApp(pkgName string) (*appData, error) {
 	return resp.Data, nil
 }
 
-func (s *Store) uploadAPK(filePath string) (*uploadResultData, error) {
+func (s *Store) uploadAPK(filePath string, rep progress.Reporter) (*uploadResultData, error) {
 	// Get upload URL
 	var urlResp struct {
 		Errno int `json:"errno"`
@@ -155,7 +190,13 @@ func (s *Store) uploadAPK(filePath string) (*uploadResultData, error) {
 		return nil, err
 	}
 
-	// Upload file
+	// Upload file (streamed, with progress reporting)
+	rc, _, err := progress.WrapFile(filePath, rep)
+	if err != nil {
+		return nil, fmt.Errorf("open apk: %w", err)
+	}
+	defer rc.Close()
+
 	var uploadResp struct {
 		Errno int              `json:"errno"`
 		Data  uploadResultData `json:"data"`
@@ -166,7 +207,7 @@ func (s *Store) uploadAPK(filePath string) (*uploadResultData, error) {
 			"sign": urlResp.Data.Sign,
 			"type": "apk",
 		}).
-		SetFile("file", filePath).
+		SetFileReader("file", filepath.Base(filePath), rc).
 		Post(urlResp.Data.UploadURL)
 	if err != nil {
 		return nil, err
