@@ -152,7 +152,7 @@ func (s *Store) uploadAPK(method, packageName, filePath string, rep progress.Rep
 		Message string      `json:"msg"`
 		Data    *uploadResp `json:"data"`
 	}
-	_, err = s.client.R().
+	httpResp, err := s.client.R().
 		SetFileReader("file", filepath.Base(filePath), rc).
 		SetQueryParams(params).
 		SetResult(&resp).
@@ -161,12 +161,27 @@ func (s *Store) uploadAPK(method, packageName, filePath string, rep progress.Rep
 		return nil, err
 	}
 	if resp.Code != 0 {
-		return nil, fmt.Errorf("[%d] %s", resp.Code, resp.Message)
+		return nil, fmt.Errorf("[%d] %s (HTTP %d): %s",
+			resp.Code, resp.Message, httpResp.StatusCode(), truncateBody(httpResp.String()))
 	}
 	if resp.Data == nil {
-		return nil, fmt.Errorf("empty response data")
+		// vivo returned code=0 (or a body we didn't understand) but no
+		// data. Surface HTTP status + raw body so the real error is visible
+		// instead of a generic "empty response data".
+		return nil, fmt.Errorf("empty response data (HTTP %d): %s",
+			httpResp.StatusCode(), truncateBody(httpResp.String()))
 	}
 	return resp.Data, nil
+}
+
+// truncateBody caps a response body at 500 chars so diagnostic errors stay
+// readable.
+func truncateBody(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 500 {
+		return s[:500] + "...(truncated)"
+	}
+	return s
 }
 
 func (s *Store) updateApp(method string, bizParams map[string]string) error {
@@ -176,7 +191,7 @@ func (s *Store) updateApp(method string, bizParams map[string]string) error {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	}
-	_, err := s.client.R().
+	httpResp, err := s.client.R().
 		SetQueryParams(params).
 		SetResult(&resp).
 		Post("")
@@ -184,7 +199,8 @@ func (s *Store) updateApp(method string, bizParams map[string]string) error {
 		return err
 	}
 	if resp.Code != 0 {
-		return fmt.Errorf("[%d] %s", resp.Code, resp.Message)
+		return fmt.Errorf("[%d] %s (HTTP %d): %s",
+			resp.Code, resp.Message, httpResp.StatusCode(), truncateBody(httpResp.String()))
 	}
 	return nil
 }
