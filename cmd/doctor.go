@@ -260,13 +260,17 @@ func storeBucket(r doctorStoreReport) string {
 
 // storeOneLiner produces the compact single-line description.
 //
-//   ready: ✓ probe1 + probe2
-//   skip:  ⚠ probe-list (N checks need --package)
-//   fail:  ✗ first-error-probe-name (error message)
-//   unsup: - doctor not implemented
+//   ready: ✅ probe1 + probe2
+//   skip:    (blank) N check(s) need --package
+//   fail:  ❌ first-error-probe-name (error message)
+//   unsup:    (blank) doctor not implemented
+//
+// Status icons are emoji-style (✅ / ❌) so the store's overall health
+// is scannable at a glance. Skipped / unsupported stores get a blank
+// marker so the eye doesn't pick them up as a problem.
 func storeOneLiner(r doctorStoreReport) string {
 	if !r.Supported {
-		return "- doctor not implemented"
+		return "   doctor not implemented"
 	}
 	var ok, fail, skip []store.Probe
 	for _, p := range r.Probes {
@@ -285,16 +289,16 @@ func storeOneLiner(r doctorStoreReport) string {
 		if msg == "" {
 			msg = p.Detail
 		}
-		return fmt.Sprintf("✗ %s (%s)", p.Name, msg)
+		return fmt.Sprintf("❌ %s (%s)", p.Name, msg)
 	}
 	if len(ok) == 0 && len(skip) > 0 {
-		return fmt.Sprintf("⚠ %d check(s) need --package", len(skip))
+		return fmt.Sprintf("   %d check(s) need --package", len(skip))
 	}
 	names := make([]string, len(ok))
 	for i, p := range ok {
 		names[i] = p.Name
 	}
-	line := "✓ " + strings.Join(names, " + ")
+	line := "✅ " + strings.Join(names, " + ")
 	if len(skip) > 0 {
 		line += fmt.Sprintf("  (%d need --package)", len(skip))
 	}
@@ -305,13 +309,13 @@ func storeOneLiner(r doctorStoreReport) string {
 func probeIcon(status string) string {
 	switch status {
 	case "ok":
-		return "✓"
+		return "✅"
 	case "fail":
-		return "✗"
+		return "❌"
 	case "skip":
-		return "-"
+		return "  "
 	default:
-		return "?"
+		return "  "
 	}
 }
 
