@@ -173,15 +173,47 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		apkInfos = append(apkInfos, apkInfo{URL: result64.URL, MD5: result64.MD5, CpuCode: 64})
 	}
 
-	// 3. Publish
+	// 3. Publish. Two errno cases here are not real failures:
+	//
+	//   911216 "版本更新任务处理中" — a previous publish for this same
+	//     version is still being processed. Skip ahead to polling; the
+	//     existing task will reach terminal state on its own.
+	//
+	//   911215 "应用审核中" — the previous task has already finished and
+	//     the version is in OPPO's review queue. apkgo's job is done;
+	//     return success.
 	rep.Phase("publishing")
 	if err := s.publish(req, app, apkInfos); err != nil {
-		return fmt.Errorf("publish: %w", err)
+		switch {
+		case isOppoUnderReview(err):
+			return nil
+		case isOppoTaskInFlight(err):
+			// fall through to polling
+		default:
+			return fmt.Errorf("publish: %w", err)
+		}
 	}
 
 	// 4. Poll task state
 	rep.Phase("polling")
 	return s.pollTaskState(ctx, req.PackageName, strconv.Itoa(int(req.VersionCode)))
+}
+
+// isOppoTaskInFlight reports whether the publish failure is the
+// "previous task still in progress" case (errno 911216), where the
+// correct action is to wait for the existing task rather than create
+// a new one.
+func isOppoTaskInFlight(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "[911216]")
+}
+
+// isOppoUnderReview reports whether the publish failure means the
+// version has already been accepted into OPPO's review queue (errno
+// 911215). From apkgo's perspective this is the success terminal
+// state — the upload + publish pipeline is complete and the rest is
+// up to OPPO's reviewers.
+func isOppoUnderReview(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "[911215]")
 }
 
 // sumFileSizes returns the total size in bytes of the given file paths.
@@ -327,14 +359,34 @@ func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkIn
 	return nil
 }
 
+// oppoConsoleURL is the OPPO release console — by the time we reach
+// pollTaskState the APK has been uploaded and the publish task created,
+// so a polling timeout means "task is in flight, finish in the console".
+const oppoConsoleURL = "https://open.oppomobile.com"
+
+// pollTaskState waits for OPPO's async publish task to finish. Empirically
+// the task can take anywhere from ~30s for a clean update to several
+// minutes for a fresh review, so we poll for ~5 minutes (30 × 10s) before
+// giving up. A timeout is reported as success-with-pending-review, not as
+// a hard failure, since the package is already on OPPO's side at that
+// point and the operator's recovery action is to finish in the console.
 func (s *Store) pollTaskState(ctx context.Context, pkgName, versionCode string) error {
-	ticker := time.NewTicker(10 * time.Second)
+	const (
+		attempts = 30
+		interval = 10 * time.Second
+	)
+
+	wrap := func(format string, args ...any) error {
+		return fmt.Errorf(format+" (APK 已上传，发布任务已创建；可在 OPPO 后台查看进度：%s)", append(args, oppoConsoleURL)...)
+	}
+
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for attempt := 0; attempt < 10; attempt++ {
+	for attempt := 0; attempt < attempts; attempt++ {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return wrap("polling cancelled: %v", ctx.Err())
 		case <-ticker.C:
 		}
 
@@ -359,8 +411,8 @@ func (s *Store) pollTaskState(ctx context.Context, pkgName, versionCode string) 
 			return fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
 		}
 		// Surface envelope-level errors immediately. Without this, an
-		// auth/sign failure would loop silently for ~100 seconds before
-		// reporting a useless "polling timed out".
+		// auth/sign failure would loop silently for the full polling
+		// window before reporting a useless "polling timed out".
 		if resp.Errno != 0 {
 			return fmt.Errorf("[%d] %s", resp.Errno, parseError(httpResp.Body()))
 		}
@@ -371,7 +423,7 @@ func (s *Store) pollTaskState(ctx context.Context, pkgName, versionCode string) 
 			return fmt.Errorf("task failed: %s", resp.Data.ErrMsg)
 		}
 	}
-	return fmt.Errorf("task state polling timed out (10 attempts × 10s)")
+	return wrap("publish task still pending after %d × %s", attempts, interval)
 }
 
 // sign adds common params and HMAC-SHA256 signature.
