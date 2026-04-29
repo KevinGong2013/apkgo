@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -135,28 +136,250 @@ func cleanStoreCfg(in map[string]string) map[string]string {
 	return out
 }
 
+// renderDoctorText prints a compact summary by default and an
+// expanded per-probe view under -v (flagVerbose).
+//
+// Default: one line per store, sorted with errors first so the most
+// urgent thing is at the top of the screen. Trailing summary line
+// counts ready / needing-package / errored stores.
 func renderDoctorText(out doctorOutput) {
+	tty := stdoutIsTTY()
+
+	type row struct {
+		store    string
+		bucket   string // "fail" | "skip" | "ready" | "unsupported"
+		report   doctorStoreReport
+		oneLiner string
+	}
+	rows := make([]row, 0, len(out.Stores))
 	for _, r := range out.Stores {
-		if !r.Supported {
-			fmt.Printf("%s: doctor not implemented\n", r.Store)
+		rows = append(rows, row{
+			store:    r.Store,
+			bucket:   storeBucket(r),
+			report:   r,
+			oneLiner: storeOneLiner(r),
+		})
+	}
+
+	// Sort: failures first, then skip-only, then ready, then unsupported.
+	bucketOrder := map[string]int{"fail": 0, "skip": 1, "ready": 2, "unsupported": 3}
+	sort.SliceStable(rows, func(i, j int) bool {
+		bi, bj := bucketOrder[rows[i].bucket], bucketOrder[rows[j].bucket]
+		if bi != bj {
+			return bi < bj
+		}
+		return rows[i].store < rows[j].store
+	})
+
+	var ready, needPkg, errored, unsupported int
+	for _, r := range rows {
+		switch r.bucket {
+		case "fail":
+			errored++
+		case "skip":
+			needPkg++
+		case "ready":
+			ready++
+		case "unsupported":
+			unsupported++
+		}
+	}
+
+	// Default (compact) output
+	if !flagVerbose {
+		nameWidth := 8 // min
+		for _, r := range rows {
+			if len(r.store) > nameWidth {
+				nameWidth = len(r.store)
+			}
+		}
+		for _, r := range rows {
+			color := bucketColor(r.bucket)
+			fmt.Printf("%s%-*s%s  %s\n", color.on(tty), nameWidth, r.store, color.off(tty), r.oneLiner)
+		}
+		fmt.Println()
+		printSummary(ready, needPkg, errored, unsupported, len(rows), tty)
+		return
+	}
+
+	// Verbose: full per-probe breakdown, one block per store
+	for _, r := range rows {
+		color := bucketColor(r.bucket)
+		fmt.Printf("%s%s%s:\n", color.on(tty), r.report.Store, color.off(tty))
+		if !r.report.Supported {
+			fmt.Println("  doctor not implemented")
 			continue
 		}
-		fmt.Printf("%s:\n", r.Store)
-		for _, p := range r.Probes {
-			icon := "?"
-			switch p.Status {
-			case "ok":
-				icon = "✓"
-			case "fail":
-				icon = "✗"
-			case "skip":
-				icon = "-"
-			}
+		for _, p := range r.report.Probes {
+			icon := probeIcon(p.Status)
 			msg := p.Detail
 			if p.Error != "" {
 				msg = p.Error
 			}
 			fmt.Printf("  %s %-20s %s\n", icon, p.Name, msg)
+			if p.VerboseDetail != "" {
+				fmt.Printf("      %-18s %s\n", "", p.VerboseDetail)
+			}
 		}
 	}
+	fmt.Println()
+	printSummary(ready, needPkg, errored, unsupported, len(rows), tty)
+}
+
+// storeBucket classifies a store's overall health for sorting and
+// summary counting.
+func storeBucket(r doctorStoreReport) string {
+	if !r.Supported {
+		return "unsupported"
+	}
+	hasFail, hasSkip, hasOK := false, false, false
+	for _, p := range r.Probes {
+		switch p.Status {
+		case "fail":
+			hasFail = true
+		case "skip":
+			hasSkip = true
+		case "ok":
+			hasOK = true
+		}
+	}
+	switch {
+	case hasFail:
+		return "fail"
+	case hasSkip && !hasOK:
+		return "skip"
+	case hasSkip && hasOK:
+		// Some probes ran green, others need --package — still useful,
+		// but flag as needing more info so the operator knows to retry
+		// with -p before declaring success.
+		return "skip"
+	default:
+		return "ready"
+	}
+}
+
+// storeOneLiner produces the compact single-line description.
+//
+//   ready: ✓ probe1 + probe2
+//   skip:  ⚠ probe-list (N checks need --package)
+//   fail:  ✗ first-error-probe-name (error message)
+//   unsup: - doctor not implemented
+func storeOneLiner(r doctorStoreReport) string {
+	if !r.Supported {
+		return "- doctor not implemented"
+	}
+	var ok, fail, skip []store.Probe
+	for _, p := range r.Probes {
+		switch p.Status {
+		case "ok":
+			ok = append(ok, p)
+		case "fail":
+			fail = append(fail, p)
+		case "skip":
+			skip = append(skip, p)
+		}
+	}
+	if len(fail) > 0 {
+		p := fail[0]
+		msg := p.Error
+		if msg == "" {
+			msg = p.Detail
+		}
+		return fmt.Sprintf("✗ %s (%s)", p.Name, msg)
+	}
+	if len(ok) == 0 && len(skip) > 0 {
+		return fmt.Sprintf("⚠ %d check(s) need --package", len(skip))
+	}
+	names := make([]string, len(ok))
+	for i, p := range ok {
+		names[i] = p.Name
+	}
+	line := "✓ " + strings.Join(names, " + ")
+	if len(skip) > 0 {
+		line += fmt.Sprintf("  (%d need --package)", len(skip))
+	}
+	return line
+}
+
+// probeIcon picks the per-probe glyph for verbose mode.
+func probeIcon(status string) string {
+	switch status {
+	case "ok":
+		return "✓"
+	case "fail":
+		return "✗"
+	case "skip":
+		return "-"
+	default:
+		return "?"
+	}
+}
+
+// printSummary writes the trailing one-line tally.
+func printSummary(ready, needPkg, errored, unsupported, total int, tty bool) {
+	parts := []string{
+		fmt.Sprintf("%d/%d ready", ready, total),
+	}
+	if needPkg > 0 {
+		parts = append(parts, fmt.Sprintf("%d need --package", needPkg))
+	}
+	parts = append(parts, fmt.Sprintf("%d errors", errored))
+	if unsupported > 0 {
+		parts = append(parts, fmt.Sprintf("%d not implemented", unsupported))
+	}
+	c := summaryColor(errored, needPkg)
+	fmt.Printf("%s%s%s\n", c.on(tty), strings.Join(parts, ", "), c.off(tty))
+}
+
+// --- color + tty helpers ---
+
+type ansiColor struct{ code string }
+
+func (c ansiColor) on(tty bool) string {
+	if !tty || c.code == "" {
+		return ""
+	}
+	return "\x1b[" + c.code + "m"
+}
+func (c ansiColor) off(tty bool) string {
+	if !tty || c.code == "" {
+		return ""
+	}
+	return "\x1b[0m"
+}
+
+func bucketColor(bucket string) ansiColor {
+	switch bucket {
+	case "fail":
+		return ansiColor{"31"} // red
+	case "skip":
+		return ansiColor{"33"} // yellow
+	case "ready":
+		return ansiColor{"32"} // green
+	default:
+		return ansiColor{}
+	}
+}
+
+func summaryColor(errored, needPkg int) ansiColor {
+	switch {
+	case errored > 0:
+		return ansiColor{"31"}
+	case needPkg > 0:
+		return ansiColor{"33"}
+	default:
+		return ansiColor{"32"}
+	}
+}
+
+// stdoutIsTTY reports whether stdout looks interactive enough for ANSI
+// colour codes to be useful. Falls back to "no" for any uncertainty
+// (e.g. piped output, redirected file) — colour leaking into a log file
+// is more annoying than missing colour in a terminal.
+func stdoutIsTTY() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }

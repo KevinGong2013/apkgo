@@ -223,7 +223,8 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 		return probes
 	}
 
-	detail := fmt.Sprintf("%d app(s) under this account", len(resp.Data.List))
+	detail := "account active"
+	verbose := fmt.Sprintf("%d app(s) under this account", len(resp.Data.List))
 	if hint.Package != "" {
 		// If a package hint was given, also report whether it's already
 		// been uploaded under this account (pgyer keys apps by the
@@ -231,15 +232,22 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 		matched := false
 		for _, app := range resp.Data.List {
 			if app.BuildIdentifier == hint.Package {
-				detail = fmt.Sprintf("%s → %q version=%s build=%s", hint.Package, app.BuildName, app.BuildVersion, app.BuildVersionNo)
+				detail = fmt.Sprintf("%s already uploaded", hint.Package)
+				verbose = fmt.Sprintf("%s → %q version=%s build=%s", hint.Package, app.BuildName, app.BuildVersion, app.BuildVersionNo)
 				matched = true
 				break
 			}
 		}
 		if !matched {
-			detail = fmt.Sprintf("%d app(s) under this account; %s not yet uploaded (will be created on first push)", len(resp.Data.List), hint.Package)
+			detail = fmt.Sprintf("%s not yet uploaded (will be created on first push)", hint.Package)
+			verbose = fmt.Sprintf("%d app(s) under this account; %s not yet uploaded", len(resp.Data.List), hint.Package)
 		}
 	}
-	probes = append(probes, store.Probe{Name: "app-list", Status: "ok", Detail: detail})
+	probes = append(probes, store.Probe{
+		Name:          "app-list",
+		Status:        "ok",
+		Detail:        detail,
+		VerboseDetail: verbose,
+	})
 	return probes
 }

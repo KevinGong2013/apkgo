@@ -205,7 +205,11 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 			Error: fmt.Sprintf("empty user response: %s", truncateBody(httpResp.String()))})
 		return probes
 	}
-	detail := fmt.Sprintf("name=%q email=%q", resp.Name, resp.Email)
-	probes = append(probes, store.Probe{Name: "user", Status: "ok", Detail: detail})
+	probes = append(probes, store.Probe{
+		Name:          "user",
+		Status:        "ok",
+		Detail:        "account active",
+		VerboseDetail: fmt.Sprintf("name=%s email=%s", store.MaskName(resp.Name), store.MaskEmail(resp.Email)),
+	})
 	return probes
 }
