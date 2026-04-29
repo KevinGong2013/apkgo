@@ -18,7 +18,7 @@ import (
 func init() {
 	store.Register("fir", store.ConfigSchema{
 		Name:       "fir",
-		ConsoleURL: "https://www.betaqr.com/docs/publish",
+		ConsoleURL: "https://www.betaqr.com.cn/docs",
 		Fields: []store.FieldSchema{
 			{Key: "api_token", Required: true, Desc: "fir.im API token (从控制台 → 账号 → API Token 获取)"},
 		},
@@ -28,23 +28,34 @@ func init() {
 	store.RegisterDiagnoser("fir", diagnose)
 }
 
-// firErr is fir.im's error envelope:
-//   {"errors":{"exception":["Authentication failed"]},"code":100020}
-// It does NOT show up in successful responses, so we parse it from the
-// raw body only when we need to surface an error.
+// firErr covers the two error shapes fir.im uses across endpoints:
+//
+//   /user (auth failures):
+//     {"errors":{"exception":["Authentication failed"]},"code":100020}
+//
+//   /apps (account-state failures, e.g. not real-name verified):
+//     {"msg":"没有实名认证不能上传app"}
+//
+// parseFirErr tries the structured shape first and falls back to msg /
+// raw body so callers always print something readable instead of a
+// JSON literal.
 type firErr struct {
 	Errors struct {
 		Exception []string `json:"exception"`
 	} `json:"errors"`
-	Code int `json:"code"`
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
 }
 
-// text returns a human-readable error message, falling back to the raw
-// body when the error shape isn't recognised.
 func parseFirErr(body []byte) string {
 	var e firErr
-	if json.Unmarshal(body, &e) == nil && len(e.Errors.Exception) > 0 {
-		return fmt.Sprintf("[%d] %s", e.Code, strings.Join(e.Errors.Exception, "; "))
+	if json.Unmarshal(body, &e) == nil {
+		if len(e.Errors.Exception) > 0 {
+			return fmt.Sprintf("[%d] %s", e.Code, strings.Join(e.Errors.Exception, "; "))
+		}
+		if e.Msg != "" {
+			return e.Msg
+		}
 	}
 	return truncateBody(string(body))
 }

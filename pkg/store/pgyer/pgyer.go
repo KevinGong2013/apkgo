@@ -16,7 +16,7 @@ import (
 func init() {
 	store.Register("pgyer", store.ConfigSchema{
 		Name:       "pgyer",
-		ConsoleURL: "https://www.pgyer.com/account/api",
+		ConsoleURL: "https://www.pgyer.com/doc/view/app_upload",
 		Fields: []store.FieldSchema{
 			{Key: "api_key", Required: true, Desc: "Pgyer API key"},
 		},
@@ -177,9 +177,13 @@ func truncateBody(s string) string {
 
 // diagnose is registered with `apkgo doctor`. Single probe:
 //
-//   user-info — POSTs to /user/getInfo with the api_key and reports the
-//               account email/username on success. Validates the key
-//               without creating any draft uploads.
+//   app-list — POSTs to /app/listMy with the api_key and reports the
+//              number of apps under the account. Validates the key
+//              without creating any draft uploads.
+//
+// Pgyer doesn't expose a `/user/info`-style endpoint (returns
+// "Unknown method"); /app/listMy is the lightest read-only call that
+// exercises the same auth path as the upload endpoints.
 func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
 	probes := make([]store.Probe, 0, 1)
 
@@ -192,30 +196,50 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 	var resp struct {
 		pgyerResp
 		Data struct {
-			UserKey   string `json:"userKey"`
-			UserName  string `json:"userName"`
-			UserEmail string `json:"userEmail"`
+			List []struct {
+				BuildName        string `json:"buildName"`
+				BuildIdentifier  string `json:"buildIdentifier"`
+				BuildVersion     string `json:"buildVersion"`
+				BuildVersionNo   string `json:"buildVersionNo"`
+			} `json:"list"`
 		} `json:"data"`
 	}
 	httpResp, err := s.client.R().
 		SetFormData(map[string]string{"_api_key": s.apiKey}).
 		SetResult(&resp).
-		Post("/user/getInfo")
+		Post("/app/listMy")
 	if err != nil {
-		probes = append(probes, store.Probe{Name: "user-info", Status: "fail", Error: err.Error()})
+		probes = append(probes, store.Probe{Name: "app-list", Status: "fail", Error: err.Error()})
 		return probes
 	}
 	if httpResp.IsError() {
-		probes = append(probes, store.Probe{Name: "user-info", Status: "fail",
+		probes = append(probes, store.Probe{Name: "app-list", Status: "fail",
 			Error: fmt.Sprintf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))})
 		return probes
 	}
 	if resp.Code != 0 {
-		probes = append(probes, store.Probe{Name: "user-info", Status: "fail",
+		probes = append(probes, store.Probe{Name: "app-list", Status: "fail",
 			Error: fmt.Sprintf("[%d] %s", resp.Code, resp.Message)})
 		return probes
 	}
-	detail := fmt.Sprintf("userName=%q email=%q", resp.Data.UserName, resp.Data.UserEmail)
-	probes = append(probes, store.Probe{Name: "user-info", Status: "ok", Detail: detail})
+
+	detail := fmt.Sprintf("%d app(s) under this account", len(resp.Data.List))
+	if hint.Package != "" {
+		// If a package hint was given, also report whether it's already
+		// been uploaded under this account (pgyer keys apps by the
+		// Android applicationId in buildIdentifier).
+		matched := false
+		for _, app := range resp.Data.List {
+			if app.BuildIdentifier == hint.Package {
+				detail = fmt.Sprintf("%s → %q version=%s build=%s", hint.Package, app.BuildName, app.BuildVersion, app.BuildVersionNo)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			detail = fmt.Sprintf("%d app(s) under this account; %s not yet uploaded (will be created on first push)", len(resp.Data.List), hint.Package)
+		}
+	}
+	probes = append(probes, store.Probe{Name: "app-list", Status: "ok", Detail: detail})
 	return probes
 }
