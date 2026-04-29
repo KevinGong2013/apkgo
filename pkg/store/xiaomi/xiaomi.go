@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -28,14 +30,17 @@ import (
 func init() {
 	store.Register("xiaomi", store.ConfigSchema{
 		Name:       "xiaomi",
-		ConsoleURL: "https://dev.mi.com/distribute/doc/details?pId=1134",
+		ConsoleURL: "https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1134",
 		Fields: []store.FieldSchema{
-			{Key: "email", Required: true, Desc: "Xiaomi developer account email"},
-			{Key: "private_key", Required: true, Desc: "Xiaomi API private key"},
+			{Key: "email", Required: true, Desc: "Xiaomi developer account email (mapped to userName)"},
+			{Key: "private_key", Required: true, Desc: "Xiaomi API private key (the value the upload SDK calls 'password')"},
+			{Key: "cert", Required: false, Desc: "Xiaomi public key certificate (raw PEM or base64); required unless cert_file is set"},
+			{Key: "cert_file", Required: false, Desc: "Path to Xiaomi public key certificate file (.cer/.pem)"},
 		},
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
+	store.RegisterDiagnoser("xiaomi", diagnose)
 }
 
 type Store struct {
@@ -46,19 +51,29 @@ type Store struct {
 }
 
 func New(cfg map[string]string) (*Store, error) {
-	email := cfg["email"]
-	privateKey := cfg["private_key"]
+	email := strings.TrimSpace(cfg["email"])
+	privateKey := strings.TrimSpace(cfg["private_key"])
 	if email == "" || privateKey == "" {
 		return nil, fmt.Errorf("email and private_key are required")
 	}
 
-	pubKey, err := loadPublicKey()
+	certInline := strings.TrimSpace(cfg["cert"])
+	certFile := strings.TrimSpace(cfg["cert_file"])
+	if certInline == "" && certFile == "" {
+		return nil, fmt.Errorf("xiaomi: configure cert or cert_file (download the public-key certificate from dev.mi.com)")
+	}
+	pubKey, err := func() (*rsa.PublicKey, error) {
+		if certInline != "" {
+			return loadCert(certInline)
+		}
+		return loadCertFromFile(certFile)
+	}()
 	if err != nil {
 		return nil, fmt.Errorf("load xiaomi public key: %w", err)
 	}
 
 	client := resty.New().
-		SetBaseURL("http://api.developer.xiaomi.com/devupload")
+		SetBaseURL("https://api.developer.xiaomi.com/devupload")
 
 	return &Store{
 		client:     client,
@@ -115,15 +130,32 @@ func (s *Store) query(packageName string) (*packageInfo, error) {
 
 	var resp struct {
 		Result      int          `json:"result"`
+		Message     string       `json:"message,omitempty"`
+		Reason      string       `json:"reason,omitempty"`
 		PackageInfo *packageInfo `json:"packageInfo"`
 	}
-	_, err := s.client.R().
+	httpResp, err := s.client.R().
 		SetHeader("Content-Type", "application/x-www-form-urlencoded").
 		SetBody(body.Encode()).
 		SetResult(&resp).
 		Post("/dev/query")
-
-	return resp.PackageInfo, err
+	if err != nil {
+		return nil, err
+	}
+	if httpResp.IsError() {
+		return nil, fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+	}
+	if resp.Result != 0 {
+		msg := resp.Message
+		if msg == "" {
+			msg = resp.Reason
+		}
+		if msg == "" {
+			msg = strings.TrimSpace(string(httpResp.Body()))
+		}
+		return nil, fmt.Errorf("[%d] %s", resp.Result, msg)
+	}
+	return resp.PackageInfo, nil
 }
 
 func (s *Store) push(synchroType int, req *store.UploadRequest, iconPath string, rep progress.Reporter) error {
@@ -233,36 +265,59 @@ func (s *Store) encode(params map[string]any, files map[string]string) url.Value
 
 // --- Crypto helpers ---
 
-const publicCert = `-----BEGIN CERTIFICATE-----
-MIICQTCCAaoCCQDab4c81p7I/jANBgkqhkiG9w0BAQQFADBqMQswCQYDVQQGEwJD
-TjEQMA4GA1UECBMHQmVpSmluZzEQMA4GA1UEBxMHQmVpSmluZzEPMA0GA1UEChMG
-eGlhb21pMQ0wCwYDVQQLEwRtaXVpMRcwFQYDVQQDEw5kZXYueGlhb21pLmNvbTAe
-Fw0xMzA1MTUwMzMyNDJaFw0yMzA1MTMwMzMyNDJaMGAxCzAJBgNVBAYTAkNOMQsw
-CQYDVQQIEwJCSjELMAkGA1UEBxMCQkoxDjAMBgNVBAoTBWNvbGluMQ4wDAYDVQQL
-EwVjb2xpbjEXMBUGA1UEAxMOZGV2LnhpYW9taS5jb20wgZ8wDQYJKoZIhvcNAQEB
-BQADgY0AMIGJAoGBAMBf5LzEiMy0i8LeENXU9v0bTF4coM/kLfK6RvjWS69/6tUx
-NxJvjDFNbLsmU4xpF3qFY9RI0qyRf79pmKfYUeWomQCM/hKo2lKIbWV7/RVheZhE
-C2yGbUMRygIzJq3AChBT2MO1a7bA9LINcv+xLmoy5+l3MnVwbVUpWsC/GI59AgMB
-AAEwDQYJKoZIhvcNAQEEBQADgYEAQfYL1/EdtTXJthFzQxfdKt6y3Ts3b3waTn6o
-d9b+LCcU8EzKHmFOAIpkqIOTvrhB3o/KXEMeMI0PiNHuFnHv9+VGQKiaPFQtb9Ds
-T8iowNDb4G8rdUcoVaczUDbBMG9r5J45UCDxaEzcjp6J0xIS3v11JBK1PtAKHY6R
-nEJIZuc=
------END CERTIFICATE-----`
-
-func loadPublicKey() (*rsa.PublicKey, error) {
-	block, _ := pem.Decode([]byte(publicCert))
+// loadCert accepts either:
+//   - the raw PEM-encoded X.509 certificate (string contains "-----BEGIN"), or
+//   - inline base64-encoded PEM (handy for env vars / CI secrets)
+//
+// and returns the embedded RSA public key. The Xiaomi developer console
+// distributes this cert per-account; there is no global default any more.
+func loadCert(raw string) (*rsa.PublicKey, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("empty cert")
+	}
+	var pemBytes []byte
+	if strings.Contains(raw, "BEGIN") {
+		pemBytes = []byte(raw)
+	} else {
+		var err error
+		for _, dec := range []*base64.Encoding{
+			base64.StdEncoding, base64.RawStdEncoding,
+			base64.URLEncoding, base64.RawURLEncoding,
+		} {
+			pemBytes, err = dec.DecodeString(raw)
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("decode base64: %w", err)
+		}
+	}
+	block, _ := pem.Decode(pemBytes)
 	if block == nil {
-		return nil, fmt.Errorf("failed to parse PEM")
+		return nil, fmt.Errorf("invalid PEM block")
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse certificate: %w", err)
+	}
+	if !cert.NotAfter.IsZero() && time.Now().After(cert.NotAfter) {
+		return nil, fmt.Errorf("certificate expired on %s — re-download from dev.mi.com", cert.NotAfter.Format("2006-01-02"))
 	}
 	pub, ok := cert.PublicKey.(*rsa.PublicKey)
 	if !ok {
 		return nil, fmt.Errorf("not an RSA public key")
 	}
 	return pub, nil
+}
+
+func loadCertFromFile(path string) (*rsa.PublicKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	return loadCert(string(data))
 }
 
 func rsaEncrypt(data []byte, pub *rsa.PublicKey) (string, error) {
@@ -328,4 +383,40 @@ type packageInfo struct {
 	PackageName string `json:"packageName"`
 	VersionCode int    `json:"versionCode"`
 	VersionName string `json:"versionName"`
+}
+
+// diagnose is registered with `apkgo doctor`. It runs two layered probes:
+//
+//  1. cert  — public-key certificate is loadable, RSA, and not expired
+//  2. query — /dev/query accepts the SIG (proves email + private_key + cert
+//             all line up) and returns the stored package info if any
+//
+// Probe 2 needs a package-name hint and is reported as skipped without it,
+// since /dev/query requires `packageName`.
+func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
+	probes := make([]store.Probe, 0, 2)
+
+	s, err := New(cfg)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "cert", Status: "fail", Error: err.Error()})
+		return probes
+	}
+	probes = append(probes, store.Probe{Name: "cert", Status: "ok", Detail: fmt.Sprintf("RSA-%d public key loaded", s.pubKey.N.BitLen())})
+
+	if hint.Package == "" {
+		probes = append(probes, store.Probe{Name: "query", Status: "skip", Detail: "needs --package or --file"})
+		return probes
+	}
+
+	info, err := s.query(hint.Package)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "query", Status: "fail", Error: err.Error()})
+		return probes
+	}
+	detail := fmt.Sprintf("%s not yet uploaded under this account", hint.Package)
+	if info != nil {
+		detail = fmt.Sprintf("%s → versionCode=%d versionName=%s", info.PackageName, info.VersionCode, info.VersionName)
+	}
+	probes = append(probes, store.Probe{Name: "query", Status: "ok", Detail: detail})
+	return probes
 }
