@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -22,6 +23,13 @@ func init() {
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
+	store.RegisterDiagnoser("pgyer", diagnose)
+}
+
+// pgyerResp is pgyer's standard envelope. code 0 = success.
+type pgyerResp struct {
+	Code    int    `json:"code"`
+	Message string `json:"message,omitempty"`
 }
 
 type Store struct {
@@ -30,7 +38,7 @@ type Store struct {
 }
 
 func New(cfg map[string]string) (*Store, error) {
-	apiKey := cfg["api_key"]
+	apiKey := strings.TrimSpace(cfg["api_key"])
 	if apiKey == "" {
 		return nil, fmt.Errorf("api_key is required")
 	}
@@ -57,16 +65,15 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// 1. Get COS upload token
 	rep.Phase("auth")
 	var tokenResp struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Data    struct {
+		pgyerResp
+		Data struct {
 			Key      string            `json:"key"`
 			Endpoint string            `json:"endpoint"`
 			Params   map[string]string `json:"params"`
 		} `json:"data"`
 	}
 
-	_, err := s.client.R().
+	httpResp, err := s.client.R().
 		SetFormData(map[string]string{
 			"_api_key":               s.apiKey,
 			"buildType":              "apk",
@@ -77,8 +84,14 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	if err != nil {
 		return fmt.Errorf("get cos token: %w", err)
 	}
+	if httpResp.IsError() {
+		return fmt.Errorf("get cos token: http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+	}
 	if tokenResp.Code != 0 {
-		return fmt.Errorf("get cos token: %s", tokenResp.Message)
+		return fmt.Errorf("get cos token: [%d] %s", tokenResp.Code, tokenResp.Message)
+	}
+	if tokenResp.Data.Endpoint == "" || tokenResp.Data.Key == "" {
+		return fmt.Errorf("get cos token: empty endpoint/key (raw: %s)", truncateBody(httpResp.String()))
 	}
 
 	// 2. Upload to COS endpoint
@@ -99,7 +112,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		return fmt.Errorf("upload to cos: %w", err)
 	}
 	if resp.StatusCode() != 204 {
-		return fmt.Errorf("upload to cos: HTTP %d", resp.StatusCode())
+		return fmt.Errorf("upload to cos: HTTP %d: %s", resp.StatusCode(), truncateBody(resp.String()))
 	}
 
 	// 3. Poll build info until published
@@ -110,19 +123,18 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	for attempt := 0; attempt < 30; attempt++ {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("processing cancelled (uploaded successfully, check pgyer dashboard): %w", ctx.Err())
 		case <-ticker.C:
 		}
 
 		var buildResp struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Data    struct {
+			pgyerResp
+			Data struct {
 				Updated string `json:"buildUpdated"`
 			} `json:"data"`
 		}
 
-		_, err := s.client.R().
+		buildHTTP, err := s.client.R().
 			SetQueryParams(map[string]string{
 				"_api_key": s.apiKey,
 				"buildKey": tokenResp.Data.Key,
@@ -132,12 +144,78 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		if err != nil {
 			return fmt.Errorf("check build: %w", err)
 		}
-		if buildResp.Code == 1216 {
-			return fmt.Errorf("build failed: %s", buildResp.Message)
+		if buildHTTP.IsError() {
+			return fmt.Errorf("check build: http %d: %s", buildHTTP.StatusCode(), truncateBody(buildHTTP.String()))
 		}
-		if buildResp.Data.Updated != "" {
-			return nil
+		// pgyer keeps reporting code 1247 ("buildKey not found") for the
+		// first few seconds while the COS upload is still being ingested.
+		// Treat it as "still processing" rather than a hard failure so a
+		// successful upload doesn't immediately error out.
+		switch buildResp.Code {
+		case 0:
+			if buildResp.Data.Updated != "" {
+				return nil
+			}
+			// keep polling
+		case 1247:
+			// still being ingested, keep polling
+		default:
+			return fmt.Errorf("check build: [%d] %s", buildResp.Code, buildResp.Message)
 		}
 	}
-	return fmt.Errorf("build processing timed out (uploaded successfully, check pgyer dashboard)")
+	return fmt.Errorf("build processing timed out (uploaded successfully, check pgyer dashboard at https://www.pgyer.com/manage/apps)")
+}
+
+// truncateBody caps a response body at 500 chars so diagnostic errors stay readable.
+func truncateBody(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 500 {
+		return s[:500] + "...(truncated)"
+	}
+	return s
+}
+
+// diagnose is registered with `apkgo doctor`. Single probe:
+//
+//   user-info — POSTs to /user/getInfo with the api_key and reports the
+//               account email/username on success. Validates the key
+//               without creating any draft uploads.
+func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
+	probes := make([]store.Probe, 0, 1)
+
+	s, err := New(cfg)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "config", Status: "fail", Error: err.Error()})
+		return probes
+	}
+
+	var resp struct {
+		pgyerResp
+		Data struct {
+			UserKey   string `json:"userKey"`
+			UserName  string `json:"userName"`
+			UserEmail string `json:"userEmail"`
+		} `json:"data"`
+	}
+	httpResp, err := s.client.R().
+		SetFormData(map[string]string{"_api_key": s.apiKey}).
+		SetResult(&resp).
+		Post("/user/getInfo")
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "user-info", Status: "fail", Error: err.Error()})
+		return probes
+	}
+	if httpResp.IsError() {
+		probes = append(probes, store.Probe{Name: "user-info", Status: "fail",
+			Error: fmt.Sprintf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))})
+		return probes
+	}
+	if resp.Code != 0 {
+		probes = append(probes, store.Probe{Name: "user-info", Status: "fail",
+			Error: fmt.Sprintf("[%d] %s", resp.Code, resp.Message)})
+		return probes
+	}
+	detail := fmt.Sprintf("userName=%q email=%q", resp.Data.UserName, resp.Data.UserEmail)
+	probes = append(probes, store.Probe{Name: "user-info", Status: "ok", Detail: detail})
+	return probes
 }

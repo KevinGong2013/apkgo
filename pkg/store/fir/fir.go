@@ -2,9 +2,11 @@ package fir
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -18,11 +20,42 @@ func init() {
 		Name:       "fir",
 		ConsoleURL: "https://www.betaqr.com/docs/publish",
 		Fields: []store.FieldSchema{
-			{Key: "api_token", Required: true, Desc: "fir.im API token"},
+			{Key: "api_token", Required: true, Desc: "fir.im API token (从控制台 → 账号 → API Token 获取)"},
 		},
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
+	store.RegisterDiagnoser("fir", diagnose)
+}
+
+// firErr is fir.im's error envelope:
+//   {"errors":{"exception":["Authentication failed"]},"code":100020}
+// It does NOT show up in successful responses, so we parse it from the
+// raw body only when we need to surface an error.
+type firErr struct {
+	Errors struct {
+		Exception []string `json:"exception"`
+	} `json:"errors"`
+	Code int `json:"code"`
+}
+
+// text returns a human-readable error message, falling back to the raw
+// body when the error shape isn't recognised.
+func parseFirErr(body []byte) string {
+	var e firErr
+	if json.Unmarshal(body, &e) == nil && len(e.Errors.Exception) > 0 {
+		return fmt.Sprintf("[%d] %s", e.Code, strings.Join(e.Errors.Exception, "; "))
+	}
+	return truncateBody(string(body))
+}
+
+// truncateBody caps a response body at 500 chars so diagnostic errors stay readable.
+func truncateBody(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 500 {
+		return s[:500] + "...(truncated)"
+	}
+	return s
 }
 
 type Store struct {
@@ -31,13 +64,15 @@ type Store struct {
 }
 
 func New(cfg map[string]string) (*Store, error) {
-	apiToken := cfg["api_token"]
+	apiToken := strings.TrimSpace(cfg["api_token"])
 	if apiToken == "" {
 		return nil, fmt.Errorf("api_token is required")
 	}
 
+	// Switched to https — fir.im's API host enforces TLS now and the
+	// previous http base would silently get redirected.
 	client := resty.New().
-		SetBaseURL("http://api.bq04.com")
+		SetBaseURL("https://api.bq04.com")
 
 	return &Store{client: client, apiToken: apiToken}, nil
 }
@@ -58,9 +93,8 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	// 1. Get upload token
 	rep.Phase("auth")
 	var tokenResp struct {
-		Message string `json:"message,omitempty"`
-		ID      string `json:"id"`
-		Cert    struct {
+		ID   string `json:"id"`
+		Cert struct {
 			Binary struct {
 				Key       string `json:"key"`
 				Token     string `json:"token"`
@@ -69,7 +103,7 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		} `json:"cert"`
 	}
 
-	_, err := s.client.R().
+	httpResp, err := s.client.R().
 		SetFormData(map[string]string{
 			"type":      "android",
 			"bundle_id": req.PackageName,
@@ -80,8 +114,12 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	if err != nil {
 		return fmt.Errorf("get upload token: %w", err)
 	}
+	if httpResp.IsError() {
+		return fmt.Errorf("get upload token: http %d: %s",
+			httpResp.StatusCode(), parseFirErr(httpResp.Body()))
+	}
 	if tokenResp.ID == "" {
-		return fmt.Errorf("get upload token: %s", tokenResp.Message)
+		return fmt.Errorf("get upload token: %s", parseFirErr(httpResp.Body()))
 	}
 
 	// 2. Upload binary
@@ -111,8 +149,52 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}
+	if resp.IsError() {
+		return fmt.Errorf("upload: http %d: %s", resp.StatusCode(), truncateBody(resp.String()))
+	}
 	if !uploadResp.Completed {
-		return fmt.Errorf("upload incomplete: %s", resp.String())
+		return fmt.Errorf("upload incomplete: %s", truncateBody(resp.String()))
 	}
 	return nil
+}
+
+// diagnose is registered with `apkgo doctor`. Single probe:
+//
+//   user — GET /user with the api_token validates the credential
+//          without creating an app shell on fir's side. Reports the
+//          account name + email on success.
+func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
+	probes := make([]store.Probe, 0, 1)
+
+	s, err := New(cfg)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "config", Status: "fail", Error: err.Error()})
+		return probes
+	}
+
+	var resp struct {
+		Email string `json:"email"`
+		Name  string `json:"name"`
+	}
+	httpResp, err := s.client.R().
+		SetQueryParam("api_token", s.apiToken).
+		SetResult(&resp).
+		Get("/user")
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "user", Status: "fail", Error: err.Error()})
+		return probes
+	}
+	if httpResp.IsError() {
+		probes = append(probes, store.Probe{Name: "user", Status: "fail",
+			Error: parseFirErr(httpResp.Body())})
+		return probes
+	}
+	if resp.Email == "" && resp.Name == "" {
+		probes = append(probes, store.Probe{Name: "user", Status: "fail",
+			Error: fmt.Sprintf("empty user response: %s", truncateBody(httpResp.String()))})
+		return probes
+	}
+	detail := fmt.Sprintf("name=%q email=%q", resp.Name, resp.Email)
+	probes = append(probes, store.Probe{Name: "user", Status: "ok", Detail: detail})
+	return probes
 }
