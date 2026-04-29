@@ -177,7 +177,13 @@ stores:
     user_id: "your-user-id"
     access_secret: "your-access-secret"
     app_id: "your-app-id"
-    package_name: "com.example.app"
+    # 多 app: app_id_map: '{"com.foo":"111","com.bar":"222"}'
+
+  pgyer:
+    api_key: "your-pgyer-api-key"
+
+  fir:
+    api_token: "your-fir-api-token"
 
   # 单个脚本
   script:
@@ -272,6 +278,8 @@ export APKGO_TENCENT_USER_ID="your-user-id"
 export APKGO_TENCENT_ACCESS_SECRET="your-secret"
 export APKGO_TENCENT_APP_ID="your-app-id"
 # 多 app: APKGO_TENCENT_APP_ID_MAP='{"com.foo":"111","com.bar":"222"}'
+export APKGO_PGYER_API_KEY="your-pgyer-key"
+export APKGO_FIR_API_TOKEN="your-fir-token"
 
 # 环境变量会覆盖配置文件中的同名字段
 # 如果没有配置文件，完全通过环境变量配置也可以
@@ -288,6 +296,8 @@ apkgo upload -f app.apk --store huawei
 | vivo | [vivo 开放平台](https://dev.vivo.com.cn) | 账号管理 > API 接入（[详细步骤](#vivo-开放平台)） |
 | 荣耀 | [荣耀开发者平台](https://developer.honor.com) | API 管理 |
 | 腾讯 | [腾讯开放平台](https://app.open.qq.com) | 应用 > 账户管理 > API 发布接口 > 申请开通（[详细步骤](#腾讯应用宝)） |
+| 蒲公英 | [pgyer.com](https://www.pgyer.com/account/api) | 账户设置 > API 密钥（[详细步骤](#蒲公英-pgyer)） |
+| fir.im | [betaqr.com.cn](https://www.betaqr.com.cn) | 账户 > API Token（[详细步骤](#firim)） |
 
 #### 华为 AppGallery Connect
 
@@ -479,6 +489,54 @@ vivo 用 HMAC-SHA256 签名（无 OAuth2 token），需要 `access_key` 和 `acc
    两项探针：`app-detail`（HMAC 签名 + `app_id ↔ pkg_name` 绑定校验，输出 app_name / category）、`audit-status`（最近一次提交的审核状态：auditing / approved / rejected / withdrawn）。
 
    ⚠️ 腾讯发布也是异步任务：`update_app` 接口返回成功只代表任务已创建，apkgo 会轮询 `query_app_update_status` 直到 `audit_status=3` (审核通过) 或 `audit_status=2` (审核驳回)；超过 5 分钟仍在审核中视为成功返回（任务已交给腾讯）。
+
+#### 蒲公英 (Pgyer)
+
+蒲公英是内测 / 灰度分发服务，不是正式应用市场，凭证只需要一个 API key。文档：[app_upload](https://www.pgyer.com/doc/view/app_upload)。
+
+1. 登录 [蒲公英](https://www.pgyer.com) → 右上角头像 → **账户设置** → **API**（或直接打开 [pgyer.com/account/api](https://www.pgyer.com/account/api)）
+2. 点 **生成新的 API Key**（已生成的可以直接复制）
+3. 填入 `apkgo.yaml`：
+
+   ```yaml
+   stores:
+     pgyer:
+       api_key: "<API Key>"
+   ```
+
+4. 验证：
+
+   ```bash
+   apkgo doctor -s pgyer -p com.example.app
+   ```
+
+   一项探针：`app-list`（调通 `/app/listMy`，验证 api_key + 列出账号下应用）。给 `--package` 时还会顺带告诉你这个包名是否已经在账号里、当前线上版本号是多少。
+
+   说明：蒲公英的发布是异步任务，apkgo 会轮询 `/app/buildInfo` 直到处理完成（最长 5 分钟）；首次上传新应用会自动创建条目。
+
+#### fir.im
+
+fir.im（现在主品牌叫 betaqr）也是分发服务，凭证只需要一个 API token。文档：[betaqr.com.cn/docs](https://www.betaqr.com.cn/docs)。
+
+1. 登录 [fir.im](https://fir.im) → 控制台 → **账户** → **API Token**
+2. 复制 token
+3. 填入 `apkgo.yaml`：
+
+   ```yaml
+   stores:
+     fir:
+       api_token: "<API Token>"
+   ```
+
+4. 验证：
+
+   ```bash
+   apkgo doctor -s fir
+   ```
+
+   一项探针：`user`（调通 `/user`，验证 api_token 并显示账户名/邮箱）。
+
+   ⚠️ **fir 上传需要账号完成实名认证**，否则 `/apps` 接口会以 `没有实名认证不能上传app` 拒绝。doctor 探针只验 token，所以会绿；上传时会撞这个。先去后台完成实名认证再用。
 
 ## AI Agent 集成
 
