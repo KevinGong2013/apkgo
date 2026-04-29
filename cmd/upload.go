@@ -11,7 +11,6 @@ import (
 
 	"github.com/KevinGong2013/apkgo/pkg/apk"
 	"github.com/KevinGong2013/apkgo/pkg/apkgo"
-	"github.com/KevinGong2013/apkgo/pkg/config"
 	"github.com/KevinGong2013/apkgo/pkg/history"
 	"github.com/KevinGong2013/apkgo/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/pkg/store"
@@ -76,7 +75,7 @@ var uploadCmd = &cobra.Command{
 			return err
 		}
 
-		cfg, err := config.Load(flagConfig)
+		cfg, err := loadConfigForCmd()
 		if err != nil {
 			return fmt.Errorf("config: %w", err)
 		}

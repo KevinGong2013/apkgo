@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/KevinGong2013/apkgo/pkg/apk"
-	"github.com/KevinGong2013/apkgo/pkg/config"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
@@ -53,7 +52,7 @@ Pass -f <apk> or -p <package> to enable probes that need a real app.`,
   apkgo doctor -s huawei -f app.apk
   apkgo doctor -s huawei -p com.example.app`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(flagConfig)
+		cfg, err := loadConfigForCmd()
 		if err != nil {
 			return err
 		}

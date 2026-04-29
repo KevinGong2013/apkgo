@@ -1,7 +1,9 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -14,15 +16,15 @@ import (
 
 // HookConfig holds before/after hook commands.
 type HookConfig struct {
-	Before string `yaml:"before,omitempty"`
-	After  string `yaml:"after,omitempty"`
+	Before string `yaml:"before,omitempty" json:"before,omitempty"`
+	After  string `yaml:"after,omitempty" json:"after,omitempty"`
 }
 
 // Config is the top-level YAML configuration.
 type Config struct {
-	Hooks       HookConfig                   `yaml:"hooks,omitempty"`
-	Stores      map[string]map[string]string `yaml:"stores"`
-	UpdateCheck string                       `yaml:"update_check,omitempty"` // e.g. "30d", "7d", "0" to disable
+	Hooks       HookConfig                   `yaml:"hooks,omitempty" json:"hooks,omitempty"`
+	Stores      map[string]map[string]string `yaml:"stores" json:"stores"`
+	UpdateCheck string                       `yaml:"update_check,omitempty" json:"update_check,omitempty"` // e.g. "30d", "7d", "0" to disable
 }
 
 // StoreWithHooks pairs a store instance with its per-store hook commands.
@@ -65,6 +67,49 @@ func Load(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// LoadFromJSON parses a JSON-encoded config blob from r. Used by the
+// CLI's --creds-from flag (stdin / fd:N) to accept credentials without
+// landing them on disk or in the process environment, where they would
+// be visible to other processes via /proc/<pid>/environ or `ps -e`.
+//
+// The caller's input bytes are wiped (zeroed) after parsing so an
+// orchestrator handing apkgo a one-shot credential blob doesn't leave
+// it in a memory mapping that gets reused by something else. Note that
+// strings inside the resulting *Config are still managed by Go's GC
+// and aren't actively zeroed; callers needing SIEM-grade memory
+// hygiene should treat *Config as sensitive for its full lifetime.
+//
+// Env-var overrides (APKGO_*_*) are NOT merged into the JSON path —
+// the JSON is treated as authoritative. Mixing yaml/file + env + JSON
+// in one call would be confusing; pick one source per invocation.
+func LoadFromJSON(r io.Reader) (*Config, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+	defer wipe(data)
+
+	cfg := &Config{Stores: map[string]map[string]string{}}
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("parse config json: %w", err)
+	}
+	if cfg.Stores == nil {
+		cfg.Stores = map[string]map[string]string{}
+	}
+	if len(cfg.Stores) == 0 {
+		return nil, fmt.Errorf("no stores in JSON config")
+	}
+	return cfg, nil
+}
+
+// wipe overwrites a byte slice with zeros. Used to clear secret
+// material from memory immediately after it's been parsed.
+func wipe(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }
 
 // LoadOrEmpty is like Load but returns an empty config instead of an error

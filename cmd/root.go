@@ -16,10 +16,11 @@ import (
 )
 
 var (
-	flagConfig  string
-	flagOutput  string
-	flagVerbose bool
-	flagTimeout time.Duration
+	flagConfig     string
+	flagCredsFrom  string
+	flagOutput     string
+	flagVerbose    bool
+	flagTimeout    time.Duration
 )
 
 var rootCmd = &cobra.Command{
@@ -46,6 +47,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "apkgo.yaml", "config file path")
+	rootCmd.PersistentFlags().StringVar(&flagCredsFrom, "creds-from", "", `read JSON config from a non-disk source: "stdin" or "fd:N" (overrides --config when set)`)
 	rootCmd.PersistentFlags().StringVarP(&flagOutput, "output", "o", "json", "output format: json or text")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "verbose logging to stderr")
 	rootCmd.PersistentFlags().DurationVarP(&flagTimeout, "timeout", "t", 10*time.Minute, "global timeout for upload operations")
@@ -89,4 +91,16 @@ func writeError(err error) {
 // discardLog suppresses all log output (useful for non-verbose mode).
 func discardLog() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// loadConfigForCmd returns the resolved Config for the current command,
+// reading from --creds-from when set (so credentials never touch disk
+// or env) and falling back to the YAML file referenced by --config
+// otherwise. Centralised so every command picks up the same flag
+// semantics without re-implementing them.
+func loadConfigForCmd() (*config.Config, error) {
+	if flagCredsFrom != "" {
+		return config.LoadCreds(flagCredsFrom)
+	}
+	return config.Load(flagConfig)
 }

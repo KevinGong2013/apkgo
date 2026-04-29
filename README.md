@@ -286,6 +286,36 @@ export APKGO_FIR_API_TOKEN="your-fir-token"
 apkgo upload -f app.apk --store huawei
 ```
 
+### 凭证不落盘（cloud worker / CI / 多租户）
+
+`--creds-from` 让 apkgo 从非磁盘源读取 JSON 格式的凭证。orchestrator 把凭证从 secrets manager（Vault / AWS SM / GCP SM 等）取出后通过 stdin 或文件描述符直接注入子进程，**全程不写盘、不进 env**：
+
+```bash
+# 方式 A: stdin
+vault read -format=json secret/apkgo | jq .data \
+  | apkgo upload -f app.apk --creds-from=stdin
+
+# 方式 B: 文件描述符（适合 stdin 已经被占用的场景）
+apkgo upload -f app.apk --creds-from=fd:3 3<<<"$(vault-creds-as-json)"
+```
+
+JSON 格式跟 yaml 一一对应：
+```json
+{
+  "stores": {
+    "huawei": {"service_account": "<base64>"},
+    "tencent": {
+      "user_id": "...",
+      "access_secret": "...",
+      "app_id_map": "{\"com.foo\":\"111\"}"
+    }
+  },
+  "hooks": {"before": "...", "after": "..."}
+}
+```
+
+apkgo 解析完立刻把输入字节 zero-out，避免 secret 留在缓冲区。设了 `--creds-from` 时 `--config` 和 `APKGO_*` env 都被忽略。
+
 ### 凭证获取指南
 
 | 商店 | 控制台地址 | 说明 |
