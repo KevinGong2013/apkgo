@@ -31,7 +31,8 @@ func init() {
 		Fields: []store.FieldSchema{
 			{Key: "user_id", Required: true, Desc: "Tencent open platform developer user ID"},
 			{Key: "access_secret", Required: true, Desc: "API access secret (账户管理 → API 发布接口 → 申请开通)"},
-			{Key: "app_id", Required: true, Desc: "Tencent app ID (visible in console app home page; no listing API exists)"},
+			{Key: "app_id", Required: false, Desc: "Tencent app ID (single-app fallback; required if app_id_map is empty)"},
+			{Key: "app_id_map", Required: false, Desc: `JSON map of package_name → app_id for multi-app setups, e.g. '{"com.foo":"111","com.bar":"222"}'`},
 			{Key: "package_name", Required: false, Desc: "Android package name (auto-detected from APK if omitted)"},
 		},
 	}, func(cfg map[string]string) (store.Store, error) {
@@ -62,7 +63,8 @@ type Store struct {
 	client       *resty.Client
 	userID       string
 	accessSecret string
-	appID        string
+	appID        string            // single-app default; used when no app_id_map entry matches
+	appIDMap     map[string]string // optional package_name → app_id mapping for multi-app setups
 	packageName  string
 }
 
@@ -70,9 +72,21 @@ func New(cfg map[string]string) (*Store, error) {
 	userID := strings.TrimSpace(cfg["user_id"])
 	accessSecret := strings.TrimSpace(cfg["access_secret"])
 	appID := strings.TrimSpace(cfg["app_id"])
+	appIDMapRaw := strings.TrimSpace(cfg["app_id_map"])
 	packageName := strings.TrimSpace(cfg["package_name"]) // optional; falls back to APK metadata at upload time
-	if userID == "" || accessSecret == "" || appID == "" {
-		return nil, fmt.Errorf("user_id, access_secret, and app_id are required (Tencent has no listing API, so app_id can't be auto-discovered)")
+
+	var appIDMap map[string]string
+	if appIDMapRaw != "" {
+		if err := json.Unmarshal([]byte(appIDMapRaw), &appIDMap); err != nil {
+			return nil, fmt.Errorf("parse app_id_map: %w (expected JSON like '{\"com.foo\":\"111\",\"com.bar\":\"222\"}')", err)
+		}
+	}
+
+	if userID == "" || accessSecret == "" {
+		return nil, fmt.Errorf("user_id and access_secret are required")
+	}
+	if appID == "" && len(appIDMap) == 0 {
+		return nil, fmt.Errorf("either app_id or app_id_map must be set (Tencent has no listing API, so app_id can't be auto-discovered)")
 	}
 
 	client := resty.New().
@@ -85,8 +99,23 @@ func New(cfg map[string]string) (*Store, error) {
 		userID:       userID,
 		accessSecret: accessSecret,
 		appID:        appID,
+		appIDMap:     appIDMap,
 		packageName:  packageName,
 	}, nil
+}
+
+// resolveAppID returns the app_id to use for a given package. The map
+// takes precedence over the single-app default — that way a mistakenly
+// inherited `app_id` from a one-app setup can't silently cause a
+// multi-app upload to push to the wrong app.
+func (s *Store) resolveAppID(pkg string) (string, error) {
+	if id, ok := s.appIDMap[pkg]; ok && id != "" {
+		return id, nil
+	}
+	if s.appID != "" {
+		return s.appID, nil
+	}
+	return "", fmt.Errorf("no app_id configured for package %q (not in app_id_map and no single-app fallback)", pkg)
 }
 
 // resolvePackage returns the configured package_name, falling back to
@@ -121,6 +150,10 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	if err != nil {
 		return err
 	}
+	appID, err := s.resolveAppID(pkg)
+	if err != nil {
+		return err
+	}
 
 	// Pre-declare combined upload bytes for a stable progress bar across
 	// sequential apk + apk64 transfers.
@@ -132,7 +165,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	rep.Total(total)
 
 	// 1. Upload APK file → get serial number
-	apkSerial, apkMD5, err := s.uploadFile(pkg, req.FilePath, "apk", rep)
+	apkSerial, apkMD5, err := s.uploadFile(pkg, appID, req.FilePath, "apk", rep)
 	if err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
@@ -140,7 +173,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// 2. Upload 64-bit APK if provided
 	var apk64Serial, apk64MD5 string
 	if req.File64Path != "" {
-		apk64Serial, apk64MD5, err = s.uploadFile(pkg, req.File64Path, "apk", rep)
+		apk64Serial, apk64MD5, err = s.uploadFile(pkg, appID, req.File64Path, "apk", rep)
 		if err != nil {
 			return fmt.Errorf("upload 64-bit apk: %w", err)
 		}
@@ -148,13 +181,13 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	// 3. Submit update
 	rep.Phase("publishing")
-	if err := s.updateApp(pkg, req, apkSerial, apkMD5, apk64Serial, apk64MD5); err != nil {
+	if err := s.updateApp(pkg, appID, req, apkSerial, apkMD5, apk64Serial, apk64MD5); err != nil {
 		return fmt.Errorf("update app: %w", err)
 	}
 
 	// 4. Poll audit status
 	rep.Phase("auditing")
-	return s.pollAuditStatus(ctx, pkg)
+	return s.pollAuditStatus(ctx, pkg, appID)
 }
 
 // sumFileSizes totals the byte sizes of the given paths. Empty paths are ignored.
@@ -177,13 +210,13 @@ func sumFileSizes(paths ...string) (int64, error) {
 // serial number and file MD5. Reads the file in a streaming fashion so
 // memory use stays bounded regardless of APK size, and reports byte-level
 // progress to rep via a progress.Reader wrapper.
-func (s *Store) uploadFile(pkg, filePath, fileType string, rep progress.Reporter) (serialNumber string, fileMd5 string, err error) {
+func (s *Store) uploadFile(pkg, appID, filePath, fileType string, rep progress.Reporter) (serialNumber string, fileMd5 string, err error) {
 	fileName := filepath.Base(filePath)
 
 	// Get upload info
 	params := url.Values{}
 	params.Set("pkg_name", pkg)
-	params.Set("app_id", s.appID)
+	params.Set("app_id", appID)
 	params.Set("file_type", fileType)
 	params.Set("file_name", fileName)
 
@@ -245,10 +278,10 @@ func (s *Store) uploadFile(pkg, filePath, fileType string, rep progress.Reporter
 }
 
 // updateApp submits the app update with APK serial numbers and metadata.
-func (s *Store) updateApp(pkg string, req *store.UploadRequest, apkSerial, apkMD5, apk64Serial, apk64MD5 string) error {
+func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial, apkMD5, apk64Serial, apk64MD5 string) error {
 	params := url.Values{}
 	params.Set("pkg_name", pkg)
-	params.Set("app_id", s.appID)
+	params.Set("app_id", appID)
 	params.Set("deploy_type", "1") // publish immediately after approval
 
 	// APK files
@@ -288,7 +321,7 @@ func (s *Store) updateApp(pkg string, req *store.UploadRequest, apkSerial, apkMD
 // transient state — without this an auth/sign failure or "app not found"
 // would loop silently for the full polling window before reporting a
 // useless "polling timed out".
-func (s *Store) pollAuditStatus(ctx context.Context, pkg string) error {
+func (s *Store) pollAuditStatus(ctx context.Context, pkg, appID string) error {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
@@ -301,7 +334,7 @@ func (s *Store) pollAuditStatus(ctx context.Context, pkg string) error {
 
 		params := url.Values{}
 		params.Set("pkg_name", pkg)
-		params.Set("app_id", s.appID)
+		params.Set("app_id", appID)
 
 		var resp struct {
 			tencentResp
@@ -433,6 +466,11 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 			Detail: "needs --package, --file, or package_name in config"})
 		return probes
 	}
+	appID, err := s.resolveAppID(pkg)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "app-detail", Status: "fail", Error: err.Error()})
+		return probes
+	}
 
 	// Probe 1: app-detail
 	var detailResp struct {
@@ -443,7 +481,7 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 	}
 	params := url.Values{}
 	params.Set("pkg_name", pkg)
-	params.Set("app_id", s.appID)
+	params.Set("app_id", appID)
 	if err := s.post("/query_app_detail", params, &detailResp); err != nil {
 		probes = append(probes, store.Probe{Name: "app-detail", Status: "fail", Error: err.Error()})
 		return probes
@@ -454,7 +492,7 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 		return probes
 	}
 	probes = append(probes, store.Probe{Name: "app-detail", Status: "ok",
-		Detail: fmt.Sprintf("%s → app_name=%q category=%d", pkg, detailResp.AppName, detailResp.Category)})
+		Detail: fmt.Sprintf("%s (app_id=%s) → app_name=%q category=%d", pkg, appID, detailResp.AppName, detailResp.Category)})
 
 	// Probe 2: audit-status
 	var auditResp struct {

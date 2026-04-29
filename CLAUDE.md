@@ -68,8 +68,9 @@ stores:
   tencent:
     user_id: ""        # required, from open.qq.com
     access_secret: ""  # required, API access secret
-    app_id: ""         # required
-    package_name: ""   # required
+    app_id: ""         # single-app default; required if app_id_map is empty
+    app_id_map: ""     # multi-app: JSON string like '{"com.foo":"111","com.bar":"222"}'; map wins over app_id when key matches
+    package_name: ""   # optional; auto-detected from APK if omitted
   script:
     command: "./deploy.sh"  # required, shell command or script path
 
