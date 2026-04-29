@@ -165,9 +165,9 @@ func (s *Store) uploadAPK(method, packageName, filePath string, rep progress.Rep
 		return nil, fmt.Errorf("decode response (HTTP %d): %v: %s",
 			httpResp.StatusCode(), jerr, truncateBody(string(body)))
 	}
-	if resp.Code != 0 {
-		return nil, fmt.Errorf("[%d] %s (HTTP %d)",
-			resp.Code, resp.text(), httpResp.StatusCode())
+	if resp.failed() {
+		return nil, fmt.Errorf("[%s] %s (HTTP %d)",
+			resp.errorCode(), resp.text(), httpResp.StatusCode())
 	}
 	if resp.Data == nil {
 		return nil, fmt.Errorf("empty response data (HTTP %d): %s",
@@ -199,21 +199,37 @@ func (s *Store) updateApp(method string, bizParams map[string]string) error {
 		return fmt.Errorf("decode response (HTTP %d): %v: %s",
 			httpResp.StatusCode(), jerr, truncateBody(string(body)))
 	}
-	if resp.Code != 0 {
-		return fmt.Errorf("[%d] %s (HTTP %d)",
-			resp.Code, resp.text(), httpResp.StatusCode())
+	if resp.failed() {
+		return fmt.Errorf("[%s] %s (HTTP %d)",
+			resp.errorCode(), resp.text(), httpResp.StatusCode())
 	}
 	return nil
 }
 
-// envelope carries vivo's standard top-level error shape. Different
-// endpoints use either `msg` or `message` for the human text; the
-// helper picks whichever is non-empty so callers don't need to
-// remember per-endpoint quirks.
+// envelope carries vivo's standard top-level error shape.
+//
+// vivo splits errors into two layers:
+//   - Code: gateway-level result (0 = the call reached the service)
+//   - SubCode: business-level error code; non-empty SubCode means the
+//             call was accepted by the gateway but the service rejected
+//             it (e.g. SubCode=15042 "请上传与历史签名一致的APK包").
+//
+// A response with Code=0 and a non-empty SubCode is therefore NOT a
+// success — the original code only checking Code led to real upload
+// failures being silently mapped to "empty response data".
+//
+// Different endpoints also use either `msg` or `message` for the human
+// text; text() picks whichever is non-empty.
 type envelope struct {
 	Code    int    `json:"code"`
+	SubCode string `json:"subCode,omitempty"`
 	Msg     string `json:"msg,omitempty"`
 	Message string `json:"message,omitempty"`
+}
+
+// failed reports whether the response should be treated as an error.
+func (e envelope) failed() bool {
+	return e.Code != 0 || e.SubCode != ""
 }
 
 func (e envelope) text() string {
@@ -221,6 +237,16 @@ func (e envelope) text() string {
 		return e.Msg
 	}
 	return e.Message
+}
+
+// errorCode returns whichever code is most useful to print. SubCode
+// (business-level) takes priority because Code is 0 in the
+// gateway-OK-but-business-failed case.
+func (e envelope) errorCode() string {
+	if e.SubCode != "" {
+		return e.SubCode
+	}
+	return strconv.Itoa(e.Code)
 }
 
 // signParams builds the full param map with HMAC-SHA256 signature.
@@ -315,9 +341,9 @@ func (s *Store) queryApp(packageName string) (*appDetails, error) {
 		return nil, fmt.Errorf("decode response (HTTP %d): %v: %s",
 			httpResp.StatusCode(), jerr, truncateBody(string(body)))
 	}
-	if resp.Code != 0 {
-		return nil, fmt.Errorf("[%d] %s (HTTP %d)",
-			resp.Code, resp.text(), httpResp.StatusCode())
+	if resp.failed() {
+		return nil, fmt.Errorf("[%s] %s (HTTP %d)",
+			resp.errorCode(), resp.text(), httpResp.StatusCode())
 	}
 	return resp.Data, nil
 }
