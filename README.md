@@ -20,6 +20,21 @@
 | fir.im | API Token |
 | 脚本 (Script) | 自定义脚本 |
 
+## 为什么不直接用「应用生态联盟」一键多发？
+
+[中国安卓应用生态联盟](https://www.appchinaalliance.org)（华为/小米/OPPO/vivo 等共同发起）提供过"一次上传同步到多家商店"的能力。听起来很方便，但一旦你严肃发版就会撞到下面这些限制 —— 这也是 apkgo 选择直接调用每家商店原生 API 的原因：
+
+| 痛点 | 联盟同步 | apkgo 直发 |
+|------|---------|------------|
+| **同步时间** | 不可控，少则数小时多则数天，等一家慢的拖累整体 | 各家并发，整体时间 ≈ 最慢那一家的 API 时间 |
+| **过程可观测** | 看不到每家具体进度，出问题靠"等" | 每家结构化 JSON 状态码 + 错误消息直出 |
+| **差异化包** | 强制同包，不支持给不同商店投不同 APK（渠道号、签名、白名单功能） | 每家可单独传，`--file` / `--file64` / 渠道包灵活组合 |
+| **撤回 / 下架** | 联盟统一控制，无法只撤回某一家 | 每家用自己后台/脚本独立处理，apkgo 只管发不管控 |
+| **凭证归属** | 凭证集中在联盟方 | 凭证留在自家 CI，每家商店只看到自己的 token |
+| **可审计** | 上传历史散落在联盟系统 | 你的 CI 日志就是发布日志 |
+
+简单总结：联盟方案是为"图省事"设计的，apkgo 是为"自己说了算"设计的。如果你只是偶尔丢个内部测试包，联盟够用；如果你要做正经发布、自动化、多渠道、版本回滚，原生 API + apkgo 才是可行路径。
+
 ## 安装
 
 ```bash
@@ -146,7 +161,7 @@ stores:
     cert_file: "/secure/path/xiaomi-pubkey.cer" # 公钥证书（也支持 cert: <PEM 内容> 或 cert: <base64>）
 
   oppo:
-    client_id: "your-client-id"
+    client_id: "your-client-id"        # 19 位数字
     client_secret: "your-client-secret"
 
   vivo:
@@ -249,6 +264,8 @@ export APKGO_HUAWEI_SERVICE_ACCOUNT="$(base64 -w0 huawei-sa.json)"  # 推荐
 export APKGO_XIAOMI_EMAIL="your@email.com"
 export APKGO_XIAOMI_PRIVATE_KEY="your-接口密钥"
 export APKGO_XIAOMI_CERT="$(base64 -w0 xiaomi-pubkey.cer)"
+export APKGO_OPPO_CLIENT_ID="your-19-digit-id"
+export APKGO_OPPO_CLIENT_SECRET="your-secret"
 
 # 环境变量会覆盖配置文件中的同名字段
 # 如果没有配置文件，完全通过环境变量配置也可以
@@ -261,7 +278,7 @@ apkgo upload -f app.apk --store huawei
 |------|-----------|------|
 | 华为 | [AppGallery Connect](https://developer.huawei.com/consumer/cn/console) | 用户与权限 > 服务账号（[详细步骤](#华为-appgallery-connect)） |
 | 小米 | [小米开放平台](https://dev.mi.com) | 账号管理 > 接口密钥（[详细步骤](#小米开放平台)） |
-| OPPO | [OPPO 开放平台](https://open.oppomobile.com) | 管理中心 > API 密钥管理 |
+| OPPO | [OPPO 开放平台](https://open.oppomobile.com) | 管理中心 > API 密钥管理（[详细步骤](#oppo-开放平台)） |
 | vivo | [vivo 开放平台](https://dev.vivo.com.cn) | 账号管理 > API 管理 |
 | 荣耀 | [荣耀开发者平台](https://developer.honor.com) | API 管理 |
 | 腾讯 | [腾讯开放平台](https://app.open.qq.com) | 账户管理 > API 发布接口 > 申请开通 |
@@ -358,6 +375,35 @@ apkgo upload -f app.apk --store huawei
 
    ⚠️ 上传时小米后台还会做**签名一致性检查**：你要发的 APK 必须用跟线上版本相同的 keystore 签名，否则会以 `签名不一致,不满足应用更新条件` 拒绝。这是后台层的反劫持机制，apkgo 无法绕过。
 
+#### OPPO 开放平台
+
+OPPO 用 OAuth2 拿 access_token + 每次请求 HMAC-SHA256 签名。需要 `client_id`（19 位数字）和 `client_secret`。
+
+1. 登录 [OPPO 开放平台](https://open.oppomobile.com)
+2. 进入控制台 → 右上角账号 → **管理中心** → 左侧 **API 密钥管理**（HeyTap 改版后入口可能叫「API 接入」/「开放接口」）
+3. 新建 / 查看 API 密钥：
+   - **Client ID**：19 位数字串
+   - **Client Secret**：长字符串（重置会让旧 secret 失效）
+4. 上传发布 API 不是默认开通，需要先在「权限申请」里申请相应权限并完成实名 / 主体认证
+5. 填入 `apkgo.yaml`：
+
+   ```yaml
+   stores:
+     oppo:
+       client_id: "<19 位数字>"
+       client_secret: "<密钥>"
+   ```
+
+6. 验证：
+
+   ```bash
+   apkgo doctor -s oppo -p com.example.app
+   ```
+
+   两项探针：`token`（凭证能换到 access_token）、`app-info`（HMAC-SHA256 签名服务端能验过，且包名在你账号下存在）。
+
+   ⚠️ OPPO 的发布是**异步任务**：`publish` 接口返回成功只代表任务已创建，apkgo 会继续轮询 `task-state` 等到任务终态（最长 5 分钟）。如果撞到 `911216 任务处理中` 表示前一次发版还没完成，apkgo 会自动跳过 publish 直接等任务；撞 `911215 应用审核中` 表示已成功送进 OPPO 审核队列，apkgo 视为成功返回。
+
 ## AI Agent 集成
 
 apkgo 的输出格式专为 AI Agent 和自动化场景设计：
@@ -399,6 +445,8 @@ apkgo stores  # 返回每个商店需要的配置字段
     APKGO_XIAOMI_EMAIL: ${{ secrets.XIAOMI_EMAIL }}
     APKGO_XIAOMI_PRIVATE_KEY: ${{ secrets.XIAOMI_PRIVATE_KEY }}
     APKGO_XIAOMI_CERT: ${{ secrets.XIAOMI_CERT }}             # base64(.cer 文件)
+    APKGO_OPPO_CLIENT_ID: ${{ secrets.OPPO_CLIENT_ID }}
+    APKGO_OPPO_CLIENT_SECRET: ${{ secrets.OPPO_CLIENT_SECRET }}
   run: |
     apkgo upload \
       -f app/build/outputs/apk/release/app-release.apk \
