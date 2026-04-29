@@ -362,6 +362,15 @@ func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progre
 // ---- release notes ----
 
 func (s *Store) updateLanguageInfo(appID string, existing *languageInfo, releaseNotes string) error {
+	// Honor's update-language-info validates intro / briefIntro as
+	// non-empty at request time. If the app on Honor's console has
+	// either field blank, we'd hit "[20076] app introduction is empty"
+	// after the APK is already uploaded, which is confusing. Fail fast
+	// and tell the operator exactly which field to fill in.
+	if existing.Intro == "" {
+		return fmt.Errorf("honor app intro (应用简介) is empty on the console — fill it in before publishing: https://developer.honor.com/cn/console")
+	}
+
 	// Honor's update-language-info blanks out every field it receives as
 	// empty, so we re-send appName/intro/briefIntro verbatim and only
 	// mutate newFeature.
@@ -480,6 +489,16 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 		probes = append(probes, store.Probe{Name: "app-detail", Status: "fail", Error: err.Error()})
 		return probes
 	}
-	probes = append(probes, store.Probe{Name: "app-detail", Status: "ok", Detail: fmt.Sprintf("language=%s appName=%q", lang.LanguageID, lang.AppName)})
+	// update-language-info rejects empty intro at request time, so an
+	// app whose console-side intro is blank will fail the publish step
+	// after the APK is already uploaded. Flag it here so the operator
+	// catches the gap before kicking off a real upload.
+	if lang.Intro == "" {
+		probes = append(probes, store.Probe{Name: "app-detail", Status: "fail",
+			Error: fmt.Sprintf("language=%s appName=%q but intro (应用简介) is empty — fill it on the console before publishing", lang.LanguageID, lang.AppName)})
+		return probes
+	}
+	probes = append(probes, store.Probe{Name: "app-detail", Status: "ok",
+		Detail: fmt.Sprintf("language=%s appName=%q intro=%d chars", lang.LanguageID, lang.AppName, len(lang.Intro))})
 	return probes
 }
