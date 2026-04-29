@@ -14,27 +14,30 @@ import (
 	"github.com/KevinGong2013/apkgo/pkg/config"
 	"github.com/KevinGong2013/apkgo/pkg/history"
 	"github.com/KevinGong2013/apkgo/pkg/hooks"
+	"github.com/KevinGong2013/apkgo/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 	"github.com/KevinGong2013/apkgo/pkg/telemetry"
 	"github.com/KevinGong2013/apkgo/pkg/uploader"
 )
 
 var (
-	flagFile      string
-	flagFile64    string
-	flagStore     string
-	flagNotes     string
-	flagNotesFile string
-	flagDryRun    bool
+	flagFile         string
+	flagFile64       string
+	flagStore        string
+	flagNotes        string
+	flagNotesFile    string
+	flagDryRun       bool
+	flagFetchHeaders []string
 )
 
 func init() {
-	uploadCmd.Flags().StringVarP(&flagFile, "file", "f", "", "APK file path (required)")
-	uploadCmd.Flags().StringVar(&flagFile64, "file64", "", "64-bit APK file path (for split-arch uploads)")
+	uploadCmd.Flags().StringVarP(&flagFile, "file", "f", "", "APK file path or http(s) URL (required)")
+	uploadCmd.Flags().StringVar(&flagFile64, "file64", "", "64-bit APK file path or http(s) URL (for split-arch uploads)")
 	uploadCmd.Flags().StringVarP(&flagStore, "store", "s", "", "comma-separated store names (default: all configured)")
 	uploadCmd.Flags().StringVarP(&flagNotes, "notes", "n", "", "release notes (text)")
 	uploadCmd.Flags().StringVar(&flagNotesFile, "notes-file", "", "read release notes from file (overrides --notes)")
 	uploadCmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "validate config and APK without uploading")
+	uploadCmd.Flags().StringArrayVar(&flagFetchHeaders, "fetch-header", nil, `extra HTTP header for URL fetches (repeatable; "Name: value")`)
 	uploadCmd.MarkFlagRequired("file")
 	rootCmd.AddCommand(uploadCmd)
 }
@@ -63,8 +66,26 @@ var uploadCmd = &cobra.Command{
   apkgo upload -f app.apk --store huawei,xiaomi
   apkgo upload -f app.apk --dry-run
   apkgo upload -f app.apk --notes "Bug fixes"
-  apkgo upload -f app.apk --notes-file CHANGELOG.md`,
+  apkgo upload -f app.apk --notes-file CHANGELOG.md
+  apkgo upload -f https://artifacts.example.com/app-v1.apk --store huawei
+  apkgo upload -f https://private.example.com/app.apk --fetch-header "Authorization: Bearer xxx"`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Resolve URL inputs to local paths. Refs that are already local
+		// paths pass through unchanged.
+		fetchHeaders, err := httpx.ParseHeaders(flagFetchHeaders)
+		if err != nil {
+			return err
+		}
+		if httpx.IsURL(flagFile) || httpx.IsURL(flagFile64) {
+			slog.Info("fetching APK from URL", "file", flagFile, "file64", flagFile64)
+		}
+		paths, cleanup, err := httpx.FetchToTempBatch(cmd.Context(), []string{flagFile, flagFile64}, fetchHeaders)
+		if err != nil {
+			return fmt.Errorf("fetch apk: %w", err)
+		}
+		defer cleanup()
+		flagFile, flagFile64 = paths[0], paths[1]
+
 		// Validate APK file exists
 		if _, err := os.Stat(flagFile); err != nil {
 			return fmt.Errorf("apk file: %w", err)
