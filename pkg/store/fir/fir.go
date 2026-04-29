@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
@@ -135,7 +138,7 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 
 	// 2. Upload binary
 	rep.Phase("uploading")
-	rc, _, err := progress.OpenFile(req.FilePath, rep)
+	rc, size, err := progress.OpenFile(req.FilePath, rep)
 	if err != nil {
 		return fmt.Errorf("open apk: %w", err)
 	}
@@ -145,26 +148,33 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		Completed bool `json:"is_completed"`
 	}
 
-	resp, err := s.client.R().
-		SetFormData(map[string]string{
+	resp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
+		Method: http.MethodPost,
+		URL:    tokenResp.Cert.Binary.UploadURL,
+		Fields: map[string]string{
 			"key":         tokenResp.Cert.Binary.Key,
 			"token":       tokenResp.Cert.Binary.Token,
 			"x:name":      req.AppName,
 			"x:version":   req.VersionName,
 			"x:build":     strconv.Itoa(int(req.VersionCode)),
 			"x:changelog": req.ReleaseNotes,
-		}).
-		SetFileReader("file", filepath.Base(req.FilePath), rc).
-		SetResult(&uploadResp).
-		Post(tokenResp.Cert.Binary.UploadURL)
+		},
+		Files: []httpx.FileField{{Field: "file", FileName: filepath.Base(req.FilePath), Reader: rc, Size: size}},
+	})
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}
-	if resp.IsError() {
-		return fmt.Errorf("upload: http %d: %s", resp.StatusCode(), truncateBody(resp.String()))
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("upload: http %d: %s", resp.StatusCode, truncateBody(string(body)))
+	}
+	if jerr := json.Unmarshal(body, &uploadResp); jerr != nil {
+		return fmt.Errorf("decode upload response (HTTP %d): %v: %s",
+			resp.StatusCode, jerr, truncateBody(string(body)))
 	}
 	if !uploadResp.Completed {
-		return fmt.Errorf("upload incomplete: %s", truncateBody(resp.String()))
+		return fmt.Errorf("upload incomplete: %s", truncateBody(string(body)))
 	}
 	return nil
 }

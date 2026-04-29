@@ -14,6 +14,7 @@ import (
 	_ "image/jpeg" // register jpeg decoder for icon extraction
 	"image/png"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -28,9 +29,12 @@ import (
 	// with "image: unknown format" when extracting the launcher icon.
 	_ "golang.org/x/image/webp"
 
+	"github.com/KevinGong2013/apkgo/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
+
+const xiaomiBaseURL = "https://api.developer.xiaomi.com/devupload"
 
 func init() {
 	store.Register("xiaomi", store.ConfigSchema{
@@ -78,7 +82,7 @@ func New(cfg map[string]string) (*Store, error) {
 	}
 
 	client := resty.New().
-		SetBaseURL("https://api.developer.xiaomi.com/devupload")
+		SetBaseURL(xiaomiBaseURL)
 
 	return &Store{
 		client:     client,
@@ -212,23 +216,39 @@ func (s *Store) push(synchroType int, req *store.UploadRequest, iconPath string,
 	}
 	rep.Total(apkSize + iconSize + apk64Size)
 
-	r := s.client.R().
-		SetHeader("Content-Type", "application/x-www-form-urlencoded").
-		SetFormDataFromValues(body).
-		SetFileReader("apk", filepath.Base(req.FilePath), apkRC).
-		SetFileReader("icon", filepath.Base(iconPath), iconRC)
-
+	fields := make(map[string]string, len(body))
+	for k := range body {
+		fields[k] = body.Get(k)
+	}
+	parts := []httpx.FileField{
+		{Field: "apk", FileName: filepath.Base(req.FilePath), Reader: apkRC, Size: apkSize},
+		{Field: "icon", FileName: filepath.Base(iconPath), Reader: iconRC, Size: iconSize},
+	}
 	if apk64RC != nil {
-		r.SetFileReader("secondApkPath", filepath.Base(req.File64Path), apk64RC)
+		parts = append(parts, httpx.FileField{Field: "secondApkPath", FileName: filepath.Base(req.File64Path), Reader: apk64RC, Size: apk64Size})
 	}
 
+	pushResp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
+		Method: http.MethodPost,
+		URL:    xiaomiBaseURL + "/dev/push",
+		Fields: fields,
+		Files:  parts,
+	})
+	if err != nil {
+		return err
+	}
+	defer pushResp.Body.Close()
+	respBody, _ := io.ReadAll(pushResp.Body)
+	if pushResp.StatusCode >= 400 {
+		return fmt.Errorf("push failed: http %d: %s", pushResp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
 	var resp struct {
 		Result  int    `json:"result"`
 		Message string `json:"message,omitempty"`
 	}
-	_, err = r.SetResult(&resp).Post("/dev/push")
-	if err != nil {
-		return err
+	if jerr := json.Unmarshal(respBody, &resp); jerr != nil {
+		return fmt.Errorf("decode push response (HTTP %d): %v: %s",
+			pushResp.StatusCode, jerr, strings.TrimSpace(string(respBody)))
 	}
 	if resp.Result != 0 {
 		return fmt.Errorf("push failed: %s", resp.Message)

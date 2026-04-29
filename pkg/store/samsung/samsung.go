@@ -11,12 +11,16 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
@@ -40,6 +44,16 @@ type Store struct {
 	serviceAccountID string
 	contentID        string
 	privateKey       *rsa.PrivateKey
+	accessToken      string // also set on resty client; kept here for the streaming upload path
+}
+
+const samsungBaseURL = "https://devapi.samsungapps.com"
+
+// samsungAuthHeaders returns the Authorization header used by every
+// store API call. Centralised so the streaming upload path stays in
+// sync with the resty client's bearer auth.
+func samsungAuthHeaders(s *Store) map[string]string {
+	return map[string]string{"Authorization": "Bearer " + s.accessToken}
 }
 
 func New(cfg map[string]string) (*Store, error) {
@@ -56,7 +70,7 @@ func New(cfg map[string]string) (*Store, error) {
 	}
 
 	client := resty.New().
-		SetBaseURL("https://devapi.samsungapps.com").
+		SetBaseURL(samsungBaseURL).
 		SetHeader("Content-Type", "application/json")
 
 	s := &Store{
@@ -71,6 +85,7 @@ func New(cfg map[string]string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
+	s.accessToken = token
 	client.SetAuthToken(token)
 
 	return s, nil
@@ -105,23 +120,34 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 
 	// 2. Upload APK
 	rep.Phase("uploading")
-	rc, _, err := progress.OpenFile(req.FilePath, rep)
+	rc, fSize, err := progress.OpenFile(req.FilePath, rep)
 	if err != nil {
 		return fmt.Errorf("open apk: %w", err)
 	}
 	defer rc.Close()
 
+	httpResp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
+		Method:  http.MethodPost,
+		URL:     samsungBaseURL + "/seller/fileUpload",
+		Query:   url.Values{"sessionId": []string{sessionResp.SessionID}},
+		Headers: samsungAuthHeaders(s),
+		Files:   []httpx.FileField{{Field: "file", FileName: filepath.Base(req.FilePath), Reader: rc, Size: fSize}},
+	})
+	if err != nil {
+		return fmt.Errorf("upload: %w", err)
+	}
+	defer httpResp.Body.Close()
+	body, _ := io.ReadAll(httpResp.Body)
+	if httpResp.StatusCode >= 400 {
+		return fmt.Errorf("upload failed: http %d: %s", httpResp.StatusCode, strings.TrimSpace(string(body)))
+	}
 	var uploadResp struct {
 		FileKey string `json:"fileKey"`
 		ErrMsg  string `json:"errorMsg,omitempty"`
 	}
-	_, err = s.client.R().
-		SetQueryParam("sessionId", sessionResp.SessionID).
-		SetFileReader("file", filepath.Base(req.FilePath), rc).
-		SetResult(&uploadResp).
-		Post("/seller/fileUpload")
-	if err != nil {
-		return fmt.Errorf("upload: %w", err)
+	if jerr := json.Unmarshal(body, &uploadResp); jerr != nil {
+		return fmt.Errorf("decode upload response (HTTP %d): %v: %s",
+			httpResp.StatusCode, jerr, strings.TrimSpace(string(body)))
 	}
 	if uploadResp.FileKey == "" {
 		return fmt.Errorf("upload failed: %s", uploadResp.ErrMsg)

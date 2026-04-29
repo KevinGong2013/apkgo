@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,9 +20,12 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
+
+const vivoBaseURL = "https://developer-api.vivo.com.cn/router/rest"
 
 func init() {
 	store.Register("vivo", store.ConfigSchema{
@@ -50,7 +55,7 @@ func New(cfg map[string]string) (*Store, error) {
 	}
 
 	client := resty.New().
-		SetBaseURL("https://developer-api.vivo.com.cn/router/rest")
+		SetBaseURL(vivoBaseURL)
 
 	return &Store{
 		client:       client,
@@ -143,35 +148,42 @@ func (s *Store) uploadAPK(method, packageName, filePath string, rep progress.Rep
 		"fileMd5":     fileMd5,
 	})
 
-	rc, _, err := progress.WrapFile(filePath, rep)
+	rc, fSize, err := progress.WrapFile(filePath, rep)
 	if err != nil {
 		return nil, fmt.Errorf("open apk: %w", err)
 	}
 	defer rc.Close()
 
-	httpResp, err := s.client.R().
-		SetFileReader("file", filepath.Base(filePath), rc).
-		SetQueryParams(params).
-		Post("")
+	queryVals := url.Values{}
+	for k, v := range params {
+		queryVals.Set(k, v)
+	}
+	httpResp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
+		Method: http.MethodPost,
+		URL:    vivoBaseURL,
+		Query:  queryVals,
+		Files:  []httpx.FileField{{Field: "file", FileName: filepath.Base(filePath), Reader: rc, Size: fSize}},
+	})
 	if err != nil {
 		return nil, err
 	}
-	body := httpResp.Body()
+	defer httpResp.Body.Close()
+	body, _ := io.ReadAll(httpResp.Body)
 	var resp struct {
 		envelope
 		Data *uploadResp `json:"data"`
 	}
 	if jerr := json.Unmarshal(body, &resp); jerr != nil {
 		return nil, fmt.Errorf("decode response (HTTP %d): %v: %s",
-			httpResp.StatusCode(), jerr, truncateBody(string(body)))
+			httpResp.StatusCode, jerr, truncateBody(string(body)))
 	}
 	if resp.failed() {
 		return nil, fmt.Errorf("[%s] %s (HTTP %d)",
-			resp.errorCode(), resp.text(), httpResp.StatusCode())
+			resp.errorCode(), resp.text(), httpResp.StatusCode)
 	}
 	if resp.Data == nil {
 		return nil, fmt.Errorf("empty response data (HTTP %d): %s",
-			httpResp.StatusCode(), truncateBody(string(body)))
+			httpResp.StatusCode, truncateBody(string(body)))
 	}
 	return resp.Data, nil
 }

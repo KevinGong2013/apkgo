@@ -3,13 +3,17 @@ package huawei
 import (
 	"context"
 	"crypto/rsa"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
@@ -260,23 +264,33 @@ func (s *Store) uploadAPK(appID, apkPath string, rep progress.Reporter) error {
 	}
 	filename := filepath.Base(apkPath)
 	rep.Phase("uploading")
-	rc, _, err := progress.OpenFile(apkPath, rep)
+	rc, fSize, err := progress.OpenFile(apkPath, rep)
 	if err != nil {
 		return fmt.Errorf("open apk: %w", err)
 	}
 	defer rc.Close()
-	_, err = resty.New().R().
-		SetFileReader("file", filename, rc).
-		SetFormData(map[string]string{
+	resp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
+		Method: http.MethodPost,
+		URL:    url,
+		Fields: map[string]string{
 			"authCode":  authCode,
 			"fileCount": "1",
 			"name":      filename,
 			"parseType": "0",
-		}).
-		SetResult(&fileResp).
-		Post(url)
+		},
+		Files: []httpx.FileField{{Field: "file", FileName: filename, Reader: rc, Size: fSize}},
+	})
 	if err != nil {
 		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("upload failed: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if jerr := json.Unmarshal(body, &fileResp); jerr != nil {
+		return fmt.Errorf("decode upload response (HTTP %d): %v: %s",
+			resp.StatusCode, jerr, strings.TrimSpace(string(body)))
 	}
 	if fileResp.Result.ResultCode != "0" {
 		return fmt.Errorf("upload failed, resultCode: %s", fileResp.Result.ResultCode)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
@@ -311,29 +313,35 @@ func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progre
 	// Step 3: stream the APK to the signed URL as a multipart POST.
 	// Progress.Reader forwards byte counts to the mpb bar.
 	rep.Phase("uploading")
-	rc, _, err := progress.OpenFile(apkPath, rep)
+	rc, fSize, err := progress.OpenFile(apkPath, rep)
 	if err != nil {
 		return fmt.Errorf("open apk: %w", err)
 	}
 	defer rc.Close()
 
-	var putResp honorResp
-	putHTTP, err := resty.New().R().
-		SetContext(ctx).
-		SetHeader("Authorization", "Bearer "+s.accessToken).
-		SetFileReader("file", fileName, rc).
-		SetResult(&putResp).
-		Post(upload.UploadURL)
+	putHTTP, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
+		Method:  http.MethodPost,
+		URL:     upload.UploadURL,
+		Headers: map[string]string{"Authorization": "Bearer " + s.accessToken},
+		Files:   []httpx.FileField{{Field: "file", FileName: fileName, Reader: rc, Size: fSize}},
+	})
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}
-	if putHTTP.IsError() {
-		return fmt.Errorf("upload: http %d: %s", putHTTP.StatusCode(), truncateBody(putHTTP.String()))
+	defer putHTTP.Body.Close()
+	putBody, _ := io.ReadAll(putHTTP.Body)
+	if putHTTP.StatusCode >= 400 {
+		return fmt.Errorf("upload: http %d: %s", putHTTP.StatusCode, truncateBody(string(putBody)))
 	}
 	// Honor returns a JSON envelope on success; HTTP may be 200 with code!=0
 	// when the signed URL rejects the payload (expired nonce, bad sha256).
+	var putResp honorResp
+	if jerr := json.Unmarshal(putBody, &putResp); jerr != nil {
+		return fmt.Errorf("decode upload response (HTTP %d): %v: %s",
+			putHTTP.StatusCode, jerr, truncateBody(string(putBody)))
+	}
 	if putResp.Code != 0 {
-		return fmt.Errorf("upload [%d] %s: %s", putResp.Code, putResp.text(), truncateBody(putHTTP.String()))
+		return fmt.Errorf("upload [%d] %s: %s", putResp.Code, putResp.text(), truncateBody(string(putBody)))
 	}
 
 	// Step 4: tell honor that objectId is the new binary for this app.

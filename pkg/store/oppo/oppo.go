@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
@@ -280,7 +283,7 @@ func (s *Store) uploadAPK(filePath string, rep progress.Reporter) (*uploadResult
 	}
 
 	// Upload file (streamed, with progress reporting)
-	rc, _, err := progress.WrapFile(filePath, rep)
+	rc, fSize, err := progress.WrapFile(filePath, rep)
 	if err != nil {
 		return nil, fmt.Errorf("open apk: %w", err)
 	}
@@ -290,25 +293,32 @@ func (s *Store) uploadAPK(filePath string, rep progress.Reporter) (*uploadResult
 		errEnvelope
 		Data uploadResultData `json:"data"`
 	}
-	httpResp, err = s.client.R().
-		SetResult(&uploadResp).
-		SetFormData(map[string]string{
+	resp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
+		Method: http.MethodPost,
+		URL:    urlResp.Data.UploadURL,
+		Fields: map[string]string{
 			"sign": urlResp.Data.Sign,
 			"type": "apk",
-		}).
-		SetFileReader("file", filepath.Base(filePath), rc).
-		Post(urlResp.Data.UploadURL)
+		},
+		Files: []httpx.FileField{{Field: "file", FileName: filepath.Base(filePath), Reader: rc, Size: fSize}},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("upload: %w", err)
 	}
-	if httpResp.IsError() {
-		return nil, fmt.Errorf("upload: http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("upload: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if jerr := json.Unmarshal(body, &uploadResp); jerr != nil {
+		return nil, fmt.Errorf("decode upload response (HTTP %d): %v: %s",
+			resp.StatusCode, jerr, strings.TrimSpace(string(body)))
 	}
 	if uploadResp.Errno != 0 {
-		return nil, fmt.Errorf("upload: [%d] %s", uploadResp.Errno, parseError(httpResp.Body()))
+		return nil, fmt.Errorf("upload: [%d] %s", uploadResp.Errno, parseError(body))
 	}
 	if uploadResp.Data.URL == "" {
-		return nil, fmt.Errorf("upload: empty url in response (raw: %s)", strings.TrimSpace(string(httpResp.Body())))
+		return nil, fmt.Errorf("upload: empty url in response (raw: %s)", strings.TrimSpace(string(body)))
 	}
 	return &uploadResp.Data, nil
 }

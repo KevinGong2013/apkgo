@@ -3,12 +3,15 @@ package pgyer
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
@@ -98,21 +101,25 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	tokenResp.Data.Params["key"] = tokenResp.Data.Key
 
 	rep.Phase("uploading")
-	rc, _, err := progress.OpenFile(req.FilePath, rep)
+	rc, size, err := progress.OpenFile(req.FilePath, rep)
 	if err != nil {
 		return fmt.Errorf("open apk: %w", err)
 	}
 	defer rc.Close()
 
-	resp, err := s.client.R().
-		SetFormData(tokenResp.Data.Params).
-		SetFileReader("file", filepath.Base(req.FilePath), rc).
-		Post(tokenResp.Data.Endpoint)
+	resp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
+		Method: http.MethodPost,
+		URL:    tokenResp.Data.Endpoint,
+		Fields: tokenResp.Data.Params,
+		Files:  []httpx.FileField{{Field: "file", FileName: filepath.Base(req.FilePath), Reader: rc, Size: size}},
+	})
 	if err != nil {
 		return fmt.Errorf("upload to cos: %w", err)
 	}
-	if resp.StatusCode() != 204 {
-		return fmt.Errorf("upload to cos: HTTP %d: %s", resp.StatusCode(), truncateBody(resp.String()))
+	defer resp.Body.Close()
+	if resp.StatusCode != 204 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upload to cos: HTTP %d: %s", resp.StatusCode, truncateBody(string(body)))
 	}
 
 	// 3. Poll build info until published
