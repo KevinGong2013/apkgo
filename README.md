@@ -294,249 +294,159 @@ apkgo upload -f app.apk --store huawei
 | 小米 | [小米开放平台](https://dev.mi.com) | 账号管理 > 接口密钥（[详细步骤](#小米开放平台)） |
 | OPPO | [OPPO 开放平台](https://open.oppomobile.com) | 管理中心 > API 密钥管理（[详细步骤](#oppo-开放平台)） |
 | vivo | [vivo 开放平台](https://dev.vivo.com.cn) | 账号管理 > API 接入（[详细步骤](#vivo-开放平台)） |
-| 荣耀 | [荣耀开发者平台](https://developer.honor.com) | API 管理 |
+| 荣耀 | [荣耀开发者平台](https://developer.honor.com) | API 管理（[详细步骤](#荣耀开发者平台)） |
 | 腾讯 | [腾讯开放平台](https://app.open.qq.com) | 应用 > 账户管理 > API 发布接口 > 申请开通（[详细步骤](#腾讯应用宝)） |
 | 蒲公英 | [pgyer.com](https://www.pgyer.com/account/api) | 账户设置 > API 密钥（[详细步骤](#蒲公英-pgyer)） |
 | fir.im | [betaqr.com.cn](https://www.betaqr.com.cn) | 账户 > API Token（[详细步骤](#firim)） |
 
+每家的凭证申请流程都以官方文档为准（链接见下文），README 这边只描述 **apkgo 特有的事**：要哪几个字段、`doctor` 怎么验、需要注意的非显然行为。
+
 #### 华为 AppGallery Connect
 
-华为推荐使用 **服务账号 (Service Account)** 鉴权。旧的 API 密钥 (Client ID + Key) 也可继续使用，但华为已不再推荐，且发布接口对密钥类型要求很严（团队级而非项目级，且必须勾上 *应用发布* 权限），调错就会撞上 `203886599`/`203890688` 等不友好的错误码。
+📖 官方文档：[Service Account 接入介绍](https://developer.huawei.com/consumer/cn/doc/AppGallery-connect-Guides/agcapi-getstarted-0000001111845114#section1785535363715)
 
-##### 推荐：服务账号 (Service Account)
+推荐用**开发者级**服务账号（PS256 JWT 鉴权），不要选项目级——访问发布 API 会被拒。下载到的 JSON 凭证文件直接交给 apkgo：
 
-服务账号采用 PS256 JWT 鉴权，签名后的 JWT 直接作为 Bearer token 使用，无需 OAuth 交换步骤。
+```yaml
+stores:
+  huawei:
+    service_account_file: "/secure/path/huawei-sa.json"
+    # 或 base64(JSON) 内联：service_account: "ewogICJrZXlfaWQiOiAi..."
+```
 
-1. 进入 [AGC 控制台](https://developer.huawei.com/consumer/cn/service/josp/agc/index.html#/myApp)
-2. 右上角用户名 → **用户与权限** → 左侧 **服务账号**
-3. 切到 **开发者** 标签页（**不要选项目级**，项目级访问发布 API 会被拒绝并返回 `403 project credential can not access the developer credentialType api`）
-4. **新建服务账号** → 勾选 **Connect API**，展开勾上 **应用发布 (App release)**
-5. 创建完成后下载 JSON 凭证文件（包含 `key_id` / `private_key` / `sub_account` 等字段，**只能下载一次**）
-6. 配置 `apkgo.yaml`，二选一：
+旧版 `client_id` + `client_secret` 仍兼容，但华为已不推荐。
 
-   ```yaml
-   stores:
-     huawei:
-       # 方式 A: 直接指向凭证文件
-       service_account_file: "/secure/path/huawei-sa.json"
-       # app_id: ""  # 可选，不填则按 APK 包名自动查
-   ```
+```bash
+apkgo doctor -s huawei -p com.example.app
+```
 
-   ```yaml
-   stores:
-     huawei:
-       # 方式 B: 内嵌 base64 (适合 CI/CD secrets)
-       service_account: "ewogICJrZXlfaWQiOiAi..."  # base64(JSON 凭证)
-   ```
-
-   生成 base64：`base64 -w0 huawei-sa.json`（macOS：`base64 -i huawei-sa.json`）
-
-7. 验证：
-
-   ```bash
-   # 只校验凭证 (最快)
-   apkgo doctor -s huawei
-
-   # 同时校验包名映射 + 应用发布权限 (推荐)
-   apkgo doctor -s huawei -p com.example.app
-   ```
-
-   `doctor` 不会上传文件，但会真实调用三个接口：token（凭证类型）、appid-list（包名 → appId）、upload-url（应用发布权限）。三项都 ✓ 才说明真实上传会跑通；任一 ✗ 都能在配置阶段就发现，不必等到上传到一半才报错。
-
-##### 旧版：API 密钥（不推荐，仅兼容旧配置）
-
-1. **用户与权限** → **API 密钥** → 切到 **团队** 标签页 → **新建**
-2. 勾选 **Connect API** → 展开勾上 **应用发布 (App release)**
-3. 复制 `Client ID` 和 `Key`（Key 只显示一次）
-4. 填入配置：
-
-   ```yaml
-   stores:
-     huawei:
-       client_id: "<Client ID>"
-       client_secret: "<Key>"
-   ```
+3 项探针：`token` / `appid-list`（包名 → appId）/ `release-permission`（应用发布权限）。
 
 #### 小米开放平台
 
-小米的发布 API 使用 RSA 签名鉴权：每次请求用**小米给你的公钥**对包含**接口密钥**和文件 MD5 的 JSON 加密生成 SIG。所以需要拿三样东西：开发者账号邮箱、接口密钥、公钥证书。
+📖 官方文档：[API 上传应用](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1134)
 
-> ⚠️ 旧版本 apkgo 内置了一个公钥证书，但那份证书 **2023-05-13 已过期**且来历不明，从这个版本开始必须由你提供自己账号的公钥证书。
+要在小米后台「接口密钥」页面拿两样东西：**接口密钥**（SDK 里叫 password）和**公钥证书**（`.cer` 文件）。两个都是开发者账号绑定的。
 
-1. 登录 [小米开放平台](https://dev.mi.com)
-2. 进入控制台 → 右上角账号 → **账号管理** → 左侧菜单 **接口密钥** （或「Pub-Key」/「公私钥管理」，HyperOS 后台改版后入口位置略有差异）
-3. 在该页面：
-   - **接口密钥（Private Key）**：点 *查看私钥* 复制一串字符（重置会失效，复制后立即保存）—— 对应配置里的 `private_key`
-   - **公钥证书**：点 *下载公钥* 拿到一个 `.cer` 文件 —— 对应配置里的 `cert_file`（或者用 `base64 -w0 xiaomi-pubkey.cer` 编码后填到 `cert`）
-4. 上传 API 不是默认开通，要先在同页面或「权限申请」里申请 **应用上传/发布接口** 权限，审核通过后接口密钥才会出现可用
-5. 填入 `apkgo.yaml`：
+```yaml
+stores:
+  xiaomi:
+    email: "<开发者账号邮箱>"
+    private_key: "<接口密钥>"
+    cert_file: "/secure/path/xiaomi-pubkey.cer"
+    # 也支持: cert: "-----BEGIN CERTIFICATE-----..." 或 base64(.cer)
+```
 
-   ```yaml
-   stores:
-     xiaomi:
-       email: "<开发者账号邮箱>"
-       private_key: "<接口密钥>"
-       cert_file: "/secure/path/xiaomi-pubkey.cer"
-       # 或 cert: "-----BEGIN CERTIFICATE-----..."
-       # 或 cert: "<base64(.cer 文件)>"
-   ```
+```bash
+apkgo doctor -s xiaomi -p com.example.app
+```
 
-6. 验证：
-
-   ```bash
-   apkgo doctor -s xiaomi -p com.example.app
-   ```
-
-   两项探针：`cert`（公钥可加载、RSA、未过期）、`query`（接口密钥/邮箱/公钥三者匹配，能调通 `/dev/query`）。两项都 ✓ 才说明真实上传会通过鉴权这一关。
+> ⚠️ apkgo v3.0 之前内置了一份公钥证书，但那份 **2023-05 已过期**（且来源不明），从 v3.0 起必须自己提供。
 
 #### OPPO 开放平台
 
-OPPO 用 OAuth2 拿 access_token + 每次请求 HMAC-SHA256 签名。需要 `client_id`（19 位数字）和 `client_secret`。
+📖 官方文档：[发布接口接入指引](https://open.oppomobile.com/new/developmentDoc/info?id=10998)
 
-1. 登录 [OPPO 开放平台](https://open.oppomobile.com)
-2. 进入控制台 → 右上角账号 → **管理中心** → 左侧 **API 密钥管理**（HeyTap 改版后入口可能叫「API 接入」/「开放接口」）
-3. 新建 / 查看 API 密钥：
-   - **Client ID**：19 位数字串
-   - **Client Secret**：长字符串（重置会让旧 secret 失效）
-4. 上传发布 API 不是默认开通，需要先在「权限申请」里申请相应权限并完成实名 / 主体认证
-5. 填入 `apkgo.yaml`：
+```yaml
+stores:
+  oppo:
+    client_id: "<19 位数字>"
+    client_secret: "<密钥>"
+```
 
-   ```yaml
-   stores:
-     oppo:
-       client_id: "<19 位数字>"
-       client_secret: "<密钥>"
-   ```
+```bash
+apkgo doctor -s oppo -p com.example.app
+```
 
-6. 验证：
-
-   ```bash
-   apkgo doctor -s oppo -p com.example.app
-   ```
-
-   两项探针：`token`（凭证能换到 access_token）、`app-info`（HMAC-SHA256 签名服务端能验过，且包名在你账号下存在）。
-
-   ⚠️ OPPO 的发布是**异步任务**：`publish` 接口返回成功只代表任务已创建，apkgo 会继续轮询 `task-state` 等到任务终态（最长 5 分钟）。如果撞到 `911216 任务处理中` 表示前一次发版还没完成，apkgo 会自动跳过 publish 直接等任务；撞 `911215 应用审核中` 表示已成功送进 OPPO 审核队列，apkgo 视为成功返回。
+OPPO 的发布是异步任务，apkgo 会自动处理两个非显然的状态：撞 `911216 任务处理中` 时跳过 publish 直接等任务结束；撞 `911215 应用审核中` 视为成功（已进入审核队列）。
 
 #### vivo 开放平台
 
-vivo 用 HMAC-SHA256 签名（无 OAuth2 token），需要 `access_key` 和 `access_secret`。
+📖 官方文档：[开放接口指引](https://dev.vivo.com.cn/documentCenter/doc/326)
 
-1. 登录 [vivo 开放平台](https://dev.vivo.com.cn)
-2. 进入控制台 → **账号管理** → **API 接入** / **接入信息**
-3. 申请 / 查看：
-   - **access_key**
-   - **access_secret**（重置会让旧 secret 失效）
-4. 上传发布 API 不是默认开通，需要先在「权限申请」里申请 **应用上传** 相关接口权限并完成主体认证
-5. 填入 `apkgo.yaml`：
+```yaml
+stores:
+  vivo:
+    access_key: "<...>"
+    access_secret: "<...>"
+```
 
-   ```yaml
-   stores:
-     vivo:
-       access_key: "<...>"
-       access_secret: "<...>"
-   ```
+```bash
+apkgo doctor -s vivo -p com.example.app
+```
 
-6. 验证：
+vivo 的错误码分两层：网关 `code` + 业务 `subCode`。apkgo 同时识别两层，错误信息直接打印中文消息（比如 `[15042] 请上传与历史签名一致的APK包...`）。
 
-   ```bash
-   apkgo doctor -s vivo -p com.example.app
-   ```
+#### 荣耀开发者平台
 
-   一项探针：`app-info`（调通 `app.query.details`，同时验证 HMAC 签名 + 包名在你账号下存在）。
+📖 官方文档：[发布接口指南](https://developer.honor.com/cn/doc/guides/101159)
 
-   ⚠️ vivo 的响应包了两层错误码：网关层 `code=0` 才到业务层，业务层用 `subCode` 编码具体错误（比如 `subCode=15042`）。apkgo 会把两层都识别出来，错误信息直接出业务层中文消息。
+```yaml
+stores:
+  honor:
+    client_id: "<...>"
+    client_secret: "<...>"
+    # app_id: ""  # 可选，不填则按 APK 包名自动查
+```
+
+```bash
+apkgo doctor -s honor -p com.example.app
+```
+
+doctor `app-detail` 探针会预检 *应用简介*（intro）—— 这个字段在荣耀后台必须填，否则 `update-language-info` 会以 `[20076] app introduction is empty` 拒绝。先在控制台填好再发版。
 
 #### 腾讯应用宝
 
-腾讯用开发者账号的 `user_id` + 接口密钥 `access_secret` 做 HMAC-SHA256 签名。文档：[API 接口传包-接入介绍](https://wikinew.open.qq.com/index.html#/iwiki/4015262492)。
+📖 官方文档：[API 接口传包-接入介绍](https://wikinew.open.qq.com/index.html#/iwiki/4015262492)
 
-1. 登录 [腾讯开放平台](https://app.open.qq.com)
-2. **选择应用** → 右上角 **账户管理** → **API 发布接口** → **申请开通**（仅主账号可用，子账号不行）
-3. 申请通过后页面会出现：
-   - **access_secret**（接口密钥）
-   - 你的 **user_id**（开发者用户 ID，账户管理页面也能看到）
-4. **app_id** 不能从 API 反查（腾讯 4 个 API 都把 app_id 标为必填，没有 list 或 pkg→id 反查接口）。在控制台「**安卓应用管理 → 应用首页**」能看到，复制下来。
-5. 填入 `apkgo.yaml`：
+腾讯没有 list 或 pkg→id 反查接口，所以 `app_id` 必须手填。一份 yaml 服务多个应用用 `app_id_map`：
 
-   单 app 配置：
-   ```yaml
-   stores:
-     tencent:
-       user_id: "<开发者 ID>"
-       access_secret: "<接口密钥>"
-       app_id: "<应用 ID>"
-   ```
+```yaml
+stores:
+  tencent:
+    user_id: "<开发者 ID>"
+    access_secret: "<接口密钥>"
+    # 单 app:
+    app_id: "<应用 ID>"
+    # 多 app: 按 APK 包名命中
+    # app_id_map: '{"com.example.foo":"111","com.example.bar":"222"}'
+```
 
-   **多 app 配置**（一份 yaml 服务多个应用）：
-   ```yaml
-   stores:
-     tencent:
-       user_id: "<...>"
-       access_secret: "<...>"
-       app_id_map: '{"com.example.foo":"111","com.example.bar":"222"}'
-       # app_id 仍可保留作单 app 兜底；map 命中则优先用 map
-   ```
+```bash
+apkgo doctor -s tencent -p com.example.app
+```
 
-   apkgo 在 upload 时按 APK 解析出的包名查 `app_id_map`，命中即用，没命中回退到 `app_id`，都没就报错。
-
-6. 验证：
-
-   ```bash
-   apkgo doctor -s tencent -p com.example.app
-   ```
-
-   两项探针：`app-detail`（HMAC 签名 + `app_id ↔ pkg_name` 绑定校验，输出 app_name / category）、`audit-status`（最近一次提交的审核状态：auditing / approved / rejected / withdrawn）。
-
-   ⚠️ 腾讯发布也是异步任务：`update_app` 接口返回成功只代表任务已创建，apkgo 会轮询 `query_app_update_status` 直到 `audit_status=3` (审核通过) 或 `audit_status=2` (审核驳回)；超过 5 分钟仍在审核中视为成功返回（任务已交给腾讯）。
+发布是异步任务，apkgo 会轮询 `query_app_update_status` 直到 `audit_status` 终态（最长 5 分钟）；超时视为成功（任务已交给腾讯）。
 
 #### 蒲公英 (Pgyer)
 
-蒲公英是内测 / 灰度分发服务，不是正式应用市场，凭证只需要一个 API key。文档：[app_upload](https://www.pgyer.com/doc/view/app_upload)。
+📖 官方文档：[API 上传应用](https://www.pgyer.com/doc/view/app_upload)
 
-1. 登录 [蒲公英](https://www.pgyer.com) → 右上角头像 → **账户设置** → **API**（或直接打开 [pgyer.com/account/api](https://www.pgyer.com/account/api)）
-2. 点 **生成新的 API Key**（已生成的可以直接复制）
-3. 填入 `apkgo.yaml`：
+```yaml
+stores:
+  pgyer:
+    api_key: "<...>"
+```
 
-   ```yaml
-   stores:
-     pgyer:
-       api_key: "<API Key>"
-   ```
-
-4. 验证：
-
-   ```bash
-   apkgo doctor -s pgyer -p com.example.app
-   ```
-
-   一项探针：`app-list`（调通 `/app/listMy`，验证 api_key + 列出账号下应用）。给 `--package` 时还会顺带告诉你这个包名是否已经在账号里、当前线上版本号是多少。
-
-   说明：蒲公英的发布是异步任务，apkgo 会轮询 `/app/buildInfo` 直到处理完成（最长 5 分钟）；首次上传新应用会自动创建条目。
+```bash
+apkgo doctor -s pgyer -p com.example.app
+```
 
 #### fir.im
 
-fir.im（现在主品牌叫 betaqr）也是分发服务，凭证只需要一个 API token。文档：[betaqr.com.cn/docs](https://www.betaqr.com.cn/docs)。
+📖 官方文档：[betaqr.com.cn/docs](https://www.betaqr.com.cn/docs)
 
-1. 登录 [fir.im](https://fir.im) → 控制台 → **账户** → **API Token**
-2. 复制 token
-3. 填入 `apkgo.yaml`：
+```yaml
+stores:
+  fir:
+    api_token: "<...>"
+```
 
-   ```yaml
-   stores:
-     fir:
-       api_token: "<API Token>"
-   ```
+```bash
+apkgo doctor -s fir
+```
 
-4. 验证：
-
-   ```bash
-   apkgo doctor -s fir
-   ```
-
-   一项探针：`user`（调通 `/user`，验证 api_token 并显示账户名/邮箱）。
-
-   ⚠️ **fir 上传需要账号完成实名认证**，否则 `/apps` 接口会以 `没有实名认证不能上传app` 拒绝。doctor 探针只验 token，所以会绿；上传时会撞这个。先去后台完成实名认证再用。
+> ⚠️ **fir 上传要求账号已完成实名认证**，否则 `/apps` 接口会以 `没有实名认证不能上传app` 拒绝。先去后台做实名再用。
 
 ## AI Agent 集成
 
