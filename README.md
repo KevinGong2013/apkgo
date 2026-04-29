@@ -487,11 +487,25 @@ apkgo 的输出格式专为 AI Agent 和自动化场景设计：
 {
   "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1},
   "results": [
-    {"store": "huawei", "success": true, "duration_ms": 12300},
-    {"store": "xiaomi", "success": false, "error": "invalid private key", "duration_ms": 400}
+    {"store": "huawei", "success": true, "category": "success", "duration_ms": 12300},
+    {"store": "oppo",   "success": true, "category": "already_done", "duration_ms": 3200},
+    {"store": "xiaomi", "success": false, "category": "policy_block", "error": "签名不一致...", "duration_ms": 400}
   ]
 }
 ```
+
+**Category（重试决策提示）**：每个 result 带一个 `category` 字段，把各家千奇百怪的错误码归成 cloud orchestrator 友好的几个桶，避免父进程解析中文错误。可能的值：
+
+| Category | 含义 | 建议处理 |
+|---|---|---|
+| `success` | 上传成功 | mark done |
+| `already_done` | 该版本已在商店侧（如 OPPO 911215 应用审核中） | mark done，不重试 |
+| `auth_failed` | 凭证错 | 让用户改 secret，不重试 |
+| `network_retry` | 网络超时 / 5xx | 退避后重试 |
+| `store_busy` | 商店限流 / 上次任务还没完 | 等几分钟再重试 |
+| `policy_block` | 签名不一致、审核驳回等业务规则拒绝 | 让用户处理，不重试 |
+| `config_invalid` | 后台元数据缺失（intro / 分类 / publisher entity） | 让用户去后台填，不重试 |
+| `unknown` | 还没分类到 | 默认按"不可重试"处理 |
 
 **语义化退出码**:
 | Code | 含义 |

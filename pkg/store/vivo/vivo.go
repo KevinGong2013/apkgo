@@ -178,14 +178,33 @@ func (s *Store) uploadAPK(method, packageName, filePath string, rep progress.Rep
 			httpResp.StatusCode, jerr, truncateBody(string(body)))
 	}
 	if resp.failed() {
-		return nil, fmt.Errorf("[%s] %s (HTTP %d)",
+		err := fmt.Errorf("[%s] %s (HTTP %d)",
 			resp.errorCode(), resp.text(), httpResp.StatusCode)
+		return nil, store.Categorize(classifyVivo(resp.SubCode), err)
 	}
 	if resp.Data == nil {
 		return nil, fmt.Errorf("empty response data (HTTP %d): %s",
 			httpResp.StatusCode, truncateBody(string(body)))
 	}
 	return resp.Data, nil
+}
+
+// classifyVivo maps known business-layer subCodes to apkgo's
+// orchestrator-friendly Category enum. Codes not yet mapped fall
+// through as CategoryUnknown — cloud should treat those as
+// not-auto-retryable.
+func classifyVivo(subCode string) store.Category {
+	switch subCode {
+	case "15042": // 请上传与历史签名一致的APK包
+		return store.CategoryPolicyBlock
+	case "11010": // 应用处理中，请勿重复提交
+		return store.CategoryStoreBusy
+	case "11011": // 开发者账号不存在该应用
+		return store.CategoryConfigInvalid
+	case "13002": // 包名属于其它开发者
+		return store.CategoryConfigInvalid
+	}
+	return store.CategoryUnknown
 }
 
 // truncateBody caps a response body at 500 chars so diagnostic errors stay
@@ -212,8 +231,9 @@ func (s *Store) updateApp(method string, bizParams map[string]string) error {
 			httpResp.StatusCode(), jerr, truncateBody(string(body)))
 	}
 	if resp.failed() {
-		return fmt.Errorf("[%s] %s (HTTP %d)",
+		err := fmt.Errorf("[%s] %s (HTTP %d)",
 			resp.errorCode(), resp.text(), httpResp.StatusCode())
+		return store.Categorize(classifyVivo(resp.SubCode), err)
 	}
 	return nil
 }

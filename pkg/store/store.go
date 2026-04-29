@@ -31,11 +31,16 @@ type UploadRequest struct {
 }
 
 // UploadResult is the machine-readable outcome of a single store upload.
+//
+// Category is intended for cloud orchestrators: a small enum bucketing
+// the outcome into "retryable network blip" vs "auth wrong, surface to
+// user" vs "already done, no-op", etc. See category.go for values.
 type UploadResult struct {
-	Store      string `json:"store"`
-	Success    bool   `json:"success"`
-	Error      string `json:"error,omitempty"`
-	DurationMs int64  `json:"duration_ms"`
+	Store      string   `json:"store"`
+	Success    bool     `json:"success"`
+	Error      string   `json:"error,omitempty"`
+	Category   Category `json:"category,omitempty"`
+	DurationMs int64    `json:"duration_ms"`
 }
 
 // NewResult creates a success result with timing.
@@ -43,16 +48,32 @@ func NewResult(storeName string, start time.Time) *UploadResult {
 	return &UploadResult{
 		Store:      storeName,
 		Success:    true,
+		Category:   CategorySuccess,
 		DurationMs: time.Since(start).Milliseconds(),
 	}
 }
 
-// ErrResult creates a failure result with timing.
+// NewResultC creates a success result with an explicit category.
+// Used for "already done" outcomes — the upload didn't actually run
+// because the version was already on the store side.
+func NewResultC(storeName string, start time.Time, cat Category) *UploadResult {
+	return &UploadResult{
+		Store:      storeName,
+		Success:    true,
+		Category:   cat,
+		DurationMs: time.Since(start).Milliseconds(),
+	}
+}
+
+// ErrResult creates a failure result with timing. Category is
+// extracted from the error chain via CategoryOf — stores producing
+// classified errors via Categorize() automatically populate it.
 func ErrResult(storeName string, start time.Time, err error) *UploadResult {
 	return &UploadResult{
 		Store:      storeName,
 		Success:    false,
 		Error:      err.Error(),
+		Category:   CategoryOf(err),
 		DurationMs: time.Since(start).Milliseconds(),
 	}
 }

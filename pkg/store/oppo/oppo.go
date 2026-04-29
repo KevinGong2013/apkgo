@@ -135,6 +135,9 @@ func (s *Store) Name() string { return "oppo" }
 func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.UploadResult {
 	start := time.Now()
 	if err := s.upload(ctx, req); err != nil {
+		if store.IsAlreadyDone(err) {
+			return store.NewResultC(s.Name(), start, store.CategoryAlreadyDone)
+		}
 		return store.ErrResult(s.Name(), start, err)
 	}
 	return store.NewResult(s.Name(), start)
@@ -189,7 +192,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	if err := s.publish(req, app, apkInfos); err != nil {
 		switch {
 		case isOppoUnderReview(err):
-			return nil
+			return &store.AlreadyDoneError{Reason: "version already in OPPO review queue"}
 		case isOppoTaskInFlight(err):
 			// fall through to polling
 		default:

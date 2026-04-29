@@ -376,7 +376,8 @@ func (s *Store) updateLanguageInfo(appID string, existing *languageInfo, release
 	// after the APK is already uploaded, which is confusing. Fail fast
 	// and tell the operator exactly which field to fill in.
 	if existing.Intro == "" {
-		return fmt.Errorf("honor app intro (应用简介) is empty on the console — fill it in before publishing: https://developer.honor.com/cn/console")
+		return store.Categorize(store.CategoryConfigInvalid,
+			fmt.Errorf("honor app intro (应用简介) is empty on the console — fill it in before publishing: https://developer.honor.com/cn/console"))
 	}
 
 	// Honor's update-language-info blanks out every field it receives as
@@ -403,7 +404,8 @@ func (s *Store) updateLanguageInfo(appID string, existing *languageInfo, release
 		return fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
 	}
 	if resp.Code != 0 {
-		return fmt.Errorf("[%d] %s", resp.Code, resp.text())
+		return store.Categorize(classifyHonor(resp.Code),
+			fmt.Errorf("[%d] %s", resp.Code, resp.text()))
 	}
 	return nil
 }
@@ -426,9 +428,23 @@ func (s *Store) submitAudit(appID string) error {
 		return fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
 	}
 	if resp.Code != 0 {
-		return fmt.Errorf("[%d] %s", resp.Code, resp.text())
+		return store.Categorize(classifyHonor(resp.Code),
+			fmt.Errorf("[%d] %s", resp.Code, resp.text()))
 	}
 	return nil
+}
+
+// classifyHonor maps known honor response codes to apkgo's
+// Category enum. Codes not yet mapped fall through as
+// CategoryUnknown — cloud should treat those as not-auto-retryable.
+func classifyHonor(code int) store.Category {
+	switch code {
+	case 20076: // app introduction is empty
+		return store.CategoryConfigInvalid
+	case 20032: // app classification is empty
+		return store.CategoryConfigInvalid
+	}
+	return store.CategoryUnknown
 }
 
 // ---- helpers ----

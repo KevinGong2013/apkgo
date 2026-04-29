@@ -352,9 +352,11 @@ func (s *Store) pollAuditStatus(ctx context.Context, pkg, appID string) error {
 		case 3: // approved
 			return nil
 		case 2: // rejected
-			return fmt.Errorf("audit rejected: %s", resp.AuditReason)
+			return store.Categorize(store.CategoryPolicyBlock,
+				fmt.Errorf("audit rejected: %s", resp.AuditReason))
 		case 8: // withdrawn
-			return fmt.Errorf("audit withdrawn")
+			return store.Categorize(store.CategoryPolicyBlock,
+				fmt.Errorf("audit withdrawn"))
 		}
 		// status 1 = auditing, continue polling
 	}

@@ -251,9 +251,23 @@ func (s *Store) push(synchroType int, req *store.UploadRequest, iconPath string,
 			pushResp.StatusCode, jerr, strings.TrimSpace(string(respBody)))
 	}
 	if resp.Result != 0 {
-		return fmt.Errorf("push failed: %s", resp.Message)
+		return store.Categorize(classifyXiaomi(resp.Result, resp.Message),
+			fmt.Errorf("push failed: %s", resp.Message))
 	}
 	return nil
+}
+
+// classifyXiaomi categorises known xiaomi result codes / message
+// patterns. Cloud orchestrators key off the Category to decide
+// whether to retry, surface to a human, etc.
+func classifyXiaomi(result int, msg string) store.Category {
+	switch {
+	case strings.Contains(msg, "签名不一致"):
+		return store.CategoryPolicyBlock
+	case result == -7: // 应用归属关系异常
+		return store.CategoryConfigInvalid
+	}
+	return store.CategoryUnknown
 }
 
 // encode builds form values with RSA-encrypted SIG.
