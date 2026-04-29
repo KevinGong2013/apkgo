@@ -266,6 +266,12 @@ export APKGO_XIAOMI_PRIVATE_KEY="your-接口密钥"
 export APKGO_XIAOMI_CERT="$(base64 -w0 xiaomi-pubkey.cer)"
 export APKGO_OPPO_CLIENT_ID="your-19-digit-id"
 export APKGO_OPPO_CLIENT_SECRET="your-secret"
+export APKGO_VIVO_ACCESS_KEY="your-key"
+export APKGO_VIVO_ACCESS_SECRET="your-secret"
+export APKGO_TENCENT_USER_ID="your-user-id"
+export APKGO_TENCENT_ACCESS_SECRET="your-secret"
+export APKGO_TENCENT_APP_ID="your-app-id"
+# 多 app: APKGO_TENCENT_APP_ID_MAP='{"com.foo":"111","com.bar":"222"}'
 
 # 环境变量会覆盖配置文件中的同名字段
 # 如果没有配置文件，完全通过环境变量配置也可以
@@ -279,9 +285,9 @@ apkgo upload -f app.apk --store huawei
 | 华为 | [AppGallery Connect](https://developer.huawei.com/consumer/cn/console) | 用户与权限 > 服务账号（[详细步骤](#华为-appgallery-connect)） |
 | 小米 | [小米开放平台](https://dev.mi.com) | 账号管理 > 接口密钥（[详细步骤](#小米开放平台)） |
 | OPPO | [OPPO 开放平台](https://open.oppomobile.com) | 管理中心 > API 密钥管理（[详细步骤](#oppo-开放平台)） |
-| vivo | [vivo 开放平台](https://dev.vivo.com.cn) | 账号管理 > API 管理 |
+| vivo | [vivo 开放平台](https://dev.vivo.com.cn) | 账号管理 > API 接入（[详细步骤](#vivo-开放平台)） |
 | 荣耀 | [荣耀开发者平台](https://developer.honor.com) | API 管理 |
-| 腾讯 | [腾讯开放平台](https://app.open.qq.com) | 账户管理 > API 发布接口 > 申请开通 |
+| 腾讯 | [腾讯开放平台](https://app.open.qq.com) | 应用 > 账户管理 > API 发布接口 > 申请开通（[详细步骤](#腾讯应用宝)） |
 
 #### 华为 AppGallery Connect
 
@@ -373,8 +379,6 @@ apkgo upload -f app.apk --store huawei
 
    两项探针：`cert`（公钥可加载、RSA、未过期）、`query`（接口密钥/邮箱/公钥三者匹配，能调通 `/dev/query`）。两项都 ✓ 才说明真实上传会通过鉴权这一关。
 
-   ⚠️ 上传时小米后台还会做**签名一致性检查**：你要发的 APK 必须用跟线上版本相同的 keystore 签名，否则会以 `签名不一致,不满足应用更新条件` 拒绝。这是后台层的反劫持机制，apkgo 无法绕过。
-
 #### OPPO 开放平台
 
 OPPO 用 OAuth2 拿 access_token + 每次请求 HMAC-SHA256 签名。需要 `client_id`（19 位数字）和 `client_secret`。
@@ -403,6 +407,78 @@ OPPO 用 OAuth2 拿 access_token + 每次请求 HMAC-SHA256 签名。需要 `cli
    两项探针：`token`（凭证能换到 access_token）、`app-info`（HMAC-SHA256 签名服务端能验过，且包名在你账号下存在）。
 
    ⚠️ OPPO 的发布是**异步任务**：`publish` 接口返回成功只代表任务已创建，apkgo 会继续轮询 `task-state` 等到任务终态（最长 5 分钟）。如果撞到 `911216 任务处理中` 表示前一次发版还没完成，apkgo 会自动跳过 publish 直接等任务；撞 `911215 应用审核中` 表示已成功送进 OPPO 审核队列，apkgo 视为成功返回。
+
+#### vivo 开放平台
+
+vivo 用 HMAC-SHA256 签名（无 OAuth2 token），需要 `access_key` 和 `access_secret`。
+
+1. 登录 [vivo 开放平台](https://dev.vivo.com.cn)
+2. 进入控制台 → **账号管理** → **API 接入** / **接入信息**
+3. 申请 / 查看：
+   - **access_key**
+   - **access_secret**（重置会让旧 secret 失效）
+4. 上传发布 API 不是默认开通，需要先在「权限申请」里申请 **应用上传** 相关接口权限并完成主体认证
+5. 填入 `apkgo.yaml`：
+
+   ```yaml
+   stores:
+     vivo:
+       access_key: "<...>"
+       access_secret: "<...>"
+   ```
+
+6. 验证：
+
+   ```bash
+   apkgo doctor -s vivo -p com.example.app
+   ```
+
+   一项探针：`app-info`（调通 `app.query.details`，同时验证 HMAC 签名 + 包名在你账号下存在）。
+
+   ⚠️ vivo 的响应包了两层错误码：网关层 `code=0` 才到业务层，业务层用 `subCode` 编码具体错误（比如 `subCode=15042`）。apkgo 会把两层都识别出来，错误信息直接出业务层中文消息。
+
+#### 腾讯应用宝
+
+腾讯用开发者账号的 `user_id` + 接口密钥 `access_secret` 做 HMAC-SHA256 签名。文档：[API 接口传包-接入介绍](https://wikinew.open.qq.com/index.html#/iwiki/4015262492)。
+
+1. 登录 [腾讯开放平台](https://app.open.qq.com)
+2. **选择应用** → 右上角 **账户管理** → **API 发布接口** → **申请开通**（仅主账号可用，子账号不行）
+3. 申请通过后页面会出现：
+   - **access_secret**（接口密钥）
+   - 你的 **user_id**（开发者用户 ID，账户管理页面也能看到）
+4. **app_id** 不能从 API 反查（腾讯 4 个 API 都把 app_id 标为必填，没有 list 或 pkg→id 反查接口）。在控制台「**安卓应用管理 → 应用首页**」能看到，复制下来。
+5. 填入 `apkgo.yaml`：
+
+   单 app 配置：
+   ```yaml
+   stores:
+     tencent:
+       user_id: "<开发者 ID>"
+       access_secret: "<接口密钥>"
+       app_id: "<应用 ID>"
+   ```
+
+   **多 app 配置**（一份 yaml 服务多个应用）：
+   ```yaml
+   stores:
+     tencent:
+       user_id: "<...>"
+       access_secret: "<...>"
+       app_id_map: '{"com.example.foo":"111","com.example.bar":"222"}'
+       # app_id 仍可保留作单 app 兜底；map 命中则优先用 map
+   ```
+
+   apkgo 在 upload 时按 APK 解析出的包名查 `app_id_map`，命中即用，没命中回退到 `app_id`，都没就报错。
+
+6. 验证：
+
+   ```bash
+   apkgo doctor -s tencent -p com.example.app
+   ```
+
+   两项探针：`app-detail`（HMAC 签名 + `app_id ↔ pkg_name` 绑定校验，输出 app_name / category）、`audit-status`（最近一次提交的审核状态：auditing / approved / rejected / withdrawn）。
+
+   ⚠️ 腾讯发布也是异步任务：`update_app` 接口返回成功只代表任务已创建，apkgo 会轮询 `query_app_update_status` 直到 `audit_status=3` (审核通过) 或 `audit_status=2` (审核驳回)；超过 5 分钟仍在审核中视为成功返回（任务已交给腾讯）。
 
 ## AI Agent 集成
 
@@ -447,11 +523,16 @@ apkgo stores  # 返回每个商店需要的配置字段
     APKGO_XIAOMI_CERT: ${{ secrets.XIAOMI_CERT }}             # base64(.cer 文件)
     APKGO_OPPO_CLIENT_ID: ${{ secrets.OPPO_CLIENT_ID }}
     APKGO_OPPO_CLIENT_SECRET: ${{ secrets.OPPO_CLIENT_SECRET }}
+    APKGO_VIVO_ACCESS_KEY: ${{ secrets.VIVO_ACCESS_KEY }}
+    APKGO_VIVO_ACCESS_SECRET: ${{ secrets.VIVO_ACCESS_SECRET }}
+    APKGO_TENCENT_USER_ID: ${{ secrets.TENCENT_USER_ID }}
+    APKGO_TENCENT_ACCESS_SECRET: ${{ secrets.TENCENT_ACCESS_SECRET }}
+    APKGO_TENCENT_APP_ID_MAP: ${{ secrets.TENCENT_APP_ID_MAP }}     # 多 app: '{"com.foo":"111",...}'
   run: |
     apkgo upload \
       -f app/build/outputs/apk/release/app-release.apk \
       --notes-file CHANGELOG.md \
-      --store huawei,xiaomi \
+      --store huawei,xiaomi,oppo,vivo,tencent \
       --timeout 15m
 ```
 
