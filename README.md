@@ -598,8 +598,37 @@ result, err := apkgo.Run(ctx, apkgo.Job{
 
 - **零全局状态**：`apkgo.Run` 不动 `slog.Default`、不设 exit code，安全地在长生命周期进程中调用
 - **支持 URL 输入**：`APKFile` / `APKFile64` 接受本地路径或 http(s) URL（自动 fetch + 临时文件 + 退出清理）
-- **可插拔进度报告**：`uploader.ProgressManager` 接口可以接 mpb / NDJSON / 自定义实现（push 到 Prometheus、emit 到 Kafka 等）
-- **Pre-upload 错误才 return error**：`Run` 返回的 `error` 只覆盖 fetch / 解析 / config 阶段；进入上传后每家的失败都在 `Result.Results[i].Error` 里。Cloud orchestrator 可以基于此分类重试
+- **可插拔进度报告**：`uploader.ProgressManager` 接口可以接 mpb / NDJSON / 自定义实现
+- **Pre-upload 错误才 return error**：`Run` 返回的 `error` 只覆盖 fetch / 解析 / config 阶段；进入上传后每家的失败都在 `Result.Results[i].Error` 里
+- **Cloud worker 友好的几个字段**：
+
+  ```go
+  apkgo.Run(ctx, apkgo.Job{
+      // ... config / file / stores / etc
+
+      // 1. Per-job logger（cloud 注入 job_id / tenant_id / trace_id）
+      Logger: slog.New(handler).With("job_id", id, "tenant", tid),
+
+      // 2. 指标 emit hook（store.start / store.end / hook.run）
+      Events: func(ev uploader.Event) {
+          if ev.Type == uploader.EventStoreEnd {
+              prom.UploadCounter.WithLabelValues(ev.Store, string(ev.Result.Category)).Inc()
+              prom.UploadDuration.WithLabelValues(ev.Store).Observe(ev.Duration.Seconds())
+          }
+      },
+  })
+  ```
+
+  每家商店还可以在 yaml 里加独立 timeout（覆盖全局 `--timeout`）：
+  ```yaml
+  stores:
+    huawei:
+      service_account_file: "..."
+      timeout: 8m              # 等 submit polling，给宽点
+    pgyer:
+      api_key: "..."
+      timeout: 30s             # 简单上传，超时收紧
+  ```
 
 完整 API 见 [`pkg/apkgo`](pkg/apkgo) 的 godoc。
 

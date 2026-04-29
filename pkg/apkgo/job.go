@@ -19,12 +19,14 @@ package apkgo
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/KevinGong2013/apkgo/pkg/apk"
 	"github.com/KevinGong2013/apkgo/pkg/config"
+	"github.com/KevinGong2013/apkgo/pkg/ctxlog"
 	"github.com/KevinGong2013/apkgo/pkg/hooks"
 	"github.com/KevinGong2013/apkgo/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/pkg/store"
@@ -81,6 +83,21 @@ type Job struct {
 	// instantiation) without making any upload calls. Returns a
 	// Result whose per-store entries are all Success: true.
 	DryRun bool
+
+	// Logger receives per-store lifecycle log lines (uploading,
+	// upload succeeded, hook ran, etc.) tagged with `store=<name>`.
+	// When nil, slog.Default() is used. Cloud workers typically pass
+	// a logger pre-tagged with job_id / tenant_id / trace_id so log
+	// lines from many concurrent jobs can be correlated.
+	Logger *slog.Logger
+
+	// Events, when non-nil, is invoked synchronously on lifecycle
+	// moments (store start / store end / hook run). Cloud workers
+	// wire it to a metrics backend (Prometheus counters, OTel spans,
+	// etc.). Implementations must be non-blocking — fire-and-forget
+	// into a channel or atomic counter — because the recorder runs
+	// inline on the uploader's goroutines.
+	Events uploader.EventRecorder
 }
 
 // Result is the outcome of a single Run.
@@ -107,6 +124,13 @@ type Result struct {
 func Run(ctx context.Context, job Job) (*Result, error) {
 	if job.Config == nil {
 		return nil, fmt.Errorf("apkgo.Job.Config is required")
+	}
+
+	// Attach the per-job logger to ctx so the uploader and store code
+	// can pull it via ctxlog.FromContext without needing it threaded
+	// through every signature.
+	if job.Logger != nil {
+		ctx = ctxlog.With(ctx, job.Logger)
 	}
 
 	// Resolve URL inputs to local paths.
@@ -150,7 +174,12 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 	entries := make([]uploader.StoreEntry, len(storesWithHooks))
 	for i, swh := range storesWithHooks {
 		storeNames[i] = swh.Store.Name()
-		entries[i] = uploader.StoreEntry{Store: swh.Store, Before: swh.Before, After: swh.After}
+		entries[i] = uploader.StoreEntry{
+			Store:   swh.Store,
+			Before:  swh.Before,
+			After:   swh.After,
+			Timeout: swh.Timeout,
+		}
 	}
 
 	if job.DryRun {
@@ -196,7 +225,7 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		}
 	}
 
-	u := &uploader.Uploader{Stores: entries, Progress: pm}
+	u := &uploader.Uploader{Stores: entries, Progress: pm, Events: job.Events}
 	results := u.Run(runCtx, req, info)
 	pm.Wait()
 

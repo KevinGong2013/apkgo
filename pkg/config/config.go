@@ -27,11 +27,14 @@ type Config struct {
 	UpdateCheck string                       `yaml:"update_check,omitempty" json:"update_check,omitempty"` // e.g. "30d", "7d", "0" to disable
 }
 
-// StoreWithHooks pairs a store instance with its per-store hook commands.
+// StoreWithHooks pairs a store instance with its per-store hook
+// commands and an optional per-store timeout. Timeout zero inherits
+// the parent context.
 type StoreWithHooks struct {
-	Store  store.Store
-	Before string
-	After  string
+	Store   store.Store
+	Before  string
+	After   string
+	Timeout time.Duration
 }
 
 // Load reads a YAML config file and merges environment variable overrides.
@@ -203,17 +206,28 @@ func (c *Config) CreateStores(filter []string) ([]StoreWithHooks, error) {
 			continue
 		}
 
-		// Extract and strip hook keys
+		// Extract and strip hook keys + the optional per-store timeout
+		// before handing the rest of the config to the store factory.
+		// timeout accepts any time.ParseDuration form ("90s", "5m", etc).
 		before := cfg["before"]
 		after := cfg["after"]
+		var timeout time.Duration
+		if raw, ok := cfg["timeout"]; ok && raw != "" {
+			d, err := time.ParseDuration(raw)
+			if err != nil {
+				return nil, fmt.Errorf("store %q: bad timeout %q: %w", name, raw, err)
+			}
+			timeout = d
+		}
 		delete(cfg, "before")
 		delete(cfg, "after")
+		delete(cfg, "timeout")
 
 		s, err := store.Create(name, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("store %q: %w", name, err)
 		}
-		stores = append(stores, StoreWithHooks{Store: s, Before: before, After: after})
+		stores = append(stores, StoreWithHooks{Store: s, Before: before, After: after, Timeout: timeout})
 	}
 
 	if len(stores) == 0 {

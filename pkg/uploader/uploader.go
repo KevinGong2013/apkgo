@@ -3,26 +3,34 @@ package uploader
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/KevinGong2013/apkgo/pkg/apk"
+	"github.com/KevinGong2013/apkgo/pkg/ctxlog"
 	"github.com/KevinGong2013/apkgo/pkg/hooks"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
-// StoreEntry pairs a store with its per-store hook commands.
+// StoreEntry pairs a store with its per-store hook commands and an
+// optional per-store timeout that overrides the parent ctx deadline.
+// This matters because some stores (huawei AGC submit polling, oppo
+// task-state polling, tencent audit polling) routinely take 5+
+// minutes while others are sub-second; one global timeout has to be
+// pessimistic enough for the slowest store, which wastes time when
+// the fast stores hang for unrelated reasons.
 type StoreEntry struct {
-	Store  store.Store
-	Before string
-	After  string
+	Store   store.Store
+	Before  string
+	After   string
+	Timeout time.Duration // zero means inherit parent ctx
 }
 
 // Uploader orchestrates concurrent uploads to multiple stores.
 type Uploader struct {
 	Stores   []StoreEntry
 	Progress ProgressManager // never nil; use NopManager when no output is desired
+	Events   EventRecorder   // optional; called on lifecycle events for metrics
 }
 
 // Run uploads to all stores concurrently and returns all results.
@@ -54,6 +62,8 @@ func (u *Uploader) Run(ctx context.Context, req *store.UploadRequest, info *apk.
 			defer wg.Done()
 
 			name := e.Store.Name()
+			log := ctxlog.FromContext(ctx).With("store", name)
+
 			storeEnv := make(map[string]string, len(envVars)+1)
 			for k, v := range envVars {
 				storeEnv[k] = v
@@ -66,19 +76,31 @@ func (u *Uploader) Run(ctx context.Context, req *store.UploadRequest, info *apk.
 			storeReq := *req
 			storeReq.Progress = u.Progress.ReporterFor(name)
 
+			storeStart := time.Now()
+			u.Events.emit(Event{Type: EventStoreStart, Store: name})
+
 			// Per-store before hook
 			if e.Before != "" {
-				slog.Info("running before hook", "store", name)
+				log.Info("running before hook")
+				hookStart := time.Now()
 				payload := hooks.BeforeStorePayload{
 					FilePath: req.FilePath,
 					APK:      info,
 					Store:    name,
 				}
-				if err := hooks.RunHook(ctx, e.Before, payload, storeEnv); err != nil {
-					slog.Error("before hook failed, skipping store", "store", name, "error", err)
-					start := time.Now()
-					res := store.ErrResult(name, start, fmt.Errorf("before hook: %w", err))
+				hookErr := hooks.RunHook(ctx, e.Before, payload, storeEnv)
+				u.Events.emit(Event{
+					Type:     EventHookRun,
+					Store:    name,
+					Hook:     "before",
+					Duration: time.Since(hookStart),
+					Err:      hookErr,
+				})
+				if hookErr != nil {
+					log.Error("before hook failed, skipping store", "error", hookErr)
+					res := store.ErrResult(name, hookStart, fmt.Errorf("before hook: %w", hookErr))
 					u.Progress.MarkDone(name, false, res.Error, time.Duration(res.DurationMs)*time.Millisecond)
+					u.Events.emit(Event{Type: EventStoreEnd, Store: name, Duration: time.Since(storeStart), Result: res, Err: hookErr})
 					mu.Lock()
 					results = append(results, res)
 					mu.Unlock()
@@ -86,28 +108,45 @@ func (u *Uploader) Run(ctx context.Context, req *store.UploadRequest, info *apk.
 				}
 			}
 
-			slog.Info("uploading", "store", name)
-			result := e.Store.Upload(ctx, &storeReq)
+			log.Info("uploading")
+			storeCtx := ctx
+			if e.Timeout > 0 {
+				var cancel context.CancelFunc
+				storeCtx, cancel = context.WithTimeout(ctx, e.Timeout)
+				defer cancel()
+			}
+			result := e.Store.Upload(storeCtx, &storeReq)
 			if result.Success {
-				slog.Info("upload succeeded", "store", name, "duration_ms", result.DurationMs)
+				log.Info("upload succeeded", "duration_ms", result.DurationMs, "category", result.Category)
 			} else {
-				slog.Error("upload failed", "store", name, "error", result.Error, "duration_ms", result.DurationMs)
+				log.Error("upload failed", "error", result.Error, "duration_ms", result.DurationMs, "category", result.Category)
 			}
 			u.Progress.MarkDone(name, result.Success, result.Error, time.Duration(result.DurationMs)*time.Millisecond)
 
 			// Per-store after hook
 			if e.After != "" {
-				slog.Info("running after hook", "store", name)
+				log.Info("running after hook")
+				hookStart := time.Now()
 				payload := hooks.AfterStorePayload{
 					FilePath: req.FilePath,
 					APK:      info,
 					Store:    name,
 					Result:   result,
 				}
-				if err := hooks.RunHook(ctx, e.After, payload, storeEnv); err != nil {
-					slog.Warn("after hook failed", "store", name, "error", err)
+				hookErr := hooks.RunHook(ctx, e.After, payload, storeEnv)
+				u.Events.emit(Event{
+					Type:     EventHookRun,
+					Store:    name,
+					Hook:     "after",
+					Duration: time.Since(hookStart),
+					Err:      hookErr,
+				})
+				if hookErr != nil {
+					log.Warn("after hook failed", "error", hookErr)
 				}
 			}
+
+			u.Events.emit(Event{Type: EventStoreEnd, Store: name, Duration: time.Since(storeStart), Result: result})
 
 			mu.Lock()
 			results = append(results, result)
