@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/KevinGong2013/apkgo/pkg/apk"
-	"github.com/KevinGong2013/apkgo/pkg/progress"
-	"github.com/KevinGong2013/apkgo/pkg/store"
+	"github.com/KevinGong2013/apkgo/v3/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v3/pkg/progress"
+	"github.com/KevinGong2013/apkgo/v3/pkg/store"
 )
 
 // fakeStore is a zero-I/O store used to verify the uploader pipeline.

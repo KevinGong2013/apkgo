@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KevinGong2013/apkgo/pkg/config"
+	"github.com/KevinGong2013/apkgo/v3/pkg/config"
 )
 
 func TestParseCredsSource(t *testing.T) {

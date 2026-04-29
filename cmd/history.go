@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/KevinGong2013/apkgo/pkg/history"
+	"github.com/KevinGong2013/apkgo/v3/pkg/history"
 )
 
 var flagHistoryLimit int

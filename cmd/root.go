@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/KevinGong2013/apkgo/pkg/config"
-	"github.com/KevinGong2013/apkgo/pkg/telemetry"
-	"github.com/KevinGong2013/apkgo/pkg/update"
+	"github.com/KevinGong2013/apkgo/v3/pkg/config"
+	"github.com/KevinGong2013/apkgo/v3/pkg/telemetry"
+	"github.com/KevinGong2013/apkgo/v3/pkg/update"
 )
 
 var (

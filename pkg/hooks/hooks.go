@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/KevinGong2013/apkgo/pkg/apk"
-	"github.com/KevinGong2013/apkgo/pkg/store"
+	"github.com/KevinGong2013/apkgo/v3/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v3/pkg/store"
 )
 
 // Payload types for hook stdin JSON.

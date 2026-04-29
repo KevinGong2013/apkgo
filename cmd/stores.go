@@ -5,20 +5,20 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/KevinGong2013/apkgo/pkg/store"
+	"github.com/KevinGong2013/apkgo/v3/pkg/store"
 
 	// Import all store packages to trigger init() registration.
-	_ "github.com/KevinGong2013/apkgo/pkg/store/script"
-	_ "github.com/KevinGong2013/apkgo/pkg/store/fir"
-	_ "github.com/KevinGong2013/apkgo/pkg/store/googleplay"
-	_ "github.com/KevinGong2013/apkgo/pkg/store/honor"
-	_ "github.com/KevinGong2013/apkgo/pkg/store/huawei"
-	_ "github.com/KevinGong2013/apkgo/pkg/store/oppo"
-	_ "github.com/KevinGong2013/apkgo/pkg/store/pgyer"
-	_ "github.com/KevinGong2013/apkgo/pkg/store/samsung"
-	_ "github.com/KevinGong2013/apkgo/pkg/store/tencent"
-	_ "github.com/KevinGong2013/apkgo/pkg/store/vivo"
-	_ "github.com/KevinGong2013/apkgo/pkg/store/xiaomi"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/script"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/fir"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/googleplay"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/honor"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/huawei"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/oppo"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/pgyer"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/samsung"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/tencent"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/vivo"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/xiaomi"
 )
 
 func init() {

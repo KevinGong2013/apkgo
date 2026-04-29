@@ -9,8 +9,8 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/KevinGong2013/apkgo/pkg/progress"
-	"github.com/KevinGong2013/apkgo/pkg/store"
+	"github.com/KevinGong2013/apkgo/v3/pkg/progress"
+	"github.com/KevinGong2013/apkgo/v3/pkg/store"
 )
 
 func init() {

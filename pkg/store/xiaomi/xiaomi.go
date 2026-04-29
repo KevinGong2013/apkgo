@@ -29,9 +29,9 @@ import (
 	// with "image: unknown format" when extracting the launcher icon.
 	_ "golang.org/x/image/webp"
 
-	"github.com/KevinGong2013/apkgo/pkg/httpx"
-	"github.com/KevinGong2013/apkgo/pkg/progress"
-	"github.com/KevinGong2013/apkgo/pkg/store"
+	"github.com/KevinGong2013/apkgo/v3/pkg/httpx"
+	"github.com/KevinGong2013/apkgo/v3/pkg/progress"
+	"github.com/KevinGong2013/apkgo/v3/pkg/store"
 )
 
 const xiaomiBaseURL = "https://api.developer.xiaomi.com/devupload"

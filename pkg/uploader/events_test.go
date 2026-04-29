@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KevinGong2013/apkgo/pkg/apk"
-	"github.com/KevinGong2013/apkgo/pkg/store"
-	"github.com/KevinGong2013/apkgo/pkg/uploader"
+	"github.com/KevinGong2013/apkgo/v3/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v3/pkg/store"
+	"github.com/KevinGong2013/apkgo/v3/pkg/uploader"
 )
 
 // fakeStore is a minimal Store implementation that returns a

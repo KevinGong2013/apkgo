@@ -1,4 +1,4 @@
-module github.com/KevinGong2013/apkgo
+module github.com/KevinGong2013/apkgo/v3
 
 go 1.25.0
 

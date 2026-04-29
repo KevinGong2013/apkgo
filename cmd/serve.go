@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/KevinGong2013/apkgo/pkg/config"
-	"github.com/KevinGong2013/apkgo/pkg/server"
+	"github.com/KevinGong2013/apkgo/v3/pkg/config"
+	"github.com/KevinGong2013/apkgo/v3/pkg/server"
 )
 
 var flagPort int

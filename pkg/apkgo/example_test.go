@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/KevinGong2013/apkgo/pkg/apkgo"
-	"github.com/KevinGong2013/apkgo/pkg/config"
+	"github.com/KevinGong2013/apkgo/v3/pkg/apkgo"
+	"github.com/KevinGong2013/apkgo/v3/pkg/config"
 )
 
 // ExampleRun shows the minimal embedding of apkgo into another Go

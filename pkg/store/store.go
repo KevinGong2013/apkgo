@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/KevinGong2013/apkgo/pkg/progress"
+	"github.com/KevinGong2013/apkgo/v3/pkg/progress"
 )
 
 // Store is the interface every app store must implement.

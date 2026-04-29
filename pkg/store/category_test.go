@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/KevinGong2013/apkgo/pkg/store"
+	"github.com/KevinGong2013/apkgo/v3/pkg/store"
 )
 
 func TestCategorize(t *testing.T) {

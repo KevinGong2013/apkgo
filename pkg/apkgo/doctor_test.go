@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/KevinGong2013/apkgo/pkg/apkgo"
-	"github.com/KevinGong2013/apkgo/pkg/config"
+	"github.com/KevinGong2013/apkgo/v3/pkg/apkgo"
+	"github.com/KevinGong2013/apkgo/v3/pkg/config"
 )
 
 // TestDiagnose_NoStores verifies Diagnose surfaces a clear error

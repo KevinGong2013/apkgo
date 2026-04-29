@@ -24,13 +24,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KevinGong2013/apkgo/pkg/apk"
-	"github.com/KevinGong2013/apkgo/pkg/config"
-	"github.com/KevinGong2013/apkgo/pkg/ctxlog"
-	"github.com/KevinGong2013/apkgo/pkg/hooks"
-	"github.com/KevinGong2013/apkgo/pkg/httpx"
-	"github.com/KevinGong2013/apkgo/pkg/store"
-	"github.com/KevinGong2013/apkgo/pkg/uploader"
+	"github.com/KevinGong2013/apkgo/v3/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v3/pkg/config"
+	"github.com/KevinGong2013/apkgo/v3/pkg/ctxlog"
+	"github.com/KevinGong2013/apkgo/v3/pkg/hooks"
+	"github.com/KevinGong2013/apkgo/v3/pkg/httpx"
+	"github.com/KevinGong2013/apkgo/v3/pkg/store"
+	"github.com/KevinGong2013/apkgo/v3/pkg/uploader"
 )
 
 // DefaultTimeout is applied to a Job whose Timeout field is zero. The
