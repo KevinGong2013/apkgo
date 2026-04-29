@@ -14,6 +14,7 @@ go install github.com/KevinGong2013/apkgo@latest
 ```bash
 apkgo init [-s store1,store2] [-c config.yaml]   # Generate config file
 apkgo upload -f <apk> [flags]                     # Upload APK to stores
+apkgo doctor [-s stores] [-f apk | -p package]    # Diagnose store credentials/permissions
 apkgo serve [-p port]                             # Start web GUI for uploading
 apkgo stores                                      # List stores and config schema (JSON)
 apkgo version                                     # Version info (JSON)
@@ -44,9 +45,11 @@ YAML file (`apkgo.yaml`) or environment variables (`APKGO_<STORE>_<KEY>`):
 ```yaml
 stores:
   huawei:
-    client_id: ""      # required
-    client_secret: ""  # required
-    app_id: ""         # optional, auto-detected from package name
+    service_account: ""        # recommended; raw JSON or base64
+    service_account_file: ""   # alternative; path to JSON credential file
+    client_id: ""              # legacy API key (deprecated by Huawei)
+    client_secret: ""          # legacy API key
+    app_id: ""                 # optional, auto-detected from package name
   xiaomi:
     email: ""          # required
     private_key: ""    # required
@@ -75,7 +78,7 @@ stores:
     command: "./notify-dingtalk.sh"
 ```
 
-Env var example: `APKGO_HUAWEI_CLIENT_ID=xxx APKGO_HUAWEI_CLIENT_SECRET=yyy apkgo upload -f app.apk --store huawei`
+Env var example: `APKGO_HUAWEI_SERVICE_ACCOUNT=$(base64 -w0 huawei-sa.json) apkgo upload -f app.apk --store huawei`
 
 ## Hooks
 

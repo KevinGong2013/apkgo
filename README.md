@@ -103,6 +103,24 @@ apkgo init -c production.yaml
 apkgo stores
 ```
 
+### 体检（验证商店配置）
+
+`doctor` 在不上传文件的前提下，校验已配置商店的凭证和权限是否到位，避免真实上传到一半才发现问题：
+
+```bash
+# 校验所有已配置商店的凭证
+apkgo doctor
+
+# 只校验指定商店
+apkgo doctor -s huawei
+
+# 提供包名后会跑更深入的检查（包名映射、发布权限等）
+apkgo doctor -s huawei -p com.example.app
+apkgo doctor -s huawei -f app.apk         # 从 APK 自动取包名
+```
+
+任一探针失败时，退出码为 1。目前 Huawei 已支持，其他商店标记为 `doctor not implemented`。
+
 ## 配置文件
 
 `apkgo.yaml`:
@@ -115,8 +133,9 @@ hooks:
 
 stores:
   huawei:
-    client_id: "your-client-id"
-    client_secret: "your-client-secret"
+    # 推荐：服务账号（PS256 JWT）
+    service_account_file: "/secure/path/huawei-sa.json"
+    # 或者: service_account: "<base64(JSON)>"
     # app_id: ""  # 可选，不填则自动通过包名查询
     before: "./scripts/before-huawei.sh"   # 可选，该商店上传前执行
     after: "./scripts/after-huawei.sh"     # 可选，该商店上传后执行
@@ -225,8 +244,7 @@ CI/CD 环境中可通过环境变量配置凭证，无需配置文件：
 
 ```bash
 # 格式: APKGO_<商店名>_<字段名>=值
-export APKGO_HUAWEI_CLIENT_ID="your-client-id"
-export APKGO_HUAWEI_CLIENT_SECRET="your-client-secret"
+export APKGO_HUAWEI_SERVICE_ACCOUNT="$(base64 -w0 huawei-sa.json)"  # 推荐
 export APKGO_XIAOMI_EMAIL="your@email.com"
 export APKGO_XIAOMI_PRIVATE_KEY="your-key"
 
@@ -239,12 +257,70 @@ apkgo upload -f app.apk --store huawei
 
 | 商店 | 控制台地址 | 说明 |
 |------|-----------|------|
-| 华为 | [AppGallery Connect](https://developer.huawei.com/consumer/cn/console) | 用户与权限 > API 密钥 > Connect API |
+| 华为 | [AppGallery Connect](https://developer.huawei.com/consumer/cn/console) | 用户与权限 > 服务账号（[详细步骤](#华为-appgallery-connect)） |
 | 小米 | [小米开放平台](https://dev.mi.com) | 管理中心 > API 管理 |
 | OPPO | [OPPO 开放平台](https://open.oppomobile.com) | 管理中心 > API 密钥管理 |
 | vivo | [vivo 开放平台](https://dev.vivo.com.cn) | 账号管理 > API 管理 |
 | 荣耀 | [荣耀开发者平台](https://developer.honor.com) | API 管理 |
 | 腾讯 | [腾讯开放平台](https://app.open.qq.com) | 账户管理 > API 发布接口 > 申请开通 |
+
+#### 华为 AppGallery Connect
+
+华为推荐使用 **服务账号 (Service Account)** 鉴权。旧的 API 密钥 (Client ID + Key) 也可继续使用，但华为已不再推荐，且发布接口对密钥类型要求很严（团队级而非项目级，且必须勾上 *应用发布* 权限），调错就会撞上 `203886599`/`203890688` 等不友好的错误码。
+
+##### 推荐：服务账号 (Service Account)
+
+服务账号采用 PS256 JWT 鉴权，签名后的 JWT 直接作为 Bearer token 使用，无需 OAuth 交换步骤。
+
+1. 进入 [AGC 控制台](https://developer.huawei.com/consumer/cn/service/josp/agc/index.html#/myApp)
+2. 右上角用户名 → **用户与权限** → 左侧 **服务账号**
+3. 切到 **开发者** 标签页（**不要选项目级**，项目级访问发布 API 会被拒绝并返回 `403 project credential can not access the developer credentialType api`）
+4. **新建服务账号** → 勾选 **Connect API**，展开勾上 **应用发布 (App release)**
+5. 创建完成后下载 JSON 凭证文件（包含 `key_id` / `private_key` / `sub_account` 等字段，**只能下载一次**）
+6. 配置 `apkgo.yaml`，二选一：
+
+   ```yaml
+   stores:
+     huawei:
+       # 方式 A: 直接指向凭证文件
+       service_account_file: "/secure/path/huawei-sa.json"
+       # app_id: ""  # 可选，不填则按 APK 包名自动查
+   ```
+
+   ```yaml
+   stores:
+     huawei:
+       # 方式 B: 内嵌 base64 (适合 CI/CD secrets)
+       service_account: "ewogICJrZXlfaWQiOiAi..."  # base64(JSON 凭证)
+   ```
+
+   生成 base64：`base64 -w0 huawei-sa.json`（macOS：`base64 -i huawei-sa.json`）
+
+7. 验证：
+
+   ```bash
+   # 只校验凭证 (最快)
+   apkgo doctor -s huawei
+
+   # 同时校验包名映射 + 应用发布权限 (推荐)
+   apkgo doctor -s huawei -p com.example.app
+   ```
+
+   `doctor` 不会上传文件，但会真实调用三个接口：token（凭证类型）、appid-list（包名 → appId）、upload-url（应用发布权限）。三项都 ✓ 才说明真实上传会跑通；任一 ✗ 都能在配置阶段就发现，不必等到上传到一半才报错。
+
+##### 旧版：API 密钥（不推荐，仅兼容旧配置）
+
+1. **用户与权限** → **API 密钥** → 切到 **团队** 标签页 → **新建**
+2. 勾选 **Connect API** → 展开勾上 **应用发布 (App release)**
+3. 复制 `Client ID` 和 `Key`（Key 只显示一次）
+4. 填入配置：
+
+   ```yaml
+   stores:
+     huawei:
+       client_id: "<Client ID>"
+       client_secret: "<Key>"
+   ```
 
 ## AI Agent 集成
 
@@ -283,8 +359,7 @@ apkgo stores  # 返回每个商店需要的配置字段
 ```yaml
 - name: Upload to app stores
   env:
-    APKGO_HUAWEI_CLIENT_ID: ${{ secrets.HUAWEI_CLIENT_ID }}
-    APKGO_HUAWEI_CLIENT_SECRET: ${{ secrets.HUAWEI_CLIENT_SECRET }}
+    APKGO_HUAWEI_SERVICE_ACCOUNT: ${{ secrets.HUAWEI_SERVICE_ACCOUNT }}  # base64(JSON 凭证)
     APKGO_XIAOMI_EMAIL: ${{ secrets.XIAOMI_EMAIL }}
     APKGO_XIAOMI_PRIVATE_KEY: ${{ secrets.XIAOMI_PRIVATE_KEY }}
   run: |
@@ -350,6 +425,7 @@ CI 中使用环境变量免交互：
 ```
 apkgo init          [-s store1,store2] [-c config.yaml]
 apkgo upload        -f <apk> [--file64 <apk>] [-s stores] [-n notes] [--notes-file path] [--dry-run] [-t timeout]
+apkgo doctor        [-s stores] [-f <apk> | -p <package>]
 apkgo serve         [-p port] [-c config.yaml]
 apkgo config export --out <file>
 apkgo config import <file>
