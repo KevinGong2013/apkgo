@@ -32,6 +32,39 @@ func init() {
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
+	store.RegisterDiagnoser("oppo", diagnose)
+}
+
+// errEnvelope only carries `errno` so it can be embedded in any response
+// struct without clashing with the caller's typed `data` field. The human
+// message is extracted separately via parseError, which re-unmarshals the
+// raw body — OPPO is not consistent about whether the message lives at
+// the envelope level (`message` / `msg`) or nested under `data.message`,
+// and a generic helper handles all four shapes uniformly.
+type errEnvelope struct {
+	Errno int `json:"errno"`
+}
+
+// parseError pulls a human error message out of the raw response body,
+// looking at envelope-level `message`/`msg` first, then `data.message`/
+// `data.msg`. Returns the raw body if no recognisable field is present
+// so the caller still has something to print.
+func parseError(body []byte) string {
+	var probe struct {
+		Message string `json:"message,omitempty"`
+		Msg     string `json:"msg,omitempty"`
+		Data    struct {
+			Message string `json:"message,omitempty"`
+			Msg     string `json:"msg,omitempty"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(body, &probe)
+	for _, candidate := range []string{probe.Message, probe.Msg, probe.Data.Message, probe.Data.Msg} {
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return strings.TrimSpace(string(body))
 }
 
 type Store struct {
@@ -41,8 +74,8 @@ type Store struct {
 }
 
 func New(cfg map[string]string) (*Store, error) {
-	clientID := cfg["client_id"]
-	clientSecret := cfg["client_secret"]
+	clientID := strings.TrimSpace(cfg["client_id"])
+	clientSecret := strings.TrimSpace(cfg["client_secret"])
 	if clientID == "" || clientSecret == "" {
 		return nil, fmt.Errorf("client_id and client_secret are required")
 	}
@@ -51,14 +84,31 @@ func New(cfg map[string]string) (*Store, error) {
 		SetBaseURL("https://oop-openapi-cn.heytapmobi.com").
 		SetHeader("Content-Type", "application/json")
 
-	// Get token
+	token, err := fetchToken(client, clientID, clientSecret)
+	if err != nil {
+		return nil, fmt.Errorf("auth: %w", err)
+	}
+
+	return &Store{
+		client:       client,
+		accessToken:  token,
+		clientSecret: clientSecret,
+	}, nil
+}
+
+// fetchToken exchanges client_id+client_secret for an access token.
+// HTTP-level failures and non-zero errno are both surfaced with the
+// human-readable message rather than collapsed into a bare error code,
+// since OPPO's token errors (e.g. "invalid client_id") are otherwise
+// indistinguishable from each other.
+func fetchToken(client *resty.Client, clientID, clientSecret string) (string, error) {
 	var resp struct {
-		Errno int `json:"errno"`
-		Data  struct {
+		errEnvelope
+		Data struct {
 			AccessToken string `json:"access_token"`
 		} `json:"data"`
 	}
-	_, err := client.R().
+	httpResp, err := client.R().
 		SetQueryParams(map[string]string{
 			"client_id":     clientID,
 			"client_secret": clientSecret,
@@ -66,17 +116,15 @@ func New(cfg map[string]string) (*Store, error) {
 		SetResult(&resp).
 		Get("/developer/v1/token")
 	if err != nil {
-		return nil, fmt.Errorf("auth: %w", err)
+		return "", err
+	}
+	if httpResp.IsError() {
+		return "", fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
 	}
 	if resp.Errno != 0 || resp.Data.AccessToken == "" {
-		return nil, fmt.Errorf("auth failed, errno: %d", resp.Errno)
+		return "", fmt.Errorf("[%d] %s", resp.Errno, parseError(httpResp.Body()))
 	}
-
-	return &Store{
-		client:       client,
-		accessToken:  resp.Data.AccessToken,
-		clientSecret: clientSecret,
-	}, nil
+	return resp.Data.AccessToken, nil
 }
 
 func (s *Store) Name() string { return "oppo" }
@@ -157,18 +205,21 @@ func (s *Store) queryApp(pkgName string) (*appData, error) {
 	data := url.Values{}
 	data.Set("pkg_name", pkgName)
 	var resp struct {
-		Errno int      `json:"errno"`
-		Data  *appData `json:"data"`
+		errEnvelope
+		Data *appData `json:"data"`
 	}
-	_, err := s.client.R().
+	httpResp, err := s.client.R().
 		SetResult(&resp).
 		SetQueryParamsFromValues(s.sign(data)).
 		Get("/resource/v1/app/info")
 	if err != nil {
 		return nil, err
 	}
+	if httpResp.IsError() {
+		return nil, fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+	}
 	if resp.Errno != 0 {
-		return nil, fmt.Errorf("query errno: %d", resp.Errno)
+		return nil, fmt.Errorf("[%d] %s", resp.Errno, parseError(httpResp.Body()))
 	}
 	return resp.Data, nil
 }
@@ -176,18 +227,24 @@ func (s *Store) queryApp(pkgName string) (*appData, error) {
 func (s *Store) uploadAPK(filePath string, rep progress.Reporter) (*uploadResultData, error) {
 	// Get upload URL
 	var urlResp struct {
-		Errno int `json:"errno"`
-		Data  struct {
+		errEnvelope
+		Data struct {
 			UploadURL string `json:"upload_url"`
 			Sign      string `json:"sign"`
 		} `json:"data"`
 	}
-	_, err := s.client.R().
+	httpResp, err := s.client.R().
 		SetResult(&urlResp).
 		SetQueryParamsFromValues(s.sign(url.Values{})).
 		Get("/resource/v1/upload/get-upload-url")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get-upload-url: %w", err)
+	}
+	if httpResp.IsError() {
+		return nil, fmt.Errorf("get-upload-url: http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+	}
+	if urlResp.Errno != 0 || urlResp.Data.UploadURL == "" {
+		return nil, fmt.Errorf("get-upload-url: [%d] %s", urlResp.Errno, parseError(httpResp.Body()))
 	}
 
 	// Upload file (streamed, with progress reporting)
@@ -198,10 +255,10 @@ func (s *Store) uploadAPK(filePath string, rep progress.Reporter) (*uploadResult
 	defer rc.Close()
 
 	var uploadResp struct {
-		Errno int              `json:"errno"`
-		Data  uploadResultData `json:"data"`
+		errEnvelope
+		Data uploadResultData `json:"data"`
 	}
-	_, err = s.client.R().
+	httpResp, err = s.client.R().
 		SetResult(&uploadResp).
 		SetFormData(map[string]string{
 			"sign": urlResp.Data.Sign,
@@ -210,7 +267,16 @@ func (s *Store) uploadAPK(filePath string, rep progress.Reporter) (*uploadResult
 		SetFileReader("file", filepath.Base(filePath), rc).
 		Post(urlResp.Data.UploadURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upload: %w", err)
+	}
+	if httpResp.IsError() {
+		return nil, fmt.Errorf("upload: http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+	}
+	if uploadResp.Errno != 0 {
+		return nil, fmt.Errorf("upload: [%d] %s", uploadResp.Errno, parseError(httpResp.Body()))
+	}
+	if uploadResp.Data.URL == "" {
+		return nil, fmt.Errorf("upload: empty url in response (raw: %s)", strings.TrimSpace(string(httpResp.Body())))
 	}
 	return &uploadResp.Data, nil
 }
@@ -243,20 +309,20 @@ func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkIn
 	values.Set("customer_contact", app.CustomerContact)
 
 	var resp struct {
-		Errno int `json:"errno"`
-		Data  struct {
-			Message string `json:"message"`
-		} `json:"data"`
+		errEnvelope
 	}
-	_, err := s.client.R().
+	httpResp, err := s.client.R().
 		SetResult(&resp).
 		SetFormDataFromValues(s.sign(values)).
 		Post("/resource/v1/app/upd")
 	if err != nil {
 		return err
 	}
+	if httpResp.IsError() {
+		return fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+	}
 	if resp.Errno != 0 {
-		return fmt.Errorf("errno %d: %s", resp.Errno, resp.Data.Message)
+		return fmt.Errorf("[%d] %s", resp.Errno, parseError(httpResp.Body()))
 	}
 	return nil
 }
@@ -276,18 +342,27 @@ func (s *Store) pollTaskState(ctx context.Context, pkgName, versionCode string) 
 		data.Set("pkg_name", pkgName)
 		data.Set("version_code", versionCode)
 		var resp struct {
-			Errno int `json:"errno"`
-			Data  struct {
+			errEnvelope
+			Data struct {
 				TaskState string `json:"task_state"`
 				ErrMsg    string `json:"err_msg"`
 			} `json:"data"`
 		}
-		_, err := s.client.R().
+		httpResp, err := s.client.R().
 			SetResult(&resp).
 			SetFormDataFromValues(s.sign(data)).
 			Post("/resource/v1/app/task-state")
 		if err != nil {
 			return err
+		}
+		if httpResp.IsError() {
+			return fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+		}
+		// Surface envelope-level errors immediately. Without this, an
+		// auth/sign failure would loop silently for ~100 seconds before
+		// reporting a useless "polling timed out".
+		if resp.Errno != 0 {
+			return fmt.Errorf("[%d] %s", resp.Errno, parseError(httpResp.Body()))
 		}
 		switch resp.Data.TaskState {
 		case "2": // success
@@ -296,7 +371,7 @@ func (s *Store) pollTaskState(ctx context.Context, pkgName, versionCode string) 
 			return fmt.Errorf("task failed: %s", resp.Data.ErrMsg)
 		}
 	}
-	return fmt.Errorf("task state polling timed out")
+	return fmt.Errorf("task state polling timed out (10 attempts × 10s)")
 }
 
 // sign adds common params and HMAC-SHA256 signature.
@@ -354,4 +429,39 @@ type apkInfo struct {
 	URL     string `json:"url"`
 	MD5     string `json:"md5"`
 	CpuCode int    `json:"cpu_code"`
+}
+
+// diagnose is registered with `apkgo doctor`. Probes:
+//
+//  1. token       — credentials are accepted by /developer/v1/token
+//  2. app-info    — the package exists under this developer account, and
+//                   the HMAC-SHA256 signature is being computed correctly
+//                   (without a sig that lines up server-side, app/info
+//                   returns errno=… instead of the package data)
+func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
+	probes := make([]store.Probe, 0, 2)
+
+	s, err := New(cfg)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "token", Status: "fail", Error: err.Error()})
+		return probes
+	}
+	probes = append(probes, store.Probe{Name: "token", Status: "ok", Detail: "access_token issued"})
+
+	if hint.Package == "" {
+		probes = append(probes, store.Probe{Name: "app-info", Status: "skip", Detail: "needs --package or --file"})
+		return probes
+	}
+
+	app, err := s.queryApp(hint.Package)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "app-info", Status: "fail", Error: err.Error()})
+		return probes
+	}
+	if app == nil {
+		probes = append(probes, store.Probe{Name: "app-info", Status: "fail", Error: fmt.Sprintf("no app found for package %s under this developer account", hint.Package)})
+		return probes
+	}
+	probes = append(probes, store.Probe{Name: "app-info", Status: "ok", Detail: fmt.Sprintf("%s → %q", hint.Package, app.AppName)})
+	return probes
 }
