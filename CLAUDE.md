@@ -51,8 +51,10 @@ stores:
     client_secret: ""          # legacy API key
     app_id: ""                 # optional, auto-detected from package name
   xiaomi:
-    email: ""          # required
-    private_key: ""    # required
+    email: ""          # required, developer account email
+    private_key: ""    # required, the value Xiaomi's SDK calls "password"
+    cert: ""           # required (one of cert / cert_file); raw PEM or base64
+    cert_file: ""      # path to public-key certificate downloaded from dev.mi.com
   oppo:
     client_id: ""      # required
     client_secret: ""  # required

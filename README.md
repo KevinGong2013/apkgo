@@ -142,7 +142,8 @@ stores:
 
   xiaomi:
     email: "your@email.com"
-    private_key: "your-private-key"
+    private_key: "your-private-key"             # 小米后台的「接口密钥」（被 SDK 当作 password 使用）
+    cert_file: "/secure/path/xiaomi-pubkey.cer" # 公钥证书（也支持 cert: <PEM 内容> 或 cert: <base64>）
 
   oppo:
     client_id: "your-client-id"
@@ -246,7 +247,8 @@ CI/CD 环境中可通过环境变量配置凭证，无需配置文件：
 # 格式: APKGO_<商店名>_<字段名>=值
 export APKGO_HUAWEI_SERVICE_ACCOUNT="$(base64 -w0 huawei-sa.json)"  # 推荐
 export APKGO_XIAOMI_EMAIL="your@email.com"
-export APKGO_XIAOMI_PRIVATE_KEY="your-key"
+export APKGO_XIAOMI_PRIVATE_KEY="your-接口密钥"
+export APKGO_XIAOMI_CERT="$(base64 -w0 xiaomi-pubkey.cer)"
 
 # 环境变量会覆盖配置文件中的同名字段
 # 如果没有配置文件，完全通过环境变量配置也可以
@@ -258,7 +260,7 @@ apkgo upload -f app.apk --store huawei
 | 商店 | 控制台地址 | 说明 |
 |------|-----------|------|
 | 华为 | [AppGallery Connect](https://developer.huawei.com/consumer/cn/console) | 用户与权限 > 服务账号（[详细步骤](#华为-appgallery-connect)） |
-| 小米 | [小米开放平台](https://dev.mi.com) | 管理中心 > API 管理 |
+| 小米 | [小米开放平台](https://dev.mi.com) | 账号管理 > 接口密钥（[详细步骤](#小米开放平台)） |
 | OPPO | [OPPO 开放平台](https://open.oppomobile.com) | 管理中心 > API 密钥管理 |
 | vivo | [vivo 开放平台](https://dev.vivo.com.cn) | 账号管理 > API 管理 |
 | 荣耀 | [荣耀开发者平台](https://developer.honor.com) | API 管理 |
@@ -322,6 +324,40 @@ apkgo upload -f app.apk --store huawei
        client_secret: "<Key>"
    ```
 
+#### 小米开放平台
+
+小米的发布 API 使用 RSA 签名鉴权：每次请求用**小米给你的公钥**对包含**接口密钥**和文件 MD5 的 JSON 加密生成 SIG。所以需要拿三样东西：开发者账号邮箱、接口密钥、公钥证书。
+
+> ⚠️ 旧版本 apkgo 内置了一个公钥证书，但那份证书 **2023-05-13 已过期**且来历不明，从这个版本开始必须由你提供自己账号的公钥证书。
+
+1. 登录 [小米开放平台](https://dev.mi.com)
+2. 进入控制台 → 右上角账号 → **账号管理** → 左侧菜单 **接口密钥** （或「Pub-Key」/「公私钥管理」，HyperOS 后台改版后入口位置略有差异）
+3. 在该页面：
+   - **接口密钥（Private Key）**：点 *查看私钥* 复制一串字符（重置会失效，复制后立即保存）—— 对应配置里的 `private_key`
+   - **公钥证书**：点 *下载公钥* 拿到一个 `.cer` 文件 —— 对应配置里的 `cert_file`（或者用 `base64 -w0 xiaomi-pubkey.cer` 编码后填到 `cert`）
+4. 上传 API 不是默认开通，要先在同页面或「权限申请」里申请 **应用上传/发布接口** 权限，审核通过后接口密钥才会出现可用
+5. 填入 `apkgo.yaml`：
+
+   ```yaml
+   stores:
+     xiaomi:
+       email: "<开发者账号邮箱>"
+       private_key: "<接口密钥>"
+       cert_file: "/secure/path/xiaomi-pubkey.cer"
+       # 或 cert: "-----BEGIN CERTIFICATE-----..."
+       # 或 cert: "<base64(.cer 文件)>"
+   ```
+
+6. 验证：
+
+   ```bash
+   apkgo doctor -s xiaomi -p com.example.app
+   ```
+
+   两项探针：`cert`（公钥可加载、RSA、未过期）、`query`（接口密钥/邮箱/公钥三者匹配，能调通 `/dev/query`）。两项都 ✓ 才说明真实上传会通过鉴权这一关。
+
+   ⚠️ 上传时小米后台还会做**签名一致性检查**：你要发的 APK 必须用跟线上版本相同的 keystore 签名，否则会以 `签名不一致,不满足应用更新条件` 拒绝。这是后台层的反劫持机制，apkgo 无法绕过。
+
 ## AI Agent 集成
 
 apkgo 的输出格式专为 AI Agent 和自动化场景设计：
@@ -362,6 +398,7 @@ apkgo stores  # 返回每个商店需要的配置字段
     APKGO_HUAWEI_SERVICE_ACCOUNT: ${{ secrets.HUAWEI_SERVICE_ACCOUNT }}  # base64(JSON 凭证)
     APKGO_XIAOMI_EMAIL: ${{ secrets.XIAOMI_EMAIL }}
     APKGO_XIAOMI_PRIVATE_KEY: ${{ secrets.XIAOMI_PRIVATE_KEY }}
+    APKGO_XIAOMI_CERT: ${{ secrets.XIAOMI_CERT }}             # base64(.cer 文件)
   run: |
     apkgo upload \
       -f app/build/outputs/apk/release/app-release.apk \
