@@ -228,30 +228,33 @@ func renderDoctorText(out doctorOutput) {
 
 // storeBucket classifies a store's overall health for sorting and
 // summary counting.
+//
+// Philosophy: a store with at least one passing probe is "ready" —
+// the credentials work and the operator's basic concern (is this
+// configured?) is answered. Skipped probes mean "this check could
+// have run with --package" but are not a problem on their own; pass
+// --package or use -v to see the full breakdown.
 func storeBucket(r doctorStoreReport) string {
 	if !r.Supported {
 		return "unsupported"
 	}
-	hasFail, hasSkip, hasOK := false, false, false
+	hasFail, hasOK, hasSkip := false, false, false
 	for _, p := range r.Probes {
 		switch p.Status {
 		case "fail":
 			hasFail = true
-		case "skip":
-			hasSkip = true
 		case "ok":
 			hasOK = true
+		case "skip":
+			hasSkip = true
 		}
 	}
 	switch {
 	case hasFail:
 		return "fail"
-	case hasSkip && !hasOK:
-		return "skip"
-	case hasSkip && hasOK:
-		// Some probes ran green, others need --package — still useful,
-		// but flag as needing more info so the operator knows to retry
-		// with -p before declaring success.
+	case hasOK:
+		return "ready"
+	case hasSkip:
 		return "skip"
 	default:
 		return "ready"
@@ -260,49 +263,30 @@ func storeBucket(r doctorStoreReport) string {
 
 // storeOneLiner produces the compact single-line description.
 //
-//   ready: ✅ probe1 + probe2
-//   skip:    (blank) N check(s) need --package
-//   fail:  ❌ first-error-probe-name (error message)
-//   unsup:    (blank) doctor not implemented
-//
-// Status icons are emoji-style (✅ / ❌) so the store's overall health
-// is scannable at a glance. Skipped / unsupported stores get a blank
-// marker so the eye doesn't pick them up as a problem.
+//   ready: ✅ ready
+//   fail:  ❌ <probe>: <error>
+//   skip:    (blank) needs --package for full check
+//   unsup:   (blank) doctor not implemented
 func storeOneLiner(r doctorStoreReport) string {
 	if !r.Supported {
 		return "   doctor not implemented"
 	}
-	var ok, fail, skip []store.Probe
 	for _, p := range r.Probes {
-		switch p.Status {
-		case "ok":
-			ok = append(ok, p)
-		case "fail":
-			fail = append(fail, p)
-		case "skip":
-			skip = append(skip, p)
+		if p.Status == "fail" {
+			msg := p.Error
+			if msg == "" {
+				msg = p.Detail
+			}
+			return fmt.Sprintf("❌ %s: %s", p.Name, msg)
 		}
 	}
-	if len(fail) > 0 {
-		p := fail[0]
-		msg := p.Error
-		if msg == "" {
-			msg = p.Detail
+	for _, p := range r.Probes {
+		if p.Status == "ok" {
+			return "✅ ready"
 		}
-		return fmt.Sprintf("❌ %s (%s)", p.Name, msg)
 	}
-	if len(ok) == 0 && len(skip) > 0 {
-		return fmt.Sprintf("   %d check(s) need --package", len(skip))
-	}
-	names := make([]string, len(ok))
-	for i, p := range ok {
-		names[i] = p.Name
-	}
-	line := "✅ " + strings.Join(names, " + ")
-	if len(skip) > 0 {
-		line += fmt.Sprintf("  (%d need --package)", len(skip))
-	}
-	return line
+	// All skipped (no auth-only probe to run without --package).
+	return "   needs --package for full check"
 }
 
 // probeIcon picks the per-probe glyph for verbose mode.
