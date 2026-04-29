@@ -312,11 +312,20 @@ func (s *Store) uploadAPK(appID, apkPath string, rep progress.Reporter) error {
 	return nil
 }
 
+// hwConsoleURL is the AGC release console — by the time pollAndSubmit
+// runs, the APK is already on Huawei's side, so every submit-step
+// failure should point the operator here to finish the release manually.
+const hwConsoleURL = "https://developer.huawei.com/consumer/cn/console"
+
 // pollAndSubmit tries to submit the app for review, polling if Huawei is
 // still parsing the APK. Huawei's parse step can take ~1–2 minutes for
 // large binaries but is sometimes instant, so we attempt submit once
 // immediately and only enter the polling loop if the server reports the
 // package as still parsing.
+//
+// Every failure path adds the "APK already uploaded; finish review at <url>"
+// hint, since the APK is on Huawei's side by the time we get here and the
+// operator's recovery action is identical regardless of why submit failed.
 //
 // Note: code 204144660 is a generic "submit failed" code — the real reason
 // lives in `msg`. Real configuration errors (e.g. missing publisher entity)
@@ -324,16 +333,20 @@ func (s *Store) uploadAPK(appID, apkPath string, rep progress.Reporter) error {
 // retry the "still parsing" subset; otherwise we'd burn 5 minutes hiding
 // an error the operator can fix immediately.
 func (s *Store) pollAndSubmit(ctx context.Context, appID string) error {
+	wrap := func(format string, args ...any) error {
+		return fmt.Errorf(format+" (APK 已上传成功，请在 AGC 后台完成审核：%s)", append(args, hwConsoleURL)...)
+	}
+
 	// Immediate attempt so fast-parsing APKs don't wait 30s for nothing.
 	ret, err := s.submitApp(appID)
 	if err != nil {
-		return fmt.Errorf("submit: %w", err)
+		return wrap("submit: %v", err)
 	}
 	if ret.Code == 0 {
 		return nil
 	}
 	if !isParsingInProgress(ret) {
-		return fmt.Errorf("submit: [%d] %s", ret.Code, ret.text())
+		return wrap("submit: [%d] %s", ret.Code, ret.text())
 	}
 
 	ticker := time.NewTicker(30 * time.Second)
@@ -342,25 +355,22 @@ func (s *Store) pollAndSubmit(ctx context.Context, appID string) error {
 	for attempt := 0; attempt < 10; attempt++ {
 		select {
 		case <-ctx.Done():
-			// APK is already on Huawei's side — only submit-for-review didn't
-			// complete. Surface this explicitly so the operator knows the
-			// upload itself succeeded and can finish the release manually.
-			return fmt.Errorf("submit phase timed out (APK already uploaded; finish review at https://developer.huawei.com/consumer/cn/console): %w", ctx.Err())
+			return wrap("submit phase timed out: %v", ctx.Err())
 		case <-ticker.C:
 		}
 
 		ret, err := s.submitApp(appID)
 		if err != nil {
-			return fmt.Errorf("submit: %w", err)
+			return wrap("submit: %v", err)
 		}
 		if ret.Code == 0 {
 			return nil
 		}
 		if !isParsingInProgress(ret) {
-			return fmt.Errorf("submit: [%d] %s", ret.Code, ret.text())
+			return wrap("submit: [%d] %s", ret.Code, ret.text())
 		}
 	}
-	return fmt.Errorf("submit timed out after 10 attempts; APK uploaded successfully — submit manually at https://developer.huawei.com/consumer/cn/console")
+	return wrap("submit timed out after 10 attempts (APK still being parsed)")
 }
 
 // isParsingInProgress detects the transient "package still being parsed"
