@@ -22,7 +22,11 @@ func init() {
 	rootCmd.AddCommand(upgradeCmd)
 }
 
-const releaseAPI = "https://api.github.com/repos/KevinGong2013/apkgo/releases/latest"
+const (
+	releaseAPI       = "https://api.github.com/repos/KevinGong2013/apkgo/releases/latest"
+	giteeReleaseAPI  = "https://gitee.com/api/v5/repos/ForTheDream/apkgo/releases/tags/" // append <tag>
+	ghproxyURLPrefix = "https://ghproxy.com/"
+)
 
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
@@ -53,25 +57,28 @@ var upgradeCmd = &cobra.Command{
 		slog.Info("new version available", "current", Version, "latest", release.TagName)
 
 		if flagDryRun {
+			_, dl := findAsset(release)
 			writeOutput(map[string]string{
 				"current":  Version,
 				"latest":   release.TagName,
 				"status":   "update_available",
-				"download": findAssetURL(release),
+				"download": dl,
 			})
 			return nil
 		}
 
 		// 2. Find the right asset for this platform
-		assetURL := findAssetURL(release)
+		assetName, assetURL := findAsset(release)
 		if assetURL == "" {
 			return fmt.Errorf("no binary found for %s/%s in release %s", runtime.GOOS, runtime.GOARCH, release.TagName)
 		}
 
-		slog.Info("downloading", "url", assetURL)
-
-		// 3. Download and extract
-		binary, err := downloadAndExtract(assetURL)
+		// 3. Download with fallback. The GitHub release-asset CDN
+		// (objects.githubusercontent.com) is frequently unreachable from
+		// China, so try the Gitee mirror and a public ghproxy in turn
+		// before giving up. Each attempt logs to stderr so the operator
+		// can see which mirror served the bytes.
+		binary, err := downloadWithFallback(release.TagName, assetName, assetURL)
 		if err != nil {
 			return fmt.Errorf("download: %w", err)
 		}
@@ -125,7 +132,9 @@ func fetchLatestRelease() (*ghRelease, error) {
 	return &release, nil
 }
 
-func findAssetURL(release *ghRelease) string {
+// findAsset returns the file name and GitHub download URL of the
+// archive matching the current OS/arch.
+func findAsset(release *ghRelease) (name, url string) {
 	goOS := strings.Title(runtime.GOOS)
 	goArch := runtime.GOARCH
 	if goArch == "amd64" {
@@ -134,10 +143,83 @@ func findAssetURL(release *ghRelease) string {
 
 	for _, asset := range release.Assets {
 		if strings.Contains(asset.Name, goOS) && strings.Contains(asset.Name, goArch) {
-			return asset.BrowserDownloadURL
+			return asset.Name, asset.BrowserDownloadURL
 		}
 	}
-	return ""
+	return "", ""
+}
+
+// downloadWithFallback tries to fetch the asset from GitHub, then the
+// Gitee mirror, then a ghproxy URL rewrite, returning the first
+// archive that downloads + extracts cleanly. Each failure is logged
+// to stderr so the operator sees which mirror is being used.
+func downloadWithFallback(tag, assetName, githubURL string) ([]byte, error) {
+	type mirror struct {
+		name string
+		url  func() (string, error)
+	}
+	mirrors := []mirror{
+		{
+			name: "github",
+			url:  func() (string, error) { return githubURL, nil },
+		},
+		{
+			name: "gitee",
+			url:  func() (string, error) { return resolveGiteeAssetURL(tag, assetName) },
+		},
+		{
+			name: "ghproxy",
+			url:  func() (string, error) { return ghproxyURLPrefix + githubURL, nil },
+		},
+	}
+
+	var lastErr error
+	for _, m := range mirrors {
+		u, err := m.url()
+		if err != nil {
+			slog.Warn("mirror url unavailable, trying next", "mirror", m.name, "err", err)
+			lastErr = err
+			continue
+		}
+		slog.Info("downloading", "mirror", m.name, "url", u)
+		data, err := downloadAndExtract(u)
+		if err != nil {
+			slog.Warn("download failed, trying next mirror", "mirror", m.name, "err", err)
+			lastErr = err
+			continue
+		}
+		return data, nil
+	}
+	return nil, fmt.Errorf("all mirrors failed; last error: %w", lastErr)
+}
+
+// resolveGiteeAssetURL queries Gitee's release-by-tag API and returns
+// the browser download URL of the asset whose name matches.
+func resolveGiteeAssetURL(tag, assetName string) (string, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(giteeReleaseAPI + tag)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("gitee API %d for tag %s", resp.StatusCode, tag)
+	}
+	var rel struct {
+		Assets []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return "", err
+	}
+	for _, a := range rel.Assets {
+		if a.Name == assetName {
+			return a.BrowserDownloadURL, nil
+		}
+	}
+	return "", fmt.Errorf("asset %q not found in Gitee release %s", assetName, tag)
 }
 
 func downloadAndExtract(assetURL string) ([]byte, error) {
@@ -147,19 +229,25 @@ func downloadAndExtract(assetURL string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	if strings.HasSuffix(assetURL, ".tar.gz") {
+	// Gitee adds a query string to download URLs (e.g. ?download); use
+	// the path component to decide format.
+	switch {
+	case strings.Contains(assetURL, ".tar.gz"):
 		return extractTarGz(data)
-	}
-	if strings.HasSuffix(assetURL, ".zip") {
+	case strings.Contains(assetURL, ".zip"):
 		return extractZip(data)
+	default:
+		return nil, fmt.Errorf("unknown archive format: %s", assetURL)
 	}
-	return nil, fmt.Errorf("unknown archive format: %s", assetURL)
 }
 
 func extractTarGz(data []byte) ([]byte, error) {
