@@ -22,7 +22,7 @@ type StoreEntry struct {
 // Uploader orchestrates concurrent uploads to multiple stores.
 type Uploader struct {
 	Stores   []StoreEntry
-	Progress *Manager // optional; nil disables progress bars
+	Progress ProgressManager // never nil; use NopManager when no output is desired
 }
 
 // Run uploads to all stores concurrently and returns all results.
@@ -33,13 +33,14 @@ func (u *Uploader) Run(ctx context.Context, req *store.UploadRequest, info *apk.
 		results = make([]*store.UploadResult, 0, len(u.Stores))
 	)
 
+	if u.Progress == nil {
+		u.Progress = NopManager
+	}
 	// Pre-allocate progress bars for every store (in configured order)
-	// so the initial display has a stable layout regardless of the goroutines'
-	// schedule.
-	if u.Progress != nil {
-		for _, e := range u.Stores {
-			u.Progress.ReporterFor(e.Store.Name())
-		}
+	// so the initial display has a stable layout regardless of the
+	// goroutines' schedule.
+	for _, e := range u.Stores {
+		u.Progress.ReporterFor(e.Store.Name())
 	}
 
 	envVars := map[string]string{

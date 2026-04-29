@@ -478,6 +478,46 @@ apkgo stores  # 返回每个商店需要的配置字段
 
 **非交互**: 无 prompt、无确认，适合无人值守环境。
 
+**实时进度流（NDJSON）**：父进程 fork apkgo 想实时拿进度时，加 `--progress-stream`，stdout 变成每行一个 JSON 事件：
+
+```bash
+apkgo upload -f app.apk --progress-stream
+```
+
+```json
+{"type":"start","apk":{"package":"...","version_name":"1.2.0","version_code":120},"stores":["huawei","xiaomi"]}
+{"type":"phase","store":"huawei","phase":"auth"}
+{"type":"phase","store":"huawei","phase":"uploading"}
+{"type":"total","store":"huawei","total_bytes":62914560}
+{"type":"bytes","store":"huawei","sent":7045120,"total":62914560}
+{"type":"bytes","store":"huawei","sent":23560192,"total":62914560}
+{"type":"phase","store":"huawei","phase":"submitting"}
+{"type":"result","store":"huawei","success":true,"duration_ms":34570}
+{"type":"done","apk":{...},"results":[...]}
+```
+
+`bytes` 事件每 ~100ms 一条（throttled），多家并发各自一条流，按 `store` 字段区分。Go 父进程消费示例：
+
+```go
+cmd := exec.CommandContext(ctx, "apkgo", "upload", "-f", apkPath, "--progress-stream")
+out, _ := cmd.StdoutPipe()
+cmd.Start()
+sc := bufio.NewScanner(out)
+for sc.Scan() {
+    var evt map[string]any
+    json.Unmarshal(sc.Bytes(), &evt)
+    switch evt["type"] {
+    case "bytes":
+        ui.UpdateProgress(evt["store"].(string), evt["sent"].(float64), evt["total"].(float64))
+    case "result":
+        ui.MarkStoreDone(evt["store"].(string), evt["success"].(bool))
+    case "done":
+        ui.Finish(evt["results"])
+    }
+}
+cmd.Wait()
+```
+
 ## CI/CD 示例
 
 ### GitHub Actions

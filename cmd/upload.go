@@ -26,8 +26,9 @@ var (
 	flagStore        string
 	flagNotes        string
 	flagNotesFile    string
-	flagDryRun       bool
-	flagFetchHeaders []string
+	flagDryRun         bool
+	flagFetchHeaders   []string
+	flagProgressStream bool
 )
 
 func init() {
@@ -38,6 +39,7 @@ func init() {
 	uploadCmd.Flags().StringVar(&flagNotesFile, "notes-file", "", "read release notes from file (overrides --notes)")
 	uploadCmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "validate config and APK without uploading")
 	uploadCmd.Flags().StringArrayVar(&flagFetchHeaders, "fetch-header", nil, `extra HTTP header for URL fetches (repeatable; "Name: value")`)
+	uploadCmd.Flags().BoolVar(&flagProgressStream, "progress-stream", false, "emit NDJSON progress events on stdout (one JSON object per line) for parent-process consumption")
 	uploadCmd.MarkFlagRequired("file")
 	rootCmd.AddCommand(uploadCmd)
 }
@@ -184,15 +186,22 @@ var uploadCmd = &cobra.Command{
 			}
 		}
 
-		// Set up multi-bar progress output (stderr). Skip when stderr is not a
-		// terminal (piped/redirected) or when verbose logging is on — slog lines
-		// and bars would fight for the same lines.
-		//
-		// WithAutoRefresh is required: mpb's own terminal detection disables
-		// auto-refresh for non-stdout writers, but we've already verified the
-		// stderr fd is a tty via isStderrTTY() so we force refreshing on.
-		var pm *uploader.Manager
-		if isStderrTTY() && !flagVerbose {
+		// Set up the progress manager. Three modes:
+		//   --progress-stream: NDJSON events on stdout, no terminal bars
+		//   stderr is a TTY + not verbose: mpb terminal bars on stderr
+		//   otherwise: no progress output (silent until the final JSON dump)
+		var pm uploader.ProgressManager = uploader.NopManager
+		var nd *uploader.NDJSONManager
+		switch {
+		case flagProgressStream:
+			nd = uploader.NewNDJSONManager(os.Stdout)
+			nd.Emit(map[string]any{
+				"type":   "start",
+				"apk":    info,
+				"stores": storeNames,
+			})
+			pm = nd
+		case isStderrTTY() && !flagVerbose:
 			p := mpb.New(
 				mpb.WithOutput(os.Stderr),
 				mpb.WithWidth(32),
@@ -217,7 +226,19 @@ var uploadCmd = &cobra.Command{
 			}
 		}
 
-		writeOutput(uploadOutput{APK: info, Results: results})
+		if nd != nil {
+			// Stream mode: stdout has been NDJSON throughout; close with a
+			// "done" event carrying the same payload the non-stream JSON
+			// output would have. Consumers tracking for the terminal event
+			// look for type=="done".
+			nd.Emit(map[string]any{
+				"type":    "done",
+				"apk":     info,
+				"results": results,
+			})
+		} else {
+			writeOutput(uploadOutput{APK: info, Results: results})
+		}
 
 		// Save to local history
 		if err := history.Append(history.DefaultPath(), info, results); err != nil {
