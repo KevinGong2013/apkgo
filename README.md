@@ -518,6 +518,47 @@ for sc.Scan() {
 cmd.Wait()
 ```
 
+## 嵌入式调用（Go SDK）
+
+apkgo 同时是一个 CLI **和** 一个 Go 库。Cloud worker、自定义 CI 工具、IDE 插件可以直接 import `pkg/apkgo` 调用上传流程，免去 spawn 子进程 + 解析 stdout 的麻烦。
+
+```go
+import (
+    "context"
+    "github.com/KevinGong2013/apkgo/pkg/apkgo"
+    "github.com/KevinGong2013/apkgo/pkg/config"
+    "github.com/KevinGong2013/apkgo/pkg/uploader"
+)
+
+cfg := &config.Config{
+    Stores: map[string]map[string]string{
+        "huawei":  {"service_account": vault.Get("huawei-sa-base64")},
+        "tencent": {
+            "user_id":       "...",
+            "access_secret": vault.Get("tencent-secret"),
+            "app_id_map":    `{"com.foo":"111","com.bar":"222"}`,
+        },
+    },
+}
+
+result, err := apkgo.Run(ctx, apkgo.Job{
+    APKFile:  "https://artifacts.example.com/v1.2.0.apk",
+    Stores:   []string{"huawei", "tencent"},
+    Notes:    "Bug fixes",
+    Config:   cfg,
+    Progress: uploader.NopManager,  // or NewNDJSONManager(w) for streamed events
+})
+```
+
+特性：
+
+- **零全局状态**：`apkgo.Run` 不动 `slog.Default`、不设 exit code，安全地在长生命周期进程中调用
+- **支持 URL 输入**：`APKFile` / `APKFile64` 接受本地路径或 http(s) URL（自动 fetch + 临时文件 + 退出清理）
+- **可插拔进度报告**：`uploader.ProgressManager` 接口可以接 mpb / NDJSON / 自定义实现（push 到 Prometheus、emit 到 Kafka 等）
+- **Pre-upload 错误才 return error**：`Run` 返回的 `error` 只覆盖 fetch / 解析 / config 阶段；进入上传后每家的失败都在 `Result.Results[i].Error` 里。Cloud orchestrator 可以基于此分类重试
+
+完整 API 见 [`pkg/apkgo`](pkg/apkgo) 的 godoc。
+
 ## CI/CD 示例
 
 ### GitHub Actions

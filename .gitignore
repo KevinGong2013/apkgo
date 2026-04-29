@@ -1,6 +1,6 @@
-# Binary
-apkgo
-apkgo.exe
+# Binary (root-anchored so the pkg/apkgo package directory isn't matched)
+/apkgo
+/apkgo.exe
 dist/
 
 # Config with secrets

@@ -6,7 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KevinGong2013/apkgo/pkg/apk"
 	"github.com/KevinGong2013/apkgo/pkg/progress"
+	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
 // NDJSONManager emits newline-delimited JSON progress events to a
@@ -75,6 +77,27 @@ func (m *NDJSONManager) MarkDone(storeName string, success bool, errMsg string, 
 // Wait is a no-op — events emit synchronously as they arrive, so by
 // the time the upload returns there's nothing pending to flush.
 func (m *NDJSONManager) Wait() {}
+
+// Start emits the run's opening event with apk metadata + target
+// store list. Called once before any per-store work begins.
+func (m *NDJSONManager) Start(info *apk.Info, stores []string) {
+	m.Emit(map[string]any{
+		"type":   "start",
+		"apk":    info,
+		"stores": stores,
+	})
+}
+
+// Done emits the terminal event with the same payload the legacy
+// post-completion JSON dump would have. Consumers tracking for the
+// terminal event look for type=="done".
+func (m *NDJSONManager) Done(info *apk.Info, results []*store.UploadResult) {
+	m.Emit(map[string]any{
+		"type":    "done",
+		"apk":     info,
+		"results": results,
+	})
+}
 
 // ndjsonReporter is a progress.Reporter that publishes events through
 // the parent NDJSONManager's encoder. Throttling state is per-store

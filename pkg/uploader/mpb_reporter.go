@@ -10,7 +10,9 @@ import (
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
 
+	"github.com/KevinGong2013/apkgo/pkg/apk"
 	"github.com/KevinGong2013/apkgo/pkg/progress"
+	"github.com/KevinGong2013/apkgo/pkg/store"
 )
 
 
@@ -77,6 +79,14 @@ type Manager struct {
 func NewManager(p *mpb.Progress) *Manager {
 	return &Manager{p: p, reporters: map[string]*storeReporter{}}
 }
+
+// Start is a no-op for mpb — bars are populated lazily as ReporterFor
+// is called for each store. Defined to satisfy ProgressManager.
+func (m *Manager) Start(info *apk.Info, stores []string) {}
+
+// Done is a no-op for mpb — terminal state is shown via MarkDone +
+// Wait, not a separate "done" event. Defined to satisfy ProgressManager.
+func (m *Manager) Done(info *apk.Info, results []*store.UploadResult) {}
 
 // ReporterFor creates (or returns) the storeReporter for a given store name.
 // Safe for concurrent use. When the manager has no *mpb.Progress attached,

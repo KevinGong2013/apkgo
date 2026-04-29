@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,9 +10,9 @@ import (
 	"github.com/vbauerster/mpb/v8"
 
 	"github.com/KevinGong2013/apkgo/pkg/apk"
+	"github.com/KevinGong2013/apkgo/pkg/apkgo"
 	"github.com/KevinGong2013/apkgo/pkg/config"
 	"github.com/KevinGong2013/apkgo/pkg/history"
-	"github.com/KevinGong2013/apkgo/pkg/hooks"
 	"github.com/KevinGong2013/apkgo/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/pkg/store"
 	"github.com/KevinGong2013/apkgo/pkg/telemetry"
@@ -21,11 +20,11 @@ import (
 )
 
 var (
-	flagFile         string
-	flagFile64       string
-	flagStore        string
-	flagNotes        string
-	flagNotesFile    string
+	flagFile           string
+	flagFile64         string
+	flagStore          string
+	flagNotes          string
+	flagNotesFile      string
 	flagDryRun         bool
 	flagFetchHeaders   []string
 	flagProgressStream bool
@@ -72,194 +71,73 @@ var uploadCmd = &cobra.Command{
   apkgo upload -f https://artifacts.example.com/app-v1.apk --store huawei
   apkgo upload -f https://private.example.com/app.apk --fetch-header "Authorization: Bearer xxx"`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Resolve URL inputs to local paths. Refs that are already local
-		// paths pass through unchanged.
 		fetchHeaders, err := httpx.ParseHeaders(flagFetchHeaders)
 		if err != nil {
 			return err
 		}
-		if httpx.IsURL(flagFile) || httpx.IsURL(flagFile64) {
-			slog.Info("fetching APK from URL", "file", flagFile, "file64", flagFile64)
-		}
-		paths, cleanup, err := httpx.FetchToTempBatch(cmd.Context(), []string{flagFile, flagFile64}, fetchHeaders)
-		if err != nil {
-			return fmt.Errorf("fetch apk: %w", err)
-		}
-		defer cleanup()
-		flagFile, flagFile64 = paths[0], paths[1]
 
-		// Validate APK file exists
-		if _, err := os.Stat(flagFile); err != nil {
-			return fmt.Errorf("apk file: %w", err)
-		}
-		if flagFile64 != "" {
-			if _, err := os.Stat(flagFile64); err != nil {
-				return fmt.Errorf("64-bit apk file: %w", err)
-			}
-		}
-
-		// Parse APK metadata
-		info, err := apk.Parse(flagFile)
-		if err != nil {
-			return fmt.Errorf("parse apk: %w", err)
-		}
-		slog.Info("parsed apk", "package", info.PackageName, "version", info.VersionName, "code", info.VersionCode)
-
-		// Load config
 		cfg, err := config.Load(flagConfig)
 		if err != nil {
 			return fmt.Errorf("config: %w", err)
 		}
 
-		// Parse store filter
-		var filter []string
+		// Build the progress manager based on CLI flags. This is CLI-only
+		// concern (TTY detection, slog redirection); the library doesn't
+		// know or care about it.
+		pm, nd := pickProgressManager()
+
+		var stores []string
 		if flagStore != "" {
-			filter = strings.Split(flagStore, ",")
+			stores = strings.Split(flagStore, ",")
 		}
 
-		// Resolve release notes: --notes-file takes precedence over --notes
-		releaseNotes := flagNotes
-		if flagNotesFile != "" {
-			data, err := os.ReadFile(flagNotesFile)
-			if err != nil {
-				return fmt.Errorf("notes-file: %w", err)
-			}
-			releaseNotes = strings.TrimSpace(string(data))
-		}
-
-		// Create store instances
-		storesWithHooks, err := cfg.CreateStores(filter)
+		result, err := apkgo.Run(cmd.Context(), apkgo.Job{
+			APKFile:      flagFile,
+			APKFile64:    flagFile64,
+			Stores:       stores,
+			Notes:        flagNotes,
+			NotesFile:    flagNotesFile,
+			Config:       cfg,
+			FetchHeaders: fetchHeaders,
+			Progress:     pm,
+			Timeout:      flagTimeout,
+			DryRun:       flagDryRun,
+		})
 		if err != nil {
 			return err
 		}
 
-		// Build upload request
-		req := &store.UploadRequest{
-			FilePath:     flagFile,
-			File64Path:   flagFile64,
-			AppName:      info.AppName,
-			PackageName:  info.PackageName,
-			VersionCode:  info.VersionCode,
-			VersionName:  info.VersionName,
-			ReleaseNotes: releaseNotes,
-		}
-
-		// Collect store names
-		storeNames := make([]string, len(storesWithHooks))
-		entries := make([]uploader.StoreEntry, len(storesWithHooks))
-		for i, swh := range storesWithHooks {
-			storeNames[i] = swh.Store.Name()
-			entries[i] = uploader.StoreEntry{Store: swh.Store, Before: swh.Before, After: swh.After}
-		}
-
-		// Dry-run: just output what would happen
-		if flagDryRun {
+		// Stream-mode runs already emitted a "done" event via the
+		// NDJSONManager. Non-stream mode prints the final aggregate JSON.
+		if nd == nil {
 			writeOutput(uploadOutput{
-				APK:    info,
-				DryRun: true,
-				Results: func() []*store.UploadResult {
-					r := make([]*store.UploadResult, len(storeNames))
-					for i, name := range storeNames {
-						r[i] = &store.UploadResult{Store: name, Success: true}
-					}
-					return r
-				}(),
+				APK:     result.APK,
+				DryRun:  result.DryRun,
+				Results: result.Results,
 			})
-			return nil
 		}
 
-		// Upload concurrently with timeout
-		ctx, cancel := context.WithTimeout(cmd.Context(), flagTimeout)
-		defer cancel()
-
-		hookEnv := map[string]string{
-			"APKGO_PACKAGE": info.PackageName,
-			"APKGO_VERSION": info.VersionName,
-		}
-
-		// Global before hook
-		if cfg.Hooks.Before != "" {
-			slog.Info("running global before hook")
-			payload := hooks.BeforeAllPayload{FilePath: flagFile, APK: info, Stores: storeNames}
-			if err := hooks.RunHook(ctx, cfg.Hooks.Before, payload, hookEnv); err != nil {
-				return fmt.Errorf("global before hook: %w", err)
+		// Persist locally and report anonymous telemetry — both are CLI
+		// behaviours; library callers do their own equivalents.
+		if !result.DryRun {
+			if err := history.Append(history.DefaultPath(), result.APK, result.Results); err != nil {
+				slog.Warn("failed to save history", "error", err)
 			}
-		}
-
-		// Set up the progress manager. Three modes:
-		//   --progress-stream: NDJSON events on stdout, no terminal bars
-		//   stderr is a TTY + not verbose: mpb terminal bars on stderr
-		//   otherwise: no progress output (silent until the final JSON dump)
-		var pm uploader.ProgressManager = uploader.NopManager
-		var nd *uploader.NDJSONManager
-		switch {
-		case flagProgressStream:
-			nd = uploader.NewNDJSONManager(os.Stdout)
-			nd.Emit(map[string]any{
-				"type":   "start",
-				"apk":    info,
-				"stores": storeNames,
-			})
-			pm = nd
-		case isStderrTTY() && !flagVerbose:
-			p := mpb.New(
-				mpb.WithOutput(os.Stderr),
-				mpb.WithWidth(32),
-				mpb.WithAutoRefresh(),
-			)
-			pm = uploader.NewManager(p)
-			// Route slog through mpb so log lines render above the bars.
-			handler := slog.NewTextHandler(p, &slog.HandlerOptions{Level: slog.LevelWarn})
-			slog.SetDefault(slog.New(handler))
-		}
-
-		u := &uploader.Uploader{Stores: entries, Progress: pm}
-		results := u.Run(ctx, req, info)
-		pm.Wait()
-
-		// Global after hook
-		if cfg.Hooks.After != "" {
-			slog.Info("running global after hook")
-			payload := hooks.AfterAllPayload{FilePath: flagFile, APK: info, Results: results}
-			if err := hooks.RunHook(ctx, cfg.Hooks.After, payload, hookEnv); err != nil {
-				slog.Warn("global after hook failed", "error", err)
+			storeResults := make([]telemetry.StoreResult, len(result.Results))
+			for i, r := range result.Results {
+				storeResults[i] = telemetry.StoreResult{Name: r.Store, Success: r.Success}
 			}
-		}
-
-		if nd != nil {
-			// Stream mode: stdout has been NDJSON throughout; close with a
-			// "done" event carrying the same payload the non-stream JSON
-			// output would have. Consumers tracking for the terminal event
-			// look for type=="done".
-			nd.Emit(map[string]any{
-				"type":    "done",
-				"apk":     info,
-				"results": results,
+			telemetry.Send(telemetry.Event{
+				Event:   "upload",
+				Source:  "cli",
+				Version: Version,
+				Stores:  storeResults,
 			})
-		} else {
-			writeOutput(uploadOutput{APK: info, Results: results})
 		}
 
-		// Save to local history
-		if err := history.Append(history.DefaultPath(), info, results); err != nil {
-			slog.Warn("failed to save history", "error", err)
-		}
-
-		// Send anonymous telemetry
-		storeResults := make([]telemetry.StoreResult, len(results))
-		for i, r := range results {
-			storeResults[i] = telemetry.StoreResult{Name: r.Store, Success: r.Success}
-		}
-		telemetry.Send(telemetry.Event{
-			Event:   "upload",
-			Source:  "cli",
-			Version: Version,
-			Stores:  storeResults,
-		})
-
-		// Set exit code based on results
+		// Exit code reflects how many stores failed.
 		failures := 0
-		for _, r := range results {
+		for _, r := range result.Results {
 			if !r.Success {
 				failures++
 			}
@@ -267,11 +145,35 @@ var uploadCmd = &cobra.Command{
 		switch {
 		case failures == 0:
 			exitCode = 0
-		case failures == len(results):
+		case failures == len(result.Results):
 			exitCode = 2
 		default:
 			exitCode = 1
 		}
 		return nil
 	},
+}
+
+// pickProgressManager builds the progress manager appropriate for the
+// CLI's flag combination. Returns the manager plus a non-nil pointer
+// when the manager is the NDJSON streamer (so the caller knows to
+// suppress the post-run JSON dump).
+func pickProgressManager() (uploader.ProgressManager, *uploader.NDJSONManager) {
+	switch {
+	case flagProgressStream:
+		nd := uploader.NewNDJSONManager(os.Stdout)
+		return nd, nd
+	case isStderrTTY() && !flagVerbose:
+		p := mpb.New(
+			mpb.WithOutput(os.Stderr),
+			mpb.WithWidth(32),
+			mpb.WithAutoRefresh(),
+		)
+		// Route slog through mpb so log lines render above the bars.
+		handler := slog.NewTextHandler(p, &slog.HandlerOptions{Level: slog.LevelWarn})
+		slog.SetDefault(slog.New(handler))
+		return uploader.NewManager(p), nil
+	default:
+		return uploader.NopManager, nil
+	}
 }
