@@ -3,6 +3,7 @@ package honor
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +32,24 @@ func init() {
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
+	store.RegisterDiagnoser("honor", diagnose)
+}
+
+// honorResp is honor's standard response envelope. Code 0 = success.
+// Some endpoints use `message` instead of `msg` for the human text;
+// text() picks whichever has content so callers don't need to track
+// per-endpoint inconsistencies.
+type honorResp struct {
+	Code    int    `json:"code"`
+	Msg     string `json:"msg,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func (r honorResp) text() string {
+	if r.Msg != "" {
+		return r.Msg
+	}
+	return r.Message
 }
 
 // Honor App Market publish API (rewritten 2026-04 to match current endpoints).
@@ -124,35 +143,47 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 // ---- auth ----
 
 func fetchToken(clientID, clientSecret string) (string, error) {
-	var resp struct {
-		AccessToken      string `json:"access_token"`
-		Error            string `json:"error,omitempty"`
-		ErrorDescription string `json:"error_description,omitempty"`
-	}
 	httpResp, err := resty.New().R().
 		SetFormData(map[string]string{
 			"client_id":     clientID,
 			"client_secret": clientSecret,
 			"grant_type":    "client_credentials",
 		}).
-		SetResult(&resp).
 		Post(tokenURL)
 	if err != nil {
 		return "", err
 	}
+	// Parse the body by hand: resty's SetResult only fills the success
+	// struct on 2xx, so a 401 with a perfectly readable
+	// {"error":"invalid_client",...} body would leave resp.Error blank
+	// and lose the OAuth2 reason.
+	body := httpResp.Body()
+	var resp struct {
+		AccessToken      string `json:"access_token"`
+		Error            string `json:"error,omitempty"`
+		ErrorDescription string `json:"error_description,omitempty"`
+	}
+	if jerr := json.Unmarshal(body, &resp); jerr != nil {
+		return "", fmt.Errorf("decode token response (HTTP %d): %v: %s",
+			httpResp.StatusCode(), jerr, truncateBody(string(body)))
+	}
 	if resp.AccessToken != "" {
 		return resp.AccessToken, nil
 	}
-	// Surface the standard OAuth2 error payload when present, else the
-	// raw body so unknown schemas stay debuggable.
 	if resp.Error != "" {
-		return "", fmt.Errorf("%s: %s", resp.Error, resp.ErrorDescription)
+		return "", fmt.Errorf("[%s] %s", resp.Error, resp.ErrorDescription)
 	}
-	body := strings.TrimSpace(httpResp.String())
-	if len(body) > 500 {
-		body = body[:500] + "...(truncated)"
+	return "", fmt.Errorf("empty token (HTTP %d): %s", httpResp.StatusCode(), truncateBody(string(body)))
+}
+
+// truncateBody caps a response body at 500 chars so diagnostic errors
+// stay readable.
+func truncateBody(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 500 {
+		return s[:500] + "...(truncated)"
 	}
-	return "", fmt.Errorf("empty token (HTTP %d): %s", httpResp.StatusCode(), body)
+	return s
 }
 
 // ---- app lookup / detail ----
@@ -161,22 +192,24 @@ func (s *Store) getAppID(packageName string) (string, error) {
 	// Note: honor returns appId as a JSON number; use int64 and stringify
 	// so callers can pass it as a query param verbatim.
 	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
+		honorResp
 		Data []struct {
 			PackageName string `json:"packageName"`
 			AppID       int64  `json:"appId"`
 		} `json:"data"`
 	}
-	_, err := s.client.R().
+	httpResp, err := s.client.R().
 		SetQueryParam("pkgName", packageName).
 		SetResult(&resp).
 		Get("/openapi/v1/publish/get-app-id")
 	if err != nil {
 		return "", err
 	}
+	if httpResp.IsError() {
+		return "", fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+	}
 	if resp.Code != 0 {
-		return "", fmt.Errorf("[%d] %s", resp.Code, resp.Msg)
+		return "", fmt.Errorf("[%d] %s", resp.Code, resp.text())
 	}
 	for _, app := range resp.Data {
 		if app.PackageName == packageName && app.AppID != 0 {
@@ -201,21 +234,23 @@ type languageInfo struct {
 
 func (s *Store) getAppLanguage(appID string) (*languageInfo, error) {
 	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
+		honorResp
 		Data struct {
 			LanguageInfo []languageInfo `json:"languageInfo"`
 		} `json:"data"`
 	}
-	_, err := s.client.R().
+	httpResp, err := s.client.R().
 		SetQueryParam("appId", appID).
 		SetResult(&resp).
 		Get("/openapi/v1/publish/get-app-detail")
 	if err != nil {
 		return nil, err
 	}
+	if httpResp.IsError() {
+		return nil, fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+	}
 	if resp.Code != 0 {
-		return nil, fmt.Errorf("[%d] %s", resp.Code, resp.Msg)
+		return nil, fmt.Errorf("[%d] %s", resp.Code, resp.text())
 	}
 	if len(resp.Data.LanguageInfo) == 0 {
 		return nil, fmt.Errorf("no languageInfo in app detail response")
@@ -242,14 +277,13 @@ func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progre
 	// Step 2: request an upload URL + objectId for this binary
 	fileName := filepath.Base(apkPath)
 	var urlResp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
+		honorResp
 		Data []struct {
 			UploadURL string `json:"uploadUrl"`
 			ObjectID  int64  `json:"objectId"`
 		} `json:"data"`
 	}
-	_, err = s.client.R().
+	httpResp, err := s.client.R().
 		SetContext(ctx).
 		SetQueryParam("appId", appID).
 		SetBody([]map[string]any{{
@@ -263,8 +297,11 @@ func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progre
 	if err != nil {
 		return fmt.Errorf("get upload url: %w", err)
 	}
+	if httpResp.IsError() {
+		return fmt.Errorf("get upload url: http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+	}
 	if urlResp.Code != 0 {
-		return fmt.Errorf("get upload url [%d] %s", urlResp.Code, urlResp.Msg)
+		return fmt.Errorf("get upload url [%d] %s", urlResp.Code, urlResp.text())
 	}
 	if len(urlResp.Data) == 0 {
 		return fmt.Errorf("empty upload url response")
@@ -280,10 +317,7 @@ func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progre
 	}
 	defer rc.Close()
 
-	var putResp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
+	var putResp honorResp
 	putHTTP, err := resty.New().R().
 		SetContext(ctx).
 		SetHeader("Authorization", "Bearer "+s.accessToken).
@@ -293,23 +327,19 @@ func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progre
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}
+	if putHTTP.IsError() {
+		return fmt.Errorf("upload: http %d: %s", putHTTP.StatusCode(), truncateBody(putHTTP.String()))
+	}
 	// Honor returns a JSON envelope on success; HTTP may be 200 with code!=0
 	// when the signed URL rejects the payload (expired nonce, bad sha256).
 	if putResp.Code != 0 {
-		body := strings.TrimSpace(putHTTP.String())
-		if len(body) > 500 {
-			body = body[:500] + "...(truncated)"
-		}
-		return fmt.Errorf("upload [%d] %s: %s", putResp.Code, putResp.Msg, body)
+		return fmt.Errorf("upload [%d] %s: %s", putResp.Code, putResp.text(), truncateBody(putHTTP.String()))
 	}
 
 	// Step 4: tell honor that objectId is the new binary for this app.
 	rep.Phase("publishing")
-	var bindResp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
-	_, err = s.client.R().
+	var bindResp honorResp
+	bindHTTP, err := s.client.R().
 		SetContext(ctx).
 		SetQueryParam("appId", appID).
 		SetBody(map[string]any{
@@ -320,8 +350,11 @@ func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progre
 	if err != nil {
 		return fmt.Errorf("bind file: %w", err)
 	}
+	if bindHTTP.IsError() {
+		return fmt.Errorf("bind file: http %d: %s", bindHTTP.StatusCode(), truncateBody(bindHTTP.String()))
+	}
 	if bindResp.Code != 0 {
-		return fmt.Errorf("bind file [%d] %s", bindResp.Code, bindResp.Msg)
+		return fmt.Errorf("bind file [%d] %s", bindResp.Code, bindResp.text())
 	}
 	return nil
 }
@@ -332,11 +365,8 @@ func (s *Store) updateLanguageInfo(appID string, existing *languageInfo, release
 	// Honor's update-language-info blanks out every field it receives as
 	// empty, so we re-send appName/intro/briefIntro verbatim and only
 	// mutate newFeature.
-	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
-	_, err := s.client.R().
+	var resp honorResp
+	httpResp, err := s.client.R().
 		SetQueryParam("appId", appID).
 		SetBody(map[string]any{
 			"languageInfoList": []map[string]any{{
@@ -352,8 +382,11 @@ func (s *Store) updateLanguageInfo(appID string, existing *languageInfo, release
 	if err != nil {
 		return err
 	}
+	if httpResp.IsError() {
+		return fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+	}
 	if resp.Code != 0 {
-		return fmt.Errorf("[%d] %s", resp.Code, resp.Msg)
+		return fmt.Errorf("[%d] %s", resp.Code, resp.text())
 	}
 	return nil
 }
@@ -361,11 +394,8 @@ func (s *Store) updateLanguageInfo(appID string, existing *languageInfo, release
 // ---- submit ----
 
 func (s *Store) submitAudit(appID string) error {
-	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
-	_, err := s.client.R().
+	var resp honorResp
+	httpResp, err := s.client.R().
 		SetQueryParam("appId", appID).
 		SetBody(map[string]any{
 			"releaseType": 1, // 1 = 全网发布
@@ -375,8 +405,11 @@ func (s *Store) submitAudit(appID string) error {
 	if err != nil {
 		return err
 	}
+	if httpResp.IsError() {
+		return fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+	}
 	if resp.Code != 0 {
-		return fmt.Errorf("[%d] %s", resp.Code, resp.Msg)
+		return fmt.Errorf("[%d] %s", resp.Code, resp.text())
 	}
 	return nil
 }
@@ -400,4 +433,53 @@ func statAndSha256(path string) (size int64, hashHex string, err error) {
 		return 0, "", err
 	}
 	return fi.Size(), hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// diagnose is registered with `apkgo doctor`. Probes:
+//
+//  1. token       — credentials exchange for an OAuth2 access token
+//  2. get-app-id  — package resolves to an appId under this developer
+//                   account (skipped if app_id was supplied in config)
+//  3. app-detail  — the access token has read access to the app, used
+//                   to confirm the publish-API permission scope
+func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
+	probes := make([]store.Probe, 0, 3)
+
+	s, err := New(cfg)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "token", Status: "fail", Error: err.Error()})
+		return probes
+	}
+	probes = append(probes, store.Probe{Name: "token", Status: "ok", Detail: "OAuth2 access_token issued"})
+
+	if hint.Package == "" && s.configAppID == "" {
+		probes = append(probes,
+			store.Probe{Name: "get-app-id", Status: "skip", Detail: "needs --package or --file (or app_id in config)"},
+			store.Probe{Name: "app-detail", Status: "skip", Detail: "needs an appId"},
+		)
+		return probes
+	}
+
+	appID := s.configAppID
+	if appID == "" {
+		appID, err = s.getAppID(hint.Package)
+		if err != nil {
+			probes = append(probes,
+				store.Probe{Name: "get-app-id", Status: "fail", Error: err.Error()},
+				store.Probe{Name: "app-detail", Status: "skip", Detail: "needs appId"},
+			)
+			return probes
+		}
+		probes = append(probes, store.Probe{Name: "get-app-id", Status: "ok", Detail: fmt.Sprintf("%s → %s", hint.Package, appID)})
+	} else {
+		probes = append(probes, store.Probe{Name: "get-app-id", Status: "skip", Detail: "using configured app_id=" + appID})
+	}
+
+	lang, err := s.getAppLanguage(appID)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "app-detail", Status: "fail", Error: err.Error()})
+		return probes
+	}
+	probes = append(probes, store.Probe{Name: "app-detail", Status: "ok", Detail: fmt.Sprintf("language=%s appName=%q", lang.LanguageID, lang.AppName)})
+	return probes
 }
