@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	_ "image/jpeg" // register jpeg decoder for icon extraction
 	"image/png"
 	"io"
 	"net/url"
@@ -22,6 +23,10 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/shogo82148/androidbinary"
 	"github.com/shogo82148/androidbinary/apk"
+	// Register decoder for webp icons. Modern Android builds (R8) often
+	// store app icons as webp; without this the std image package fails
+	// with "image: unknown format" when extracting the launcher icon.
+	_ "golang.org/x/image/webp"
 
 	"github.com/KevinGong2013/apkgo/pkg/progress"
 	"github.com/KevinGong2013/apkgo/pkg/store"

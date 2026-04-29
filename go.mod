@@ -19,6 +19,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.20 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/vbauerster/mpb/v8 v8.12.0 // indirect
+	golang.org/x/image v0.39.0 // indirect
 	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 )
