@@ -352,7 +352,11 @@ func (s *Store) pollAndSubmit(ctx context.Context, appID string) error {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for attempt := 0; attempt < 10; attempt++ {
+	// Huawei's "being compiled" error explicitly says "try again in 3-5
+	// minutes", and parsing for large APKs is similar; 14 × 30s ≈ 7 min
+	// gives buffer over both bounds while staying inside the default
+	// 10-minute global timeout.
+	for attempt := 0; attempt < 14; attempt++ {
 		select {
 		case <-ctx.Done():
 			return wrap("submit phase timed out: %v", ctx.Err())
@@ -370,15 +374,29 @@ func (s *Store) pollAndSubmit(ctx context.Context, appID string) error {
 			return wrap("submit: [%d] %s", ret.Code, ret.text())
 		}
 	}
-	return wrap("submit timed out after 10 attempts (APK still being parsed)")
+	return wrap("submit timed out after 14 attempts (APK still being processed by Huawei)")
 }
 
-// isParsingInProgress detects the transient "package still being parsed"
-// case so we know to retry. Huawei reuses code 204144660 for many submit
-// failures, so we must match the message rather than the code alone.
+// isParsingInProgress detects the transient "package still being processed"
+// case so we know to retry. Huawei has at least two codes here:
+//
+//   - 204144660 with msg containing "parsing/parse/解析" — APK still being
+//     parsed (metadata extraction)
+//   - 204144727 with msg containing "being compiled" / "3-5 minutes" — APK
+//     being recompiled on Huawei's side
+//
+// Both codes are also reused for non-transient errors (e.g. 204144660 also
+// covers "registeredEntity can not be empty"), so we must match the message
+// substring rather than the code alone.
 func isParsingInProgress(ret retInfo) bool {
 	msg := strings.ToLower(ret.text())
-	return ret.Code == 204144660 && (strings.Contains(msg, "parsing") || strings.Contains(msg, "parse") || strings.Contains(msg, "解析"))
+	switch ret.Code {
+	case 204144660:
+		return strings.Contains(msg, "parsing") || strings.Contains(msg, "parse") || strings.Contains(msg, "解析")
+	case 204144727:
+		return strings.Contains(msg, "compil") || strings.Contains(msg, "编译") || strings.Contains(msg, "try again")
+	}
+	return false
 }
 
 // submitApp posts to /app-submit and returns the parsed `ret` object.
