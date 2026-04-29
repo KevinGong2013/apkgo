@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -32,6 +33,7 @@ func init() {
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
+	store.RegisterDiagnoser("vivo", diagnose)
 }
 
 type Store struct {
@@ -147,29 +149,29 @@ func (s *Store) uploadAPK(method, packageName, filePath string, rep progress.Rep
 	}
 	defer rc.Close()
 
-	var resp struct {
-		Code    int         `json:"code"`
-		Message string      `json:"msg"`
-		Data    *uploadResp `json:"data"`
-	}
 	httpResp, err := s.client.R().
 		SetFileReader("file", filepath.Base(filePath), rc).
 		SetQueryParams(params).
-		SetResult(&resp).
 		Post("")
 	if err != nil {
 		return nil, err
 	}
+	body := httpResp.Body()
+	var resp struct {
+		envelope
+		Data *uploadResp `json:"data"`
+	}
+	if jerr := json.Unmarshal(body, &resp); jerr != nil {
+		return nil, fmt.Errorf("decode response (HTTP %d): %v: %s",
+			httpResp.StatusCode(), jerr, truncateBody(string(body)))
+	}
 	if resp.Code != 0 {
-		return nil, fmt.Errorf("[%d] %s (HTTP %d): %s",
-			resp.Code, resp.Message, httpResp.StatusCode(), truncateBody(httpResp.String()))
+		return nil, fmt.Errorf("[%d] %s (HTTP %d)",
+			resp.Code, resp.text(), httpResp.StatusCode())
 	}
 	if resp.Data == nil {
-		// vivo returned code=0 (or a body we didn't understand) but no
-		// data. Surface HTTP status + raw body so the real error is visible
-		// instead of a generic "empty response data".
 		return nil, fmt.Errorf("empty response data (HTTP %d): %s",
-			httpResp.StatusCode(), truncateBody(httpResp.String()))
+			httpResp.StatusCode(), truncateBody(string(body)))
 	}
 	return resp.Data, nil
 }
@@ -187,22 +189,38 @@ func truncateBody(s string) string {
 func (s *Store) updateApp(method string, bizParams map[string]string) error {
 	params := s.signParams(method, bizParams)
 
-	var resp struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-	}
-	httpResp, err := s.client.R().
-		SetQueryParams(params).
-		SetResult(&resp).
-		Post("")
+	httpResp, err := s.client.R().SetQueryParams(params).Post("")
 	if err != nil {
 		return err
 	}
+	body := httpResp.Body()
+	var resp envelope
+	if jerr := json.Unmarshal(body, &resp); jerr != nil {
+		return fmt.Errorf("decode response (HTTP %d): %v: %s",
+			httpResp.StatusCode(), jerr, truncateBody(string(body)))
+	}
 	if resp.Code != 0 {
-		return fmt.Errorf("[%d] %s (HTTP %d): %s",
-			resp.Code, resp.Message, httpResp.StatusCode(), truncateBody(httpResp.String()))
+		return fmt.Errorf("[%d] %s (HTTP %d)",
+			resp.Code, resp.text(), httpResp.StatusCode())
 	}
 	return nil
+}
+
+// envelope carries vivo's standard top-level error shape. Different
+// endpoints use either `msg` or `message` for the human text; the
+// helper picks whichever is non-empty so callers don't need to
+// remember per-endpoint quirks.
+type envelope struct {
+	Code    int    `json:"code"`
+	Msg     string `json:"msg,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func (e envelope) text() string {
+	if e.Msg != "" {
+		return e.Msg
+	}
+	return e.Message
 }
 
 // signParams builds the full param map with HMAC-SHA256 signature.
@@ -260,4 +278,82 @@ type uploadResp struct {
 	SerialNumber string `json:"serialnumber"`
 	VersionCode  string `json:"versionCode"`
 	FileMD5      string `json:"fileMd5"`
+}
+
+// appDetails is the slice of fields apkgo needs from `app.query.details`.
+// vivo returns more (status, app name in zh, online state, etc.) but we
+// only surface what the doctor probe reports.
+type appDetails struct {
+	PackageName string `json:"packageName"`
+	AppName     string `json:"appName"`
+	VersionName string `json:"versionName"`
+	VersionCode string `json:"versionCode"`
+}
+
+// queryApp calls the read-only `app.query.details` method. Used by the
+// doctor probe; safe to invoke without side-effects.
+//
+// The body is unmarshalled by hand because vivo serves /router/rest
+// with `Content-Type: text/plain;charset=utf-8` (yes, on a JSON body),
+// and resty's auto-decode keys off content-type — so SetResult would
+// silently leave the struct zero-valued, making a real auth failure
+// look like "no app found".
+func (s *Store) queryApp(packageName string) (*appDetails, error) {
+	params := s.signParams("app.query.details", map[string]string{
+		"packageName": packageName,
+	})
+	httpResp, err := s.client.R().SetQueryParams(params).Post("")
+	if err != nil {
+		return nil, err
+	}
+	body := httpResp.Body()
+	var resp struct {
+		envelope
+		Data *appDetails `json:"data"`
+	}
+	if jerr := json.Unmarshal(body, &resp); jerr != nil {
+		return nil, fmt.Errorf("decode response (HTTP %d): %v: %s",
+			httpResp.StatusCode(), jerr, truncateBody(string(body)))
+	}
+	if resp.Code != 0 {
+		return nil, fmt.Errorf("[%d] %s (HTTP %d)",
+			resp.Code, resp.text(), httpResp.StatusCode())
+	}
+	return resp.Data, nil
+}
+
+// diagnose is registered with `apkgo doctor`. Single probe:
+//
+//   app-info — calls /router/rest with method=app.query.details, which
+//              both validates the HMAC-SHA256 signature server-side and
+//              checks that the package exists under this developer
+//              account. A package-name hint is required since vivo has
+//              no separate "verify credentials" endpoint to probe with
+//              an empty body.
+func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
+	probes := make([]store.Probe, 0, 1)
+
+	s, err := New(cfg)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "config", Status: "fail", Error: err.Error()})
+		return probes
+	}
+
+	if hint.Package == "" {
+		probes = append(probes, store.Probe{Name: "app-info", Status: "skip", Detail: "needs --package or --file (vivo has no auth-only endpoint)"})
+		return probes
+	}
+
+	app, err := s.queryApp(hint.Package)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "app-info", Status: "fail", Error: err.Error()})
+		return probes
+	}
+	if app == nil {
+		probes = append(probes, store.Probe{Name: "app-info", Status: "fail", Error: fmt.Sprintf("no app found for package %s under this developer account", hint.Package)})
+		return probes
+	}
+	detail := fmt.Sprintf("%s → %q versionCode=%s versionName=%s", app.PackageName, app.AppName, app.VersionCode, app.VersionName)
+	probes = append(probes, store.Probe{Name: "app-info", Status: "ok", Detail: detail})
+	return probes
 }
