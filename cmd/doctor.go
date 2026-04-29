@@ -8,8 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/KevinGong2013/apkgo/pkg/apk"
-	"github.com/KevinGong2013/apkgo/pkg/store"
+	"github.com/KevinGong2013/apkgo/pkg/apkgo"
 )
 
 var (
@@ -23,17 +22,6 @@ func init() {
 	doctorCmd.Flags().StringVarP(&flagDoctorStore, "store", "s", "", "comma-separated store names (default: all configured)")
 	doctorCmd.Flags().StringVarP(&flagDoctorFile, "file", "f", "", "APK file (used to derive package name for deeper probes)")
 	doctorCmd.Flags().StringVarP(&flagDoctorPackage, "package", "p", "", "package name (overrides --file)")
-}
-
-type doctorStoreReport struct {
-	Store     string        `json:"store"`
-	Supported bool          `json:"supported"`
-	Probes    []store.Probe `json:"probes,omitempty"`
-}
-
-type doctorOutput struct {
-	Package string              `json:"package,omitempty"`
-	Stores  []doctorStoreReport `json:"stores"`
 }
 
 var doctorCmd = &cobra.Command{
@@ -57,82 +45,32 @@ Pass -f <apk> or -p <package> to enable probes that need a real app.`,
 			return err
 		}
 
-		var filter map[string]bool
+		var stores []string
 		if flagDoctorStore != "" {
-			filter = map[string]bool{}
-			for _, n := range strings.Split(flagDoctorStore, ",") {
-				if n = strings.TrimSpace(n); n != "" {
-					filter[n] = true
-				}
-			}
+			stores = strings.Split(flagDoctorStore, ",")
 		}
 
-		pkg := flagDoctorPackage
-		if pkg == "" && flagDoctorFile != "" {
-			info, err := apk.Parse(flagDoctorFile)
-			if err != nil {
-				return fmt.Errorf("parse apk: %w", err)
-			}
-			pkg = info.PackageName
-		}
-		hint := store.DiagnoseHint{Package: pkg}
-
-		names := make([]string, 0, len(cfg.Stores))
-		for name := range cfg.Stores {
-			if filter != nil && !filter[name] {
-				continue
-			}
-			names = append(names, name)
-		}
-		sort.Strings(names)
-
-		if len(names) == 0 {
-			return fmt.Errorf("no matching stores configured")
-		}
-
-		out := doctorOutput{Package: pkg}
-		anyFail := false
-
-		for _, name := range names {
-			scfg := cleanStoreCfg(cfg.Stores[name])
-			// Resolve store key for "type.instance" naming (e.g. script.cdn).
-			key := name
-			if dot := strings.Index(name, "."); dot > 0 {
-				key = name[:dot]
-			}
-			probes, supported := store.Diagnose(cmd.Context(), key, scfg, hint)
-			out.Stores = append(out.Stores, doctorStoreReport{Store: name, Supported: supported, Probes: probes})
-			for _, p := range probes {
-				if p.Status == "fail" {
-					anyFail = true
-				}
-			}
+		result, err := apkgo.Diagnose(cmd.Context(), apkgo.DiagnoseJob{
+			Config:  cfg,
+			Stores:  stores,
+			Package: flagDoctorPackage,
+			APKFile: flagDoctorFile,
+		})
+		if err != nil {
+			return err
 		}
 
 		if flagOutput == "text" {
-			renderDoctorText(out)
+			renderDoctorText(result)
 		} else {
-			writeOutput(out)
+			writeOutput(result)
 		}
 
-		if anyFail {
+		if result.AnyFailed() {
 			exitCode = 1
 		}
 		return nil
 	},
-}
-
-// cleanStoreCfg strips hook keys so they are not handed to a diagnoser
-// as if they were credentials.
-func cleanStoreCfg(in map[string]string) map[string]string {
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		if k == "before" || k == "after" {
-			continue
-		}
-		out[k] = v
-	}
-	return out
 }
 
 // renderDoctorText prints a compact summary by default and an
@@ -141,13 +79,13 @@ func cleanStoreCfg(in map[string]string) map[string]string {
 // Default: one line per store, sorted with errors first so the most
 // urgent thing is at the top of the screen. Trailing summary line
 // counts ready / needing-package / errored stores.
-func renderDoctorText(out doctorOutput) {
+func renderDoctorText(out *apkgo.DiagnoseResult) {
 	tty := stdoutIsTTY()
 
 	type row struct {
 		store    string
 		bucket   string // "fail" | "skip" | "ready" | "unsupported"
-		report   doctorStoreReport
+		report   apkgo.StoreReport
 		oneLiner string
 	}
 	rows := make([]row, 0, len(out.Stores))
@@ -233,7 +171,7 @@ func renderDoctorText(out doctorOutput) {
 // configured?) is answered. Skipped probes mean "this check could
 // have run with --package" but are not a problem on their own; pass
 // --package or use -v to see the full breakdown.
-func storeBucket(r doctorStoreReport) string {
+func storeBucket(r apkgo.StoreReport) string {
 	if !r.Supported {
 		return "unsupported"
 	}
@@ -266,7 +204,7 @@ func storeBucket(r doctorStoreReport) string {
 //   fail:  ❌ <probe>: <error>
 //   skip:    (blank) needs --package for full check
 //   unsup:   (blank) doctor not implemented
-func storeOneLiner(r doctorStoreReport) string {
+func storeOneLiner(r apkgo.StoreReport) string {
 	if !r.Supported {
 		return "   doctor not implemented"
 	}
