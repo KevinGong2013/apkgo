@@ -27,12 +27,12 @@ import (
 func init() {
 	store.Register("tencent", store.ConfigSchema{
 		Name:       "tencent",
-		ConsoleURL: "https://app.open.qq.com",
+		ConsoleURL: "https://wikinew.open.qq.com/index.html#/iwiki/4015262492",
 		Fields: []store.FieldSchema{
-			{Key: "user_id", Required: true, Desc: "Tencent open platform user ID"},
-			{Key: "access_secret", Required: true, Desc: "API access secret from open.qq.com"},
-			{Key: "app_id", Required: true, Desc: "Tencent app ID"},
-			{Key: "package_name", Required: true, Desc: "Android package name"},
+			{Key: "user_id", Required: true, Desc: "Tencent open platform developer user ID"},
+			{Key: "access_secret", Required: true, Desc: "API access secret (账户管理 → API 发布接口 → 申请开通)"},
+			{Key: "app_id", Required: true, Desc: "Tencent app ID (visible in console app home page; no listing API exists)"},
+			{Key: "package_name", Required: false, Desc: "Android package name (auto-detected from APK if omitted)"},
 		},
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
@@ -67,12 +67,12 @@ type Store struct {
 }
 
 func New(cfg map[string]string) (*Store, error) {
-	userID := cfg["user_id"]
-	accessSecret := cfg["access_secret"]
-	appID := cfg["app_id"]
-	packageName := cfg["package_name"]
-	if userID == "" || accessSecret == "" || appID == "" || packageName == "" {
-		return nil, fmt.Errorf("user_id, access_secret, app_id, and package_name are required")
+	userID := strings.TrimSpace(cfg["user_id"])
+	accessSecret := strings.TrimSpace(cfg["access_secret"])
+	appID := strings.TrimSpace(cfg["app_id"])
+	packageName := strings.TrimSpace(cfg["package_name"]) // optional; falls back to APK metadata at upload time
+	if userID == "" || accessSecret == "" || appID == "" {
+		return nil, fmt.Errorf("user_id, access_secret, and app_id are required (Tencent has no listing API, so app_id can't be auto-discovered)")
 	}
 
 	client := resty.New().
@@ -89,6 +89,21 @@ func New(cfg map[string]string) (*Store, error) {
 	}, nil
 }
 
+// resolvePackage returns the configured package_name, falling back to
+// the package name parsed from the APK. Tencent's APIs all require
+// pkg_name as a sign param, but apkgo already extracts it from the
+// APK itself, so requiring the user to repeat it in config is just
+// duplicate state that can drift.
+func (s *Store) resolvePackage(fallback string) (string, error) {
+	if s.packageName != "" {
+		return s.packageName, nil
+	}
+	if fallback != "" {
+		return fallback, nil
+	}
+	return "", fmt.Errorf("package_name is empty and no APK package available")
+}
+
 func (s *Store) Name() string { return "tencent" }
 
 func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.UploadResult {
@@ -102,6 +117,11 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	rep := progress.Safe(req.Progress)
 
+	pkg, err := s.resolvePackage(req.PackageName)
+	if err != nil {
+		return err
+	}
+
 	// Pre-declare combined upload bytes for a stable progress bar across
 	// sequential apk + apk64 transfers.
 	total, err := sumFileSizes(req.FilePath, req.File64Path)
@@ -112,7 +132,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	rep.Total(total)
 
 	// 1. Upload APK file → get serial number
-	apkSerial, apkMD5, err := s.uploadFile(req.FilePath, "apk", rep)
+	apkSerial, apkMD5, err := s.uploadFile(pkg, req.FilePath, "apk", rep)
 	if err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
@@ -120,7 +140,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// 2. Upload 64-bit APK if provided
 	var apk64Serial, apk64MD5 string
 	if req.File64Path != "" {
-		apk64Serial, apk64MD5, err = s.uploadFile(req.File64Path, "apk", rep)
+		apk64Serial, apk64MD5, err = s.uploadFile(pkg, req.File64Path, "apk", rep)
 		if err != nil {
 			return fmt.Errorf("upload 64-bit apk: %w", err)
 		}
@@ -128,13 +148,13 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	// 3. Submit update
 	rep.Phase("publishing")
-	if err := s.updateApp(req, apkSerial, apkMD5, apk64Serial, apk64MD5); err != nil {
+	if err := s.updateApp(pkg, req, apkSerial, apkMD5, apk64Serial, apk64MD5); err != nil {
 		return fmt.Errorf("update app: %w", err)
 	}
 
 	// 4. Poll audit status
 	rep.Phase("auditing")
-	return s.pollAuditStatus(ctx)
+	return s.pollAuditStatus(ctx, pkg)
 }
 
 // sumFileSizes totals the byte sizes of the given paths. Empty paths are ignored.
@@ -157,12 +177,12 @@ func sumFileSizes(paths ...string) (int64, error) {
 // serial number and file MD5. Reads the file in a streaming fashion so
 // memory use stays bounded regardless of APK size, and reports byte-level
 // progress to rep via a progress.Reader wrapper.
-func (s *Store) uploadFile(filePath, fileType string, rep progress.Reporter) (serialNumber string, fileMd5 string, err error) {
+func (s *Store) uploadFile(pkg, filePath, fileType string, rep progress.Reporter) (serialNumber string, fileMd5 string, err error) {
 	fileName := filepath.Base(filePath)
 
 	// Get upload info
 	params := url.Values{}
-	params.Set("pkg_name", s.packageName)
+	params.Set("pkg_name", pkg)
 	params.Set("app_id", s.appID)
 	params.Set("file_type", fileType)
 	params.Set("file_name", fileName)
@@ -225,9 +245,9 @@ func (s *Store) uploadFile(filePath, fileType string, rep progress.Reporter) (se
 }
 
 // updateApp submits the app update with APK serial numbers and metadata.
-func (s *Store) updateApp(req *store.UploadRequest, apkSerial, apkMD5, apk64Serial, apk64MD5 string) error {
+func (s *Store) updateApp(pkg string, req *store.UploadRequest, apkSerial, apkMD5, apk64Serial, apk64MD5 string) error {
 	params := url.Values{}
-	params.Set("pkg_name", s.packageName)
+	params.Set("pkg_name", pkg)
 	params.Set("app_id", s.appID)
 	params.Set("deploy_type", "1") // publish immediately after approval
 
@@ -268,7 +288,7 @@ func (s *Store) updateApp(req *store.UploadRequest, apkSerial, apkMD5, apk64Seri
 // transient state — without this an auth/sign failure or "app not found"
 // would loop silently for the full polling window before reporting a
 // useless "polling timed out".
-func (s *Store) pollAuditStatus(ctx context.Context) error {
+func (s *Store) pollAuditStatus(ctx context.Context, pkg string) error {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
@@ -280,7 +300,7 @@ func (s *Store) pollAuditStatus(ctx context.Context) error {
 		}
 
 		params := url.Values{}
-		params.Set("pkg_name", s.packageName)
+		params.Set("pkg_name", pkg)
 		params.Set("app_id", s.appID)
 
 		var resp struct {
@@ -388,18 +408,18 @@ func calcFileMD5(path string) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
-// diagnose is registered with `apkgo doctor`. Single probe:
+// diagnose is registered with `apkgo doctor`. Two probes:
 //
-//   audit-status — calls /query_app_update_status which exercises the
-//                  full HMAC-SHA256 sign + auth path, validates the
-//                  app_id/package_name combination is recognised, and
-//                  reports the most recent submission's audit status
-//                  if any. ret=0 means credentials line up server-side.
-//
-// Tencent has no separate "verify token" call; the read-only status
-// endpoint doubles as the auth probe.
+//   app-detail   — calls /query_app_detail to verify HMAC-SHA256 sign +
+//                  auth path AND that the app_id/pkg_name combo binds
+//                  correctly under this developer (ret 1000009 if not).
+//                  Reports app_name + category for sanity.
+//   audit-status — calls /query_app_update_status to surface the most
+//                  recent submission's audit state (auditing / approved /
+//                  rejected / withdrawn) so the operator knows whether
+//                  the slot is free for a new upload.
 func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
-	probes := make([]store.Probe, 0, 1)
+	probes := make([]store.Probe, 0, 2)
 
 	s, err := New(cfg)
 	if err != nil {
@@ -407,29 +427,55 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 		return probes
 	}
 
-	params := url.Values{}
-	params.Set("pkg_name", s.packageName)
-	params.Set("app_id", s.appID)
+	pkg, err := s.resolvePackage(hint.Package)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "app-detail", Status: "skip",
+			Detail: "needs --package, --file, or package_name in config"})
+		return probes
+	}
 
-	var resp struct {
+	// Probe 1: app-detail
+	var detailResp struct {
+		tencentResp
+		AppName  string `json:"app_name"`
+		Category int    `json:"category"`
+		Feature  string `json:"feature"`
+	}
+	params := url.Values{}
+	params.Set("pkg_name", pkg)
+	params.Set("app_id", s.appID)
+	if err := s.post("/query_app_detail", params, &detailResp); err != nil {
+		probes = append(probes, store.Probe{Name: "app-detail", Status: "fail", Error: err.Error()})
+		return probes
+	}
+	if detailResp.Ret != 0 {
+		probes = append(probes, store.Probe{Name: "app-detail", Status: "fail",
+			Error: fmt.Sprintf("[%d] %s", detailResp.Ret, detailResp.text())})
+		return probes
+	}
+	probes = append(probes, store.Probe{Name: "app-detail", Status: "ok",
+		Detail: fmt.Sprintf("%s → app_name=%q category=%d", pkg, detailResp.AppName, detailResp.Category)})
+
+	// Probe 2: audit-status
+	var auditResp struct {
 		tencentResp
 		AuditStatus int    `json:"audit_status"`
 		AuditReason string `json:"audit_reason"`
 	}
-	if err := s.post("/query_app_update_status", params, &resp); err != nil {
+	if err := s.post("/query_app_update_status", params, &auditResp); err != nil {
 		probes = append(probes, store.Probe{Name: "audit-status", Status: "fail", Error: err.Error()})
 		return probes
 	}
-	if resp.Ret != 0 {
+	if auditResp.Ret != 0 {
 		probes = append(probes, store.Probe{Name: "audit-status", Status: "fail",
-			Error: fmt.Sprintf("[%d] %s", resp.Ret, resp.text())})
+			Error: fmt.Sprintf("[%d] %s", auditResp.Ret, auditResp.text())})
 		return probes
 	}
-	detail := fmt.Sprintf("audit_status=%d (%s)", resp.AuditStatus, auditStatusName(resp.AuditStatus))
-	if resp.AuditReason != "" {
-		detail += " reason=" + resp.AuditReason
+	auditDetail := fmt.Sprintf("audit_status=%d (%s)", auditResp.AuditStatus, auditStatusName(auditResp.AuditStatus))
+	if auditResp.AuditReason != "" {
+		auditDetail += " reason=" + auditResp.AuditReason
 	}
-	probes = append(probes, store.Probe{Name: "audit-status", Status: "ok", Detail: detail})
+	probes = append(probes, store.Probe{Name: "audit-status", Status: "ok", Detail: auditDetail})
 	return probes
 }
 
