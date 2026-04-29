@@ -37,6 +37,23 @@ func init() {
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
+	store.RegisterDiagnoser("tencent", diagnose)
+}
+
+// tencentResp is the standard response envelope. Some endpoints use
+// `message` instead of `msg` for the human text; text() prefers
+// whichever is non-empty.
+type tencentResp struct {
+	Ret     int    `json:"ret"`
+	Msg     string `json:"msg,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func (r tencentResp) text() string {
+	if r.Msg != "" {
+		return r.Msg
+	}
+	return r.Message
 }
 
 const baseURL = "https://p.open.qq.com/open_file/developer_api"
@@ -151,8 +168,7 @@ func (s *Store) uploadFile(filePath, fileType string, rep progress.Reporter) (se
 	params.Set("file_name", fileName)
 
 	var resp struct {
-		Ret          int    `json:"ret"`
-		Msg          string `json:"msg"`
+		tencentResp
 		PreSignURL   string `json:"pre_sign_url"`
 		SerialNumber string `json:"serial_number"`
 	}
@@ -160,7 +176,10 @@ func (s *Store) uploadFile(filePath, fileType string, rep progress.Reporter) (se
 		return "", "", err
 	}
 	if resp.Ret != 0 {
-		return "", "", fmt.Errorf("[%d] %s", resp.Ret, resp.Msg)
+		return "", "", fmt.Errorf("[%d] %s", resp.Ret, resp.text())
+	}
+	if resp.PreSignURL == "" || resp.SerialNumber == "" {
+		return "", "", fmt.Errorf("get_file_upload_info: empty pre_sign_url or serial_number (ret=%d msg=%q)", resp.Ret, resp.text())
 	}
 
 	// Calculate MD5 (streaming, no buffering of the whole file)
@@ -233,20 +252,22 @@ func (s *Store) updateApp(req *store.UploadRequest, apkSerial, apkMD5, apk64Seri
 		params.Set("feature", req.ReleaseNotes)
 	}
 
-	var resp struct {
-		Ret int    `json:"ret"`
-		Msg string `json:"msg"`
-	}
+	var resp tencentResp
 	if err := s.post("/update_app", params, &resp); err != nil {
 		return err
 	}
 	if resp.Ret != 0 {
-		return fmt.Errorf("[%d] %s", resp.Ret, resp.Msg)
+		return fmt.Errorf("[%d] %s", resp.Ret, resp.text())
 	}
 	return nil
 }
 
 // pollAuditStatus checks the audit status until resolved or timeout.
+//
+// A non-zero envelope `ret` is treated as a hard failure rather than a
+// transient state — without this an auth/sign failure or "app not found"
+// would loop silently for the full polling window before reporting a
+// useless "polling timed out".
 func (s *Store) pollAuditStatus(ctx context.Context) error {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -263,13 +284,15 @@ func (s *Store) pollAuditStatus(ctx context.Context) error {
 		params.Set("app_id", s.appID)
 
 		var resp struct {
-			Ret         int    `json:"ret"`
-			Msg         string `json:"msg"`
+			tencentResp
 			AuditStatus int    `json:"audit_status"`
 			AuditReason string `json:"audit_reason"`
 		}
 		if err := s.post("/query_app_update_status", params, &resp); err != nil {
 			return err
+		}
+		if resp.Ret != 0 {
+			return fmt.Errorf("query audit status: [%d] %s", resp.Ret, resp.text())
 		}
 
 		switch resp.AuditStatus {
@@ -283,11 +306,18 @@ func (s *Store) pollAuditStatus(ctx context.Context) error {
 		// status 1 = auditing, continue polling
 	}
 
-	// Timeout is not an error — the update was submitted successfully
+	// Timeout is not an error — the update was submitted successfully and
+	// is in audit. Mirror the huawei/oppo pattern by pointing the operator
+	// at the console for the rest.
 	return nil
 }
 
 // post makes a signed POST request to the Tencent API.
+//
+// HTTP status is checked before attempting JSON decode so a 4xx/5xx
+// with a non-JSON body (gateway HTML, empty, etc.) surfaces verbatim
+// instead of being silently mapped to a zero-valued result struct
+// (which would look like ret=0 success).
 func (s *Store) post(path string, params url.Values, result any) error {
 	// Add common params
 	params.Set("user_id", s.userID)
@@ -296,14 +326,31 @@ func (s *Store) post(path string, params url.Values, result any) error {
 	// Calculate sign
 	params.Set("sign", s.calcSign(params))
 
-	resp, err := s.client.R().
+	httpResp, err := s.client.R().
 		SetBody(params.Encode()).
 		Post(path)
 	if err != nil {
 		return err
 	}
+	body := httpResp.Body()
+	if httpResp.IsError() {
+		return fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(string(body)))
+	}
+	if jerr := json.Unmarshal(body, result); jerr != nil {
+		return fmt.Errorf("decode response (HTTP %d): %v: %s",
+			httpResp.StatusCode(), jerr, truncateBody(string(body)))
+	}
+	return nil
+}
 
-	return json.Unmarshal(resp.Body(), result)
+// truncateBody caps a response body at 500 chars so diagnostic errors
+// stay readable.
+func truncateBody(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 500 {
+		return s[:500] + "...(truncated)"
+	}
+	return s
 }
 
 // calcSign computes HMAC-SHA256 signature over sorted params.
@@ -339,4 +386,67 @@ func calcFileMD5(path string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+// diagnose is registered with `apkgo doctor`. Single probe:
+//
+//   audit-status — calls /query_app_update_status which exercises the
+//                  full HMAC-SHA256 sign + auth path, validates the
+//                  app_id/package_name combination is recognised, and
+//                  reports the most recent submission's audit status
+//                  if any. ret=0 means credentials line up server-side.
+//
+// Tencent has no separate "verify token" call; the read-only status
+// endpoint doubles as the auth probe.
+func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
+	probes := make([]store.Probe, 0, 1)
+
+	s, err := New(cfg)
+	if err != nil {
+		probes = append(probes, store.Probe{Name: "config", Status: "fail", Error: err.Error()})
+		return probes
+	}
+
+	params := url.Values{}
+	params.Set("pkg_name", s.packageName)
+	params.Set("app_id", s.appID)
+
+	var resp struct {
+		tencentResp
+		AuditStatus int    `json:"audit_status"`
+		AuditReason string `json:"audit_reason"`
+	}
+	if err := s.post("/query_app_update_status", params, &resp); err != nil {
+		probes = append(probes, store.Probe{Name: "audit-status", Status: "fail", Error: err.Error()})
+		return probes
+	}
+	if resp.Ret != 0 {
+		probes = append(probes, store.Probe{Name: "audit-status", Status: "fail",
+			Error: fmt.Sprintf("[%d] %s", resp.Ret, resp.text())})
+		return probes
+	}
+	detail := fmt.Sprintf("audit_status=%d (%s)", resp.AuditStatus, auditStatusName(resp.AuditStatus))
+	if resp.AuditReason != "" {
+		detail += " reason=" + resp.AuditReason
+	}
+	probes = append(probes, store.Probe{Name: "audit-status", Status: "ok", Detail: detail})
+	return probes
+}
+
+// auditStatusName labels Tencent's audit_status integer values for readability.
+func auditStatusName(s int) string {
+	switch s {
+	case 0:
+		return "no submission"
+	case 1:
+		return "auditing"
+	case 2:
+		return "rejected"
+	case 3:
+		return "approved"
+	case 8:
+		return "withdrawn"
+	default:
+		return "unknown"
+	}
 }
