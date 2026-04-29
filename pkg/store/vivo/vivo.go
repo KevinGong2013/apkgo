@@ -228,8 +228,14 @@ type envelope struct {
 }
 
 // failed reports whether the response should be treated as an error.
+//
+// vivo's success responses can carry SubCode in two forms depending on
+// the endpoint: most return an empty SubCode, but some (notably the
+// split-arch upload paths app.upload.apk.app.32 / .64) return the
+// literal string "0". Treat both as success — only a non-empty,
+// non-zero SubCode is a real business-layer error.
 func (e envelope) failed() bool {
-	return e.Code != 0 || e.SubCode != ""
+	return e.Code != 0 || (e.SubCode != "" && e.SubCode != "0")
 }
 
 func (e envelope) text() string {
