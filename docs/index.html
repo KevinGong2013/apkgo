@@ -531,6 +531,73 @@ footer {
   margin: 0 auto;
 }
 
+/* ═══ CLOUD BANNER ═══ */
+.cloud-section { padding: 60px 24px; }
+
+.cloud-banner {
+  max-width: 1080px; margin: 0 auto;
+  background: linear-gradient(135deg, rgba(0,229,255,0.08), rgba(0,229,255,0.02));
+  border: 1px solid var(--border-bright);
+  border-radius: 14px;
+  padding: 40px 48px;
+  display: flex; align-items: center; gap: 40px; flex-wrap: wrap;
+  position: relative; overflow: hidden;
+}
+
+.cloud-banner::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+}
+
+.cloud-banner::after {
+  content: '';
+  position: absolute; top: -50%; right: -10%; width: 400px; height: 400px;
+  background: radial-gradient(circle, rgba(0,229,255,0.06) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.cloud-content { flex: 1; min-width: 280px; position: relative; z-index: 1; }
+
+.cloud-tag {
+  display: inline-block;
+  font-family: var(--mono); font-size: 0.7rem; font-weight: 700;
+  padding: 4px 10px; border-radius: 4px;
+  background: var(--accent-glow); color: var(--accent);
+  letter-spacing: 0.1em; text-transform: uppercase;
+  margin-bottom: 14px;
+}
+
+.cloud-title {
+  font-size: 1.6rem; font-weight: 700;
+  letter-spacing: -0.02em; line-height: 1.3;
+  margin-bottom: 12px;
+}
+
+.cloud-desc {
+  color: var(--text-dim);
+  font-size: 0.92rem; line-height: 1.7;
+  max-width: 580px;
+}
+
+.cloud-action {
+  display: flex; flex-direction: column;
+  gap: 10px; align-items: flex-end;
+  position: relative; z-index: 1;
+}
+
+.cloud-url {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+@media (max-width: 720px) {
+  .cloud-banner { padding: 32px 24px; gap: 24px; }
+  .cloud-title { font-size: 1.3rem; }
+  .cloud-action { align-items: flex-start; width: 100%; }
+}
+
 /* ═══ RESPONSIVE ═══ */
 @media (max-width: 640px) {
   .logo { font-size: 3rem; }
@@ -561,6 +628,7 @@ footer {
   <div class="hero-buttons">
     <a href="https://github.com/KevinGong2013/apkgo" class="btn btn-primary">GitHub</a>
     <a href="https://github.com/KevinGong2013/apkgo/releases" class="btn btn-ghost">Download</a>
+    <a href="https://apkgo.baici.tech" class="btn btn-ghost">Try Cloud →</a>
   </div>
 </section>
 
@@ -585,6 +653,22 @@ footer {
       &nbsp;&nbsp;&nbsp;&nbsp;{ <span class="t-key">"store"</span><span class="t-dim">:</span> <span class="t-str">"oppo"</span><span class="t-dim">,</span> <span class="t-key">"success"</span><span class="t-dim">:</span> <span class="t-bool-true">true</span><span class="t-dim">,</span> <span class="t-key">"duration_ms"</span><span class="t-dim">:</span> <span class="t-num">12100</span> }<br>
       &nbsp;&nbsp;]<br>
       <span class="t-dim">}</span>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<section class="cloud-section">
+  <div class="cloud-banner">
+    <div class="cloud-content">
+      <span class="cloud-tag">apkgo cloud</span>
+      <h2 class="cloud-title">不想搭 CI、不想碰命令行？</h2>
+      <p class="cloud-desc">试试托管版 apkgo —— 浏览器打开就能发版，凭证云端托管、多人协作、发布历史可追溯，免装免运维，运营和产品同事也能独立上手。</p>
+    </div>
+    <div class="cloud-action">
+      <a href="https://apkgo.baici.tech" class="btn btn-primary">立即试用 →</a>
+      <span class="cloud-url">apkgo.baici.tech</span>
     </div>
   </div>
 </section>
