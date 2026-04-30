@@ -21,7 +21,7 @@ import (
 func init() {
 	store.Register("huawei", store.ConfigSchema{
 		Name:       "huawei",
-		ConsoleURL: "https://developer.huawei.com/consumer/cn/service/josp/agc/index.html#/myApp",
+		ConsoleURL: "https://developer.huawei.com/consumer/cn/doc/AppGallery-connect-Guides/agcapi-getstarted-0000001111845114#section1785535363715",
 		Fields: []store.FieldSchema{
 			{Key: "service_account", Required: false, Desc: "Service Account credential JSON (raw or base64); recommended"},
 			{Key: "service_account_file", Required: false, Desc: "Path to Service Account credential JSON file"},
