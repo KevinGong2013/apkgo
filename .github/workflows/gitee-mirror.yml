@@ -12,6 +12,10 @@ on:
     tags: ["**"]
   workflow_dispatch:
 
+# checkout reads the repo via GITHUB_TOKEN; the actual push uses GITEE_TOKEN.
+permissions:
+  contents: read
+
 concurrency:
   group: gitee-mirror
   cancel-in-progress: false
