@@ -174,6 +174,12 @@ func handleListEvents(w http.ResponseWriter, r *http.Request) {
 	if day == "" {
 		day = time.Now().UTC().Format("2006-01-02")
 	}
+	// Reject anything that isn't a literal ISO date so user input can't
+	// inject path separators or `..` segments into the filename below.
+	if _, err := time.Parse("2006-01-02", day); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid date, expected YYYY-MM-DD"})
+		return
+	}
 
 	filename := filepath.Join(dataDir, fmt.Sprintf("events_%s.jsonl", day))
 	data, err := os.ReadFile(filename)
