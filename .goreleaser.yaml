@@ -15,7 +15,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X github.com/KevinGong2013/apkgo/cmd.Version={{ .Version }} -X github.com/KevinGong2013/apkgo/cmd.Commit={{ .Commit }} -X github.com/KevinGong2013/apkgo/cmd.Date={{ .Date }} -X github.com/KevinGong2013/apkgo/cmd.BuiltBy=goreleaser
+      - -s -w -X github.com/KevinGong2013/apkgo/v3/cmd.Version={{ .Version }} -X github.com/KevinGong2013/apkgo/v3/cmd.Commit={{ .Commit }} -X github.com/KevinGong2013/apkgo/v3/cmd.Date={{ .Date }} -X github.com/KevinGong2013/apkgo/v3/cmd.BuiltBy=goreleaser
 
 archives:
   - formats:
