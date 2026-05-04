@@ -26,7 +26,6 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "apkgo",
 	Short: "Upload APKs to multiple Android app stores",
-	Long:  "A CLI tool for distributing APK packages to Huawei, Xiaomi, OPPO, vivo, Honor, and custom servers. Designed for AI agent integration.",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Configure slog to stderr so stdout stays clean for structured output
 		level := slog.LevelWarn
@@ -46,6 +45,10 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.Version = Version
+	rootCmd.Long = fmt.Sprintf("apkgo %s — A CLI tool for distributing APK packages to Huawei, Xiaomi, OPPO, vivo, Honor, and custom servers. Designed for AI agent integration.", Version)
+	rootCmd.SetVersionTemplate("apkgo {{.Version}}\n")
+
 	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "apkgo.yaml", "config file path")
 	rootCmd.PersistentFlags().StringVar(&flagCredsFrom, "creds-from", "", `read JSON config from a non-disk source: "stdin" or "fd:N" (overrides --config when set)`)
 	rootCmd.PersistentFlags().StringVarP(&flagOutput, "output", "o", "json", "output format: json or text")
