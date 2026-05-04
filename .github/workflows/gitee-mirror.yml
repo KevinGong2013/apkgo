@@ -1,0 +1,42 @@
+name: gitee-mirror
+
+# Push every commit and tag to the Gitee mirror so users in China can
+# clone/install without going through GitHub. Failure here doesn't
+# affect anything else — the GitHub repo is already authoritative, and
+# a Gitee outage just means the mirror is one push behind until the
+# next run.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: gitee-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_OWNER: ForTheDream
+          GITEE_REPO: apkgo
+        run: |
+          set -eo pipefail
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "GITEE_TOKEN secret not set; skipping mirror push."
+            exit 0
+          fi
+          # OAuth-style URL: token used as the password, username can be
+          # any non-empty string. Avoids exposing the token in the local
+          # remote URL on the runner's reflog.
+          git push --mirror \
+            "https://oauth2:${GITEE_TOKEN}@gitee.com/${GITEE_OWNER}/${GITEE_REPO}.git"
