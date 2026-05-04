@@ -25,8 +25,8 @@ var Disabled bool
 // Event represents an anonymous usage event.
 type Event struct {
 	InstallID string         `json:"install_id"`
-	Event     string         `json:"event"`     // "upload" | "serve_start"
-	Source    string         `json:"source"`     // "cli" | "gui"
+	Event     string         `json:"event"`     // "upload"
+	Source    string         `json:"source"`     // "cli"
 	Version   string        `json:"version"`
 	OS        string         `json:"os"`
 	Arch      string         `json:"arch"`

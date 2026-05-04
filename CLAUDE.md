@@ -15,7 +15,6 @@ go install github.com/KevinGong2013/apkgo@latest
 apkgo init [-s store1,store2] [-c config.yaml]   # Generate config file
 apkgo upload -f <apk> [flags]                     # Upload APK to stores
 apkgo doctor [-s stores] [-f apk | -p package]    # Diagnose store credentials/permissions
-apkgo serve [-p port]                             # Start web GUI for uploading
 apkgo stores                                      # List stores and config schema (JSON)
 apkgo version                                     # Version info (JSON)
 ```
@@ -206,7 +205,6 @@ pkg/store/     Store interface + implementations (self-registering via init())
 pkg/config/    YAML config + env var loading
 pkg/apk/       APK metadata parser
 pkg/uploader/  Concurrent upload orchestrator
-pkg/server/    Web GUI server (embedded static files)
 ```
 
 Adding a new store: create `pkg/store/<name>/<name>.go`, implement `store.Store` interface, call `store.Register()` in `init()`. Zero changes to existing code.

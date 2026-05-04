@@ -117,17 +117,6 @@ apkgo config export --out config.enc
 apkgo config import config.enc
 ```
 
-## 不只是 CLI
-
-还有 Web GUI：
-
-```bash
-apkgo serve
-# 打开 http://localhost:8080
-```
-
-拖拽 APK、勾选商店、点击上传。适合不想碰命令行的运营同学。
-
 ## 架构：加一个商店 = 一个文件
 
 apkgo 用 Go 的 `init()` 自注册模式。新增一个商店只需要：

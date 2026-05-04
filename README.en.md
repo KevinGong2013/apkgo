@@ -664,18 +664,6 @@ docker run --rm \
   upload -f /app.apk --notes "Bug fixes"
 ```
 
-## Web GUI
-
-Don't want the command line? `apkgo serve` starts a local web UI:
-
-```bash
-apkgo serve                    # http://localhost:8080
-apkgo serve -p 9090            # custom port
-apkgo serve -c production.yaml # custom config file
-```
-
-Open the browser, drop in an APK, pick the stores, fill in release notes, click upload. Friendly for non-engineering teammates.
-
 ## Sync config across machines
 
 Encrypted export/import for safely sharing store credentials between machines or with CI:
@@ -710,7 +698,6 @@ Encryption: AES-256-GCM with scrypt key derivation; a wrong password produces a 
 apkgo init          [-s store1,store2] [-c config.yaml]
 apkgo upload        -f <apk> [--file64 <apk>] [-s stores] [-n notes] [--notes-file path] [--dry-run] [-t timeout]
 apkgo doctor        [-s stores] [-f <apk> | -p <package>]
-apkgo serve         [-p port] [-c config.yaml]
 apkgo config export --out <file>
 apkgo config import <file>
 apkgo stores        [-o json|text]
@@ -738,7 +725,7 @@ apkgo collects anonymous usage stats to improve the product. **It never collects
 | Anonymous install ID (random UUID) | Accounts, credentials |
 | Store names used | Package name, app name |
 | Upload success/failure | APK file content |
-| CLI/GUI usage | Release notes content |
+| CLI usage | Release notes content |
 | apkgo version, OS/arch | IP address |
 
 Opt out: `--no-telemetry` or `APKGO_TELEMETRY=off`

@@ -116,7 +116,8 @@ func wipe(b []byte) {
 }
 
 // LoadOrEmpty is like Load but returns an empty config instead of an error
-// when no stores are configured. Used by `apkgo serve` for zero-config startup.
+// when the file is missing. Used by callers that need best-effort access
+// to optional config (e.g. update-check intervals) without failing.
 func LoadOrEmpty(path string) *Config {
 	cfg, err := Load(path)
 	if err != nil {

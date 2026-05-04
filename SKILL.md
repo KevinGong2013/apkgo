@@ -52,7 +52,6 @@ huawei, xiaomi, oppo, vivo, honor, tencent, googleplay, samsung, pgyer, fir, scr
 apkgo stores                    # Discover config schema for each store (JSON)
 apkgo init [--store names]      # Generate config file with comments
 apkgo upload -f <apk> [flags]   # Upload APK to configured stores
-apkgo serve [-p port]           # Start web GUI for uploading
 apkgo version                   # Version info
 ```
 
