@@ -2,6 +2,8 @@
 
 ![GitHub release](https://img.shields.io/github/v/release/KevinGong2013/apkgo) ![build](https://img.shields.io/github/actions/workflow/status/kevingong2013/apkgo/release.yml?style=flat-square) ![go](https://img.shields.io/github/go-mod/go-version/kevingong2013/apkgo?style=flat-square) ![license](https://img.shields.io/github/license/kevingong2013/apkgo?style=flat-square)
 
+🌐 **Language / 语言**: [English](./README.en.md) · **简体中文**
+
 一行命令，将 APK 发布到所有主流安卓应用商店。为 CI/CD 和 AI Agent 设计。
 
 > **不想搭 CI、不想碰命令行？** 试试托管版 [**apkgo cloud**](https://apkgo.baici.tech) —— 浏览器打开就能发版，凭证云端托管、多人协作、发布历史可追溯，免装免运维，运营和产品同事也能独立上手。
