@@ -16,26 +16,21 @@ The CLI sections below describe the local binary; everything cloud-specific is g
 
 ## Install
 
-Detect the platform and install accordingly:
-
 ```bash
-# Linux (direct binary)
-curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Linux_x86_64.tar.gz | tar xz -C /usr/local/bin apkgo
+# macOS / Linux — auto-detects OS/arch, verifies SHA-256
+curl -fsSL https://apkgo.com.cn/install.sh | sh
 
-# macOS Apple Silicon (direct binary)
-curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Darwin_arm64.tar.gz | tar xz -C /usr/local/bin apkgo
+# If /usr/local/bin is not writable:
+#   curl -fsSL https://apkgo.com.cn/install.sh | sudo sh
+#   APKGO_INSTALL_DIR="$HOME/.local/bin" sh -c "$(curl -fsSL https://apkgo.com.cn/install.sh)"
 
-# macOS Intel (direct binary)
-curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Darwin_x86_64.tar.gz | tar xz -C /usr/local/bin apkgo
+# Alternatives
+go install github.com/KevinGong2013/apkgo@latest          # Go toolchain
+docker pull ghcr.io/kevingong2013/apkgo:latest            # Docker
 
-# Windows (PowerShell)
-# Download from https://github.com/KevinGong2013/apkgo/releases/latest and add to PATH
-
-# Go
-go install github.com/KevinGong2013/apkgo@latest
-
-# Docker
-docker pull ghcr.io/kevingong2013/apkgo:latest
+# Windows: download apkgo_Windows_x86_64.zip from
+#   https://github.com/KevinGong2013/apkgo/releases/latest
+# then add apkgo.exe to PATH.
 ```
 
 ## When to use
@@ -225,7 +220,7 @@ All output is structured JSON on stdout (logs go to stderr):
 
 ```bash
 # 1. Install (if needed)
-which apkgo || curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Linux_x86_64.tar.gz | tar xz -C /usr/local/bin apkgo
+which apkgo || curl -fsSL https://apkgo.com.cn/install.sh | sh
 
 # 2. Discover required fields
 apkgo stores

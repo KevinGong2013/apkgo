@@ -10,10 +10,32 @@
 
 ## 安装
 
+**macOS / Linux** — 一行脚本自动识别 OS/架构、下载、校验 SHA-256：
+
+```bash
+curl -fsSL https://apkgo.com.cn/install.sh | sh
+```
+
+> 默认装到 `/usr/local/bin`，不可写时会提示用 `sudo` 或 `APKGO_INSTALL_DIR=$HOME/.local/bin sh`。
+> 锁版本：`APKGO_VERSION=v3.1.0 sh`。
+
+**其他方式：**
+
 ```bash
 # AI Agent Skill (支持 Claude Code、Cursor、Windsurf 等 40+ agent)
 npx skills add KevinGong2013/apkgo
 
+# Go
+go install github.com/KevinGong2013/apkgo@latest
+
+# Docker
+docker pull ghcr.io/kevingong2013/apkgo:latest
+```
+
+<details>
+<summary>手动下载 / Windows</summary>
+
+```bash
 # macOS (Apple Silicon)
 curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Darwin_arm64.tar.gz | tar xz -C /usr/local/bin apkgo
 
@@ -29,13 +51,9 @@ curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo
 # Windows (PowerShell)
 # 从 https://github.com/KevinGong2013/apkgo/releases/latest 下载 apkgo_Windows_x86_64.zip
 # 解压后将 apkgo.exe 添加到 PATH
-
-# Go
-go install github.com/KevinGong2013/apkgo@latest
-
-# Docker
-docker pull ghcr.io/kevingong2013/apkgo:latest
 ```
+
+</details>
 
 ## 快速开始
 

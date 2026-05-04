@@ -10,10 +10,32 @@ One command to publish an APK to every major Chinese Android app store. Built fo
 
 ## Install
 
+**macOS / Linux** — one-liner that detects OS/arch, downloads, and verifies SHA-256:
+
+```bash
+curl -fsSL https://apkgo.com.cn/install.sh | sh
+```
+
+> Defaults to `/usr/local/bin`. If it isn't writable, the script will tell you to either use `sudo` or set `APKGO_INSTALL_DIR=$HOME/.local/bin`.
+> Pin a version: `APKGO_VERSION=v3.1.0 sh`.
+
+**Other methods:**
+
 ```bash
 # AI Agent Skill (works with Claude Code, Cursor, Windsurf, and 40+ agents)
 npx skills add KevinGong2013/apkgo
 
+# Go
+go install github.com/KevinGong2013/apkgo@latest
+
+# Docker
+docker pull ghcr.io/kevingong2013/apkgo:latest
+```
+
+<details>
+<summary>Manual download / Windows</summary>
+
+```bash
 # macOS (Apple Silicon)
 curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo_Darwin_arm64.tar.gz | tar xz -C /usr/local/bin apkgo
 
@@ -29,13 +51,9 @@ curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo
 # Windows (PowerShell)
 # Download apkgo_Windows_x86_64.zip from https://github.com/KevinGong2013/apkgo/releases/latest
 # Extract and add apkgo.exe to PATH
-
-# Go
-go install github.com/KevinGong2013/apkgo@latest
-
-# Docker
-docker pull ghcr.io/kevingong2013/apkgo:latest
 ```
+
+</details>
 
 ## Quick start
 
