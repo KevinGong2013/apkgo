@@ -4,7 +4,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -191,7 +190,6 @@ func decrypt(data []byte, passphrase string) ([]byte, error) {
 }
 
 func deriveKey(passphrase string, salt []byte) ([]byte, error) {
-	// scrypt with recommended params: N=32768, r=8, p=1, keyLen=32
-	h := sha256.Sum256([]byte(passphrase))
-	return scrypt.Key(h[:], salt, 32768, 8, 1, 32)
+	// scrypt with OWASP-recommended params: N=32768, r=8, p=1, keyLen=32
+	return scrypt.Key([]byte(passphrase), salt, 32768, 8, 1, 32)
 }
