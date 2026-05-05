@@ -257,11 +257,13 @@ Hosted at **`https://apkgo.baici.tech`** — credentials are encrypted server-si
 
 ### Authentication
 
-Pass the API key in the `X-API-Key` header. Discover your `orgId` once:
+The Open API base path is **`/openapi/v1`**. Pass the API key in the `X-API-Key` header — that's it. The organization is bound to the key itself, so `orgId` does **not** appear in any URL (and there is no org-discovery step).
 
 ```bash
-curl -H "X-API-Key: apkgo_your_key" https://apkgo.baici.tech/api/v1/orgs
+curl -H "X-API-Key: apkgo_your_key" https://apkgo.baici.tech/openapi/v1/apps
 ```
+
+JWT bearer tokens are not accepted on `/openapi/v1` — that surface is dashboard-only at `/api/v1/orgs/{orgId}/...`.
 
 ### Upload an APK
 
@@ -271,7 +273,7 @@ Simplest form — distributes to every store the app has bound:
 curl -X POST \
   -H "X-API-Key: apkgo_your_key" \
   -F "apk=@app-release.apk" \
-  https://apkgo.baici.tech/api/v1/orgs/{orgId}/uploads
+  https://apkgo.baici.tech/openapi/v1/uploads
 ```
 
 Returns **`202 Accepted`** with a `job_id`. Upload runs asynchronously on the server.
@@ -290,14 +292,14 @@ curl -X POST \
   -F "apk=@app-release.apk" \
   -F 'target_stores=["huawei","xiaomi","oppo","vivo"]' \
   -F "release_notes=v1.2.0 bug fixes" \
-  https://apkgo.baici.tech/api/v1/orgs/{orgId}/uploads
+  https://apkgo.baici.tech/openapi/v1/uploads
 ```
 
 ### Poll job status
 
 ```bash
 curl -H "X-API-Key: apkgo_your_key" \
-  https://apkgo.baici.tech/api/v1/orgs/{orgId}/uploads/{jobId}
+  https://apkgo.baici.tech/openapi/v1/uploads/{jobId}
 ```
 
 Status flow: `pending` → `processing` → `completed` | `failed`. Per-store results appear in the `results` array as each store finishes; partial completion is visible mid-job.
@@ -327,11 +329,21 @@ Verify signature with `X-Webhook-Signature: sha256=<hex>` (HMAC-SHA256 of the ra
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET  | `/api/v1/orgs` | List orgs the API key belongs to |
-| POST | `/api/v1/orgs/{orgId}/uploads` | Upload APK + dispatch |
-| GET  | `/api/v1/orgs/{orgId}/uploads/{jobId}` | Job status + per-store results |
+| POST | `/openapi/v1/uploads` | Upload APK + dispatch |
+| GET  | `/openapi/v1/uploads` | List recent jobs (`limit`, `offset` query params) |
+| GET  | `/openapi/v1/uploads/{jobId}` | Job status + per-store results |
+| POST | `/openapi/v1/uploads/{jobId}/cancel` | Cancel a pending/processing job |
+| POST | `/openapi/v1/uploads/{jobId}/retry` | Re-run a failed job |
+| GET  | `/openapi/v1/apps` | List apps in the org |
+| POST | `/openapi/v1/apps` | Create an app (uploads auto-create, so rarely needed) |
+| GET  | `/openapi/v1/apps/{appId}` | App detail |
+| GET  | `/openapi/v1/credentials` | List credentials — useful for resolving store_name ↔ UUID |
 
-Errors: `{"error": "..."}` with HTTP `401` (bad key), `403` (no permission), `429` (>100 req/min).
+Credential mutation (create/update/delete) is dashboard-only — secrets never leave the dashboard surface.
+
+Every endpoint above requires the API key to carry the **`upload`** permission (default for newly-created keys). The wildcard `"*"` permission grants all current and future endpoints.
+
+Errors: `{"error": "..."}` with HTTP `401` (missing/invalid/expired key), `403` (missing permission, or org over plan quota), `429` (>600 req/min per key).
 
 ### Differences from CLI
 
@@ -343,18 +355,15 @@ Errors: `{"error": "..."}` with HTTP `401` (bad key), `403` (no permission), `42
 ### Cloud workflow
 
 ```bash
-# 1. Discover orgId
-ORG=$(curl -sH "X-API-Key: $APKGO_KEY" https://apkgo.baici.tech/api/v1/orgs | jq -r '.[0].id')
-
-# 2. Upload
+# 1. Upload — orgId is bound to the API key, no discovery needed
 JOB=$(curl -sX POST -H "X-API-Key: $APKGO_KEY" \
   -F "apk=@app-release.apk" -F "release_notes=v1.0.0" \
-  https://apkgo.baici.tech/api/v1/orgs/$ORG/uploads | jq -r '.id')
+  https://apkgo.baici.tech/openapi/v1/uploads | jq -r '.id')
 
-# 3. Poll until done (or rely on webhook)
+# 2. Poll until done (or rely on webhook)
 while :; do
   STATUS=$(curl -sH "X-API-Key: $APKGO_KEY" \
-    https://apkgo.baici.tech/api/v1/orgs/$ORG/uploads/$JOB | jq -r '.status')
+    https://apkgo.baici.tech/openapi/v1/uploads/$JOB | jq -r '.status')
   case "$STATUS" in
     completed) echo "✅ done"; break ;;
     failed)    echo "❌ failed"; exit 1 ;;
