@@ -260,7 +260,7 @@ Hosted at **`https://apkgo.baici.tech`** — credentials are encrypted server-si
 The Open API base path is **`/openapi/v1`**. Pass the API key in the `X-API-Key` header — that's it. The organization is bound to the key itself, so `orgId` does **not** appear in any URL (and there is no org-discovery step).
 
 ```bash
-curl -H "X-API-Key: apkgo_your_key" https://apkgo.baici.tech/openapi/v1/apps
+curl -H "X-API-Key: apkgo_your_key" https://apkgo.baici.tech/openapi/v1/uploads
 ```
 
 JWT bearer tokens are not accepted on `/openapi/v1` — that surface is dashboard-only at `/api/v1/orgs/{orgId}/...`.
@@ -334,12 +334,8 @@ Verify signature with `X-Webhook-Signature: sha256=<hex>` (HMAC-SHA256 of the ra
 | GET  | `/openapi/v1/uploads/{jobId}` | Job status + per-store results |
 | POST | `/openapi/v1/uploads/{jobId}/cancel` | Cancel a pending/processing job |
 | POST | `/openapi/v1/uploads/{jobId}/retry` | Re-run a failed job |
-| GET  | `/openapi/v1/apps` | List apps in the org |
-| POST | `/openapi/v1/apps` | Create an app (uploads auto-create, so rarely needed) |
-| GET  | `/openapi/v1/apps/{appId}` | App detail |
-| GET  | `/openapi/v1/credentials` | List credentials — useful for resolving store_name ↔ UUID |
 
-Credential mutation (create/update/delete) is dashboard-only — secrets never leave the dashboard surface.
+Uploads are the only resource exposed to the Open API. App and credential management — including binding credentials to apps — is dashboard-only; uploads auto-create the app from the APK's package name and resolve target stores from the bindings configured there.
 
 Every endpoint above requires the API key to carry the **`upload`** permission (default for newly-created keys). The wildcard `"*"` permission grants all current and future endpoints.
 
