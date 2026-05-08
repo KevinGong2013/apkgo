@@ -7,6 +7,8 @@
 One command to publish an APK to every major Chinese Android app store. Built for CI/CD and AI agents.
 
 > **Don't want to run CI or touch a terminal?** Try the hosted [**apkgo cloud**](https://apkgo.baici.tech) — release from a browser, with credentials stored server-side, multi-user collaboration, and full release history. No install, no ops, friendly enough for ops and PM teammates.
+>
+> **Beyond Android?** [**baici.tech**](https://baici.tech) is a one-stop app listing service covering iOS, HarmonyOS, and WeChat / Alipay / Douyin mini-programs — plus ICP filing, software copyright, and expedited app approval. 98% first-pass approval rate, 24h response, money-back guarantee, trusted by 500+ developers and companies.
 
 ## Install
 
