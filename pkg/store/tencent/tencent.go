@@ -20,6 +20,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v3/pkg/apk"
 	"github.com/KevinGong2013/apkgo/v3/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v3/pkg/store"
 )
@@ -278,6 +279,15 @@ func (s *Store) uploadFile(pkg, appID, filePath, fileType string, rep progress.R
 }
 
 // updateApp submits the app update with APK serial numbers and metadata.
+//
+// Tencent's API has three valid flag combinations:
+//   - apk32_flag=1, apk64_flag=0 — single 32-bit or 32&64 compatible package
+//   - apk32_flag=0, apk64_flag=1 — single 64-bit-only package
+//   - apk32_flag=1, apk64_flag=1 — split-arch (separate 32 + 64 APKs)
+//
+// Submitting an arm64-only APK as `apk32_flag=1` fails server-side with
+// `[4000045] 解析校验32位或32&64位兼容包失败`, so when no --file64 is given
+// we inspect lib/<abi>/ to pick the right single-file branch.
 func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial, apkMD5, apk64Serial, apk64MD5 string) error {
 	params := url.Values{}
 	params.Set("pkg_name", pkg)
@@ -285,7 +295,8 @@ func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial
 	params.Set("deploy_type", "1") // publish immediately after approval
 
 	// APK files
-	if apk64Serial != "" {
+	switch {
+	case apk64Serial != "":
 		// Split arch: 32-bit + 64-bit
 		params.Set("apk32_flag", "1")
 		params.Set("apk32_file_serial_number", apkSerial)
@@ -293,8 +304,14 @@ func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial
 		params.Set("apk64_flag", "1")
 		params.Set("apk64_file_serial_number", apk64Serial)
 		params.Set("apk64_file_md5", apk64MD5)
-	} else {
-		// Single APK (32&64 compatible)
+	case isAPK64BitOnly(req.FilePath):
+		// Single 64-bit-only APK
+		params.Set("apk32_flag", "0")
+		params.Set("apk64_flag", "1")
+		params.Set("apk64_file_serial_number", apkSerial)
+		params.Set("apk64_file_md5", apkMD5)
+	default:
+		// Single APK (32&64 compatible, or universal/no native libs)
 		params.Set("apk32_flag", "1")
 		params.Set("apk32_file_serial_number", apkSerial)
 		params.Set("apk32_file_md5", apkMD5)
@@ -313,6 +330,18 @@ func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial
 		return fmt.Errorf("[%d] %s", resp.Ret, resp.text())
 	}
 	return nil
+}
+
+// isAPK64BitOnly reports whether the APK at path contains only 64-bit
+// native libs. Failures are swallowed and reported as false — the APK
+// already uploaded successfully, so the worst case is that we fall back
+// to the legacy apk32_flag=1 branch, matching prior behavior.
+func isAPK64BitOnly(path string) bool {
+	abis, err := apk.ABIs(path)
+	if err != nil {
+		return false
+	}
+	return apk.Is64BitOnly(abis)
 }
 
 // pollAuditStatus checks the audit status until resolved or timeout.
