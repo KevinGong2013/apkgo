@@ -62,3 +62,17 @@ func Names() []string {
 	sort.Strings(names)
 	return names
 }
+
+// AcceptsAAB reports whether the named store has declared AAB support
+// in its ConfigSchema. The "type.instance" naming convention used for
+// multi-instance stores (e.g. "script.cdn-upload") is resolved to the
+// base type before lookup. Unknown names return false.
+func AcceptsAAB(name string) bool {
+	e, ok := registry[name]
+	if !ok {
+		if dot := strings.Index(name, "."); dot > 0 {
+			e, ok = registry[name[:dot]]
+		}
+	}
+	return ok && e.schema.AcceptsAAB
+}

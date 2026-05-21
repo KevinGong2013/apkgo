@@ -83,7 +83,8 @@ func ErrResult(storeName string, start time.Time, err error) *UploadResult {
 type ConfigSchema struct {
 	Name       string        `json:"name"`
 	Fields     []FieldSchema `json:"fields"`
-	ConsoleURL string        `json:"console_url"` // developer console URL where credentials are managed
+	ConsoleURL string        `json:"console_url"`           // developer console URL where credentials are managed
+	AcceptsAAB bool          `json:"accepts_aab,omitempty"` // true if the store accepts .aab in addition to .apk
 }
 
 type FieldSchema struct {

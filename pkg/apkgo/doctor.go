@@ -98,11 +98,16 @@ func Diagnose(ctx context.Context, job DiagnoseJob) (*DiagnoseResult, error) {
 		if _, err := os.Stat(apkPath); err != nil {
 			return nil, fmt.Errorf("apk file: %w", err)
 		}
-		info, err := apk.Parse(apkPath)
-		if err != nil {
-			return nil, fmt.Errorf("parse apk: %w", err)
+		// AABs can't be parsed for package name; the operator needs to
+		// pass --package explicitly. Probes that need it will report
+		// skip with a clear reason.
+		if !apk.IsAAB(apkPath) {
+			info, err := apk.Parse(apkPath)
+			if err != nil {
+				return nil, fmt.Errorf("parse apk: %w", err)
+			}
+			pkg = info.PackageName
 		}
-		pkg = info.PackageName
 	}
 
 	hint := store.DiagnoseHint{Package: pkg}

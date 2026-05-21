@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -77,6 +78,15 @@ func ABIs(path string) ([]string, error) {
 	}
 	sort.Strings(abis)
 	return abis, nil
+}
+
+// IsAAB reports whether the given path is an Android App Bundle, based
+// on the file extension (case-insensitive). AAB files are protobuf-
+// encoded archives that cannot be parsed by the androidbinary APK reader
+// — callers use this to route to bundle-specific upload paths and skip
+// APK metadata extraction.
+func IsAAB(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".aab")
 }
 
 // Is64BitOnly reports whether the APK contains only 64-bit native libs

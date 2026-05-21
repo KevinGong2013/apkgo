@@ -22,7 +22,7 @@ apkgo version                                     # Version info (JSON)
 ## Upload flags
 
 ```
--f, --file         APK file path (required)
+-f, --file         APK or AAB file path (required; .aab is googleplay-only)
     --file64       64-bit APK for split-arch uploads
 -s, --store        Comma-separated store names (default: all configured)
 -n, --notes        Release notes text

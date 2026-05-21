@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v3/pkg/apk"
 	"github.com/KevinGong2013/apkgo/v3/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v3/pkg/store"
 )
@@ -25,6 +26,7 @@ func init() {
 	store.Register("googleplay", store.ConfigSchema{
 		Name:       "googleplay",
 		ConsoleURL: "https://play.google.com/console",
+		AcceptsAAB: true,
 		Fields: []store.FieldSchema{
 			{Key: "json_key_file", Required: true, Desc: "Path to service account JSON key file"},
 			{Key: "package_name", Required: true, Desc: "Android package name (e.g. com.example.app)"},
@@ -118,28 +120,44 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		return fmt.Errorf("empty edit ID")
 	}
 
-	// 2. Upload APK (streaming, so progress is reported as bytes flow)
+	// 2. Upload APK or AAB. Google Play exposes two distinct endpoints
+	// (.../edits/{editId}/apks and .../edits/{editId}/bundles) with
+	// different Content-Type expectations; misuse returns HTTP 400 with
+	// no helpful hint, so we route by file extension.
 	rep.Phase("uploading")
 	rc, _, err := progress.OpenFile(req.FilePath, rep)
 	if err != nil {
-		return fmt.Errorf("open apk: %w", err)
+		return fmt.Errorf("open file: %w", err)
 	}
 	defer rc.Close()
 
-	var apkResp struct {
-		VersionCode int `json:"versionCode"`
+	isAAB := apk.IsAAB(req.FilePath)
+	uploadPath := "apks"
+	contentType := "application/vnd.android.package-archive"
+	if isAAB {
+		uploadPath = "bundles"
+		contentType = "application/octet-stream"
 	}
 	uploadURL := fmt.Sprintf(
-		"https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/%s/edits/%s/apks",
-		s.packageName, editID,
+		"https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/%s/edits/%s/%s",
+		s.packageName, editID, uploadPath,
 	)
+
+	// Both /apks and /bundles return `versionCode` in the response body.
+	var uploadResp struct {
+		VersionCode int `json:"versionCode"`
+	}
 	_, err = s.client.R().
-		SetHeader("Content-Type", "application/vnd.android.package-archive").
+		SetHeader("Content-Type", contentType).
 		SetBody(rc).
-		SetResult(&apkResp).
+		SetResult(&uploadResp).
 		Post(uploadURL)
 	if err != nil {
-		return fmt.Errorf("upload apk: %w", err)
+		artifact := "apk"
+		if isAAB {
+			artifact = "aab"
+		}
+		return fmt.Errorf("upload %s: %w", artifact, err)
 	}
 
 	// 3. Assign to track
@@ -156,7 +174,7 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		SetBody(map[string]any{
 			"track": s.track,
 			"releases": []map[string]any{{
-				"versionCodes": []int{apkResp.VersionCode},
+				"versionCodes": []int{uploadResp.VersionCode},
 				"status":       "completed",
 				"releaseNotes": releaseNotes,
 			}},

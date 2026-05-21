@@ -49,6 +49,25 @@ func TestABIs(t *testing.T) {
 	}
 }
 
+func TestIsAAB(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"app.aab", true},
+		{"app.AAB", true},
+		{"path/to/release-v1.2.3.aab", true},
+		{"app.apk", false},
+		{"app", false},
+		{"app.aab.apk", false},
+	}
+	for _, tc := range cases {
+		if got := IsAAB(tc.path); got != tc.want {
+			t.Errorf("IsAAB(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestIs64BitOnly(t *testing.T) {
 	cases := []struct {
 		abis []string

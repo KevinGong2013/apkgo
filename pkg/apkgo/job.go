@@ -150,9 +150,24 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		}
 	}
 
-	info, err := apk.Parse(apkPath)
-	if err != nil {
-		return nil, fmt.Errorf("parse apk: %w", err)
+	// AABs are protobuf-encoded and can't be read by the binary-XML
+	// APK parser. Skip metadata extraction; the only store that accepts
+	// AAB (Google Play) gets package_name from its own config and the
+	// version code from the upload response.
+	isAAB := apk.IsAAB(apkPath)
+	if isAAB && apk64Path != "" {
+		return nil, fmt.Errorf("--file64 is for split-arch APKs only; AAB files are universal and cannot be split")
+	}
+
+	var info *apk.Info
+	if isAAB {
+		info = &apk.Info{}
+	} else {
+		var err error
+		info, err = apk.Parse(apkPath)
+		if err != nil {
+			return nil, fmt.Errorf("parse apk: %w", err)
+		}
 	}
 
 	// Resolve release notes (file wins over inline).
@@ -179,6 +194,21 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 			Before:  swh.Before,
 			After:   swh.After,
 			Timeout: swh.Timeout,
+		}
+	}
+
+	// Reject AAB up-front for stores that don't accept it — Chinese
+	// stores all want APKs, and silently letting the upload reach them
+	// produces inscrutable server-side errors mid-run.
+	if isAAB {
+		var rejected []string
+		for _, name := range storeNames {
+			if !store.AcceptsAAB(name) {
+				rejected = append(rejected, name)
+			}
+		}
+		if len(rejected) > 0 {
+			return nil, fmt.Errorf("AAB upload targets %v which only accept .apk (use -s googleplay or build an APK)", rejected)
 		}
 	}
 

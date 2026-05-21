@@ -30,7 +30,7 @@ var (
 )
 
 func init() {
-	uploadCmd.Flags().StringVarP(&flagFile, "file", "f", "", "APK file path or http(s) URL (required)")
+	uploadCmd.Flags().StringVarP(&flagFile, "file", "f", "", "APK or AAB file path or http(s) URL (required; .aab is googleplay-only)")
 	uploadCmd.Flags().StringVar(&flagFile64, "file64", "", "64-bit APK file path or http(s) URL (for split-arch uploads)")
 	uploadCmd.Flags().StringVarP(&flagStore, "store", "s", "", "comma-separated store names (default: all configured)")
 	uploadCmd.Flags().StringVarP(&flagNotes, "notes", "n", "", "release notes (text)")
