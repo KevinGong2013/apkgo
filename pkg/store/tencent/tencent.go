@@ -306,7 +306,7 @@ func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial
 		params.Set("apk64_file_md5", apk64MD5)
 	case isAPK64BitOnly(req.FilePath):
 		// Single 64-bit-only APK
-		params.Set("apk32_flag", "0")
+		params.Set("apk32_flag", "2")
 		params.Set("apk64_flag", "1")
 		params.Set("apk64_file_serial_number", apkSerial)
 		params.Set("apk64_file_md5", apkMD5)
@@ -474,14 +474,14 @@ func calcFileMD5(path string) (string, error) {
 
 // diagnose is registered with `apkgo doctor`. Two probes:
 //
-//   app-detail   — calls /query_app_detail to verify HMAC-SHA256 sign +
-//                  auth path AND that the app_id/pkg_name combo binds
-//                  correctly under this developer (ret 1000009 if not).
-//                  Reports app_name + category for sanity.
-//   audit-status — calls /query_app_update_status to surface the most
-//                  recent submission's audit state (auditing / approved /
-//                  rejected / withdrawn) so the operator knows whether
-//                  the slot is free for a new upload.
+//	app-detail   — calls /query_app_detail to verify HMAC-SHA256 sign +
+//	               auth path AND that the app_id/pkg_name combo binds
+//	               correctly under this developer (ret 1000009 if not).
+//	               Reports app_name + category for sanity.
+//	audit-status — calls /query_app_update_status to surface the most
+//	               recent submission's audit state (auditing / approved /
+//	               rejected / withdrawn) so the operator knows whether
+//	               the slot is free for a new upload.
 func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
 	probes := make([]store.Probe, 0, 2)
 
