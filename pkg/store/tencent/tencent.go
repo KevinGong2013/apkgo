@@ -280,10 +280,12 @@ func (s *Store) uploadFile(pkg, appID, filePath, fileType string, rep progress.R
 
 // updateApp submits the app update with APK serial numbers and metadata.
 //
-// Tencent's API has three valid flag combinations:
-//   - apk32_flag=1, apk64_flag=0 — single 32-bit or 32&64 compatible package
-//   - apk32_flag=0, apk64_flag=1 — single 64-bit-only package
-//   - apk32_flag=1, apk64_flag=1 — split-arch (separate 32 + 64 APKs)
+// Tencent's flags use 1=是(upload), 2=否(don't) — there is NO 0; sending
+// apk32_flag=0 is rejected with `[4000049] 无效的请求参数apk32_flag`. Valid
+// single-/split-file combinations:
+//   - apk32_flag=1                — 32-bit or 32&64 compatible package
+//   - apk32_flag=2, apk64_flag=1  — 64-bit-only package
+//   - apk32_flag=1, apk64_flag=1  — split-arch (separate 32 + 64 APKs)
 //
 // Submitting an arm64-only APK as `apk32_flag=1` fails server-side with
 // `[4000045] 解析校验32位或32&64位兼容包失败`, so when no --file64 is given
@@ -305,8 +307,9 @@ func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial
 		params.Set("apk64_file_serial_number", apk64Serial)
 		params.Set("apk64_file_md5", apk64MD5)
 	case isAPK64BitOnly(req.FilePath):
-		// Single 64-bit-only APK
-		params.Set("apk32_flag", "0")
+		// Single 64-bit-only APK. apk32_flag=2 (否) — NOT 0, which Tencent
+		// rejects as 无效的请求参数.
+		params.Set("apk32_flag", "2")
 		params.Set("apk64_flag", "1")
 		params.Set("apk64_file_serial_number", apkSerial)
 		params.Set("apk64_file_md5", apkMD5)
