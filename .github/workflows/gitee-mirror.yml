@@ -42,5 +42,14 @@ jobs:
           # OAuth-style URL: token used as the password, username can be
           # any non-empty string. Avoids exposing the token in the local
           # remote URL on the runner's reflog.
-          git push --mirror \
-            "https://oauth2:${GITEE_TOKEN}@gitee.com/${GITEE_OWNER}/${GITEE_REPO}.git"
+          #
+          # Not --mirror: that would also push the runner's refs/remotes/*
+          # tracking refs, which Gitee rejects as hidden refs ("deny
+          # updating a hidden ref") and made every run report failure even
+          # after the branches and tags had landed. Map the remote-tracking
+          # refs to real branches and push tags as-is; drop the origin/HEAD
+          # symref first so it doesn't become a branch literally named HEAD.
+          git remote set-head origin -d
+          git push --force \
+            "https://oauth2:${GITEE_TOKEN}@gitee.com/${GITEE_OWNER}/${GITEE_REPO}.git" \
+            'refs/remotes/origin/*:refs/heads/*' 'refs/tags/*:refs/tags/*'
