@@ -89,7 +89,7 @@ func New(cfg map[string]string) (*Store, error) {
 
 	token, err := fetchToken(client, clientID, clientSecret)
 	if err != nil {
-		return nil, fmt.Errorf("auth: %w", err)
+		return nil, store.Categorize(store.CategoryAuthFailed, fmt.Errorf("auth: %w", err))
 	}
 
 	return &Store{
@@ -163,7 +163,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	rep.Total(totalBytes)
 
 	// 2. Upload APK
-	uploadResult, err := s.uploadAPK(req.FilePath, rep)
+	uploadResult, err := s.uploadAPK(ctx, req.FilePath, rep)
 	if err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
@@ -172,7 +172,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	if req.File64Path != "" {
 		apkInfos[0].CpuCode = 32
-		result64, err := s.uploadAPK(req.File64Path, rep)
+		result64, err := s.uploadAPK(ctx, req.File64Path, rep)
 		if err != nil {
 			return fmt.Errorf("upload 64-bit apk: %w", err)
 		}
@@ -262,7 +262,7 @@ func (s *Store) queryApp(pkgName string) (*appData, error) {
 	return resp.Data, nil
 }
 
-func (s *Store) uploadAPK(filePath string, rep progress.Reporter) (*uploadResultData, error) {
+func (s *Store) uploadAPK(ctx context.Context, filePath string, rep progress.Reporter) (*uploadResultData, error) {
 	// Get upload URL
 	var urlResp struct {
 		errEnvelope
@@ -296,7 +296,7 @@ func (s *Store) uploadAPK(filePath string, rep progress.Reporter) (*uploadResult
 		errEnvelope
 		Data uploadResultData `json:"data"`
 	}
-	resp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
+	resp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
 		Method: http.MethodPost,
 		URL:    urlResp.Data.UploadURL,
 		Fields: map[string]string{
