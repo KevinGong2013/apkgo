@@ -21,9 +21,16 @@ import (
 	"github.com/go-resty/resty/v2"
 
 	"github.com/KevinGong2013/apkgo/v3/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v3/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v3/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v3/pkg/store"
 )
+
+// cosClient performs the pre-signed COS PUT. Deliberately no
+// Client.Timeout — upload duration scales with APK size and uplink
+// bandwidth, so the deadline must come from the caller's ctx instead
+// of a one-size-fits-all cap.
+var cosClient = &http.Client{}
 
 func init() {
 	store.Register("tencent", store.ConfigSchema{
@@ -166,7 +173,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	rep.Total(total)
 
 	// 1. Upload APK file → get serial number
-	apkSerial, apkMD5, err := s.uploadFile(pkg, appID, req.FilePath, "apk", rep)
+	apkSerial, apkMD5, err := s.uploadFile(ctx, pkg, appID, req.FilePath, "apk", rep)
 	if err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
@@ -174,7 +181,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// 2. Upload 64-bit APK if provided
 	var apk64Serial, apk64MD5 string
 	if req.File64Path != "" {
-		apk64Serial, apk64MD5, err = s.uploadFile(pkg, appID, req.File64Path, "apk", rep)
+		apk64Serial, apk64MD5, err = s.uploadFile(ctx, pkg, appID, req.File64Path, "apk", rep)
 		if err != nil {
 			return fmt.Errorf("upload 64-bit apk: %w", err)
 		}
@@ -211,7 +218,7 @@ func sumFileSizes(paths ...string) (int64, error) {
 // serial number and file MD5. Reads the file in a streaming fashion so
 // memory use stays bounded regardless of APK size, and reports byte-level
 // progress to rep via a progress.Reader wrapper.
-func (s *Store) uploadFile(pkg, appID, filePath, fileType string, rep progress.Reporter) (serialNumber string, fileMd5 string, err error) {
+func (s *Store) uploadFile(ctx context.Context, pkg, appID, filePath, fileType string, rep progress.Reporter) (serialNumber string, fileMd5 string, err error) {
 	fileName := filepath.Base(filePath)
 
 	// Get upload info
@@ -256,17 +263,20 @@ func (s *Store) uploadFile(pkg, appID, filePath, fileType string, rep progress.R
 	}
 
 	body := &progress.Reader{R: f, Reporter: progress.Safe(rep)}
-	httpReq, err := http.NewRequest(http.MethodPut, resp.PreSignURL, body)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, resp.PreSignURL, body)
 	if err != nil {
 		return "", "", fmt.Errorf("create put request: %w", err)
 	}
 	httpReq.ContentLength = fi.Size()
 	httpReq.Header.Set("Content-Type", "application/octet-stream")
 
-	httpClient := &http.Client{Timeout: 5 * time.Minute}
-	httpResp, err := httpClient.Do(httpReq)
+	// No Client.Timeout here: a flat per-request cap kills legitimate
+	// large-APK uploads on slow uplinks (a 60MB APK over a ~200KB/s line
+	// needs >5 min). Cancellation comes from ctx, which the CLI bounds
+	// with the job timeout and apkgo-cloud bounds with its per-store cap.
+	httpResp, err := cosClient.Do(httpReq)
 	if err != nil {
-		return "", "", fmt.Errorf("upload to cos: %w", err)
+		return "", "", fmt.Errorf("upload to cos: %w", httpx.RedactURLError(err))
 	}
 	defer httpResp.Body.Close()
 
