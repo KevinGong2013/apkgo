@@ -84,7 +84,7 @@ func New(cfg map[string]string) (*Store, error) {
 
 	token, err := fetchToken(clientID, clientSecret)
 	if err != nil {
-		return nil, fmt.Errorf("auth: %w", err)
+		return nil, store.Categorize(store.CategoryAuthFailed, fmt.Errorf("auth: %w", err))
 	}
 
 	client := resty.New().
@@ -211,7 +211,17 @@ func (s *Store) getAppID(packageName string) (string, error) {
 		return "", fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
 	}
 	if resp.Code != 0 {
-		return "", fmt.Errorf("[%d] %s", resp.Code, resp.text())
+		err := fmt.Errorf("[%d] %s", resp.Code, resp.text())
+		// 10002 "IAM-TOKEN format error": IAM happily issued a token but
+		// the publish gateway doesn't accept it — in practice this means
+		// the client_id/client_secret are not AppMarket API client
+		// credentials (e.g. some other Honor credential type was pasted
+		// in). Point the operator at the right console page, because the
+		// raw message suggests a bug rather than a credentials mix-up.
+		if resp.Code == 10002 {
+			err = fmt.Errorf("[%d] %s（token 已签发但发布接口不认：请确认凭据是「荣耀开发者服务平台 → API 服务」里创建的应用市场 API 客户端 client_id/client_secret）", resp.Code, resp.text())
+		}
+		return "", store.Categorize(classifyHonor(resp.Code), err)
 	}
 	for _, app := range resp.Data {
 		if app.PackageName == packageName && app.AppID != 0 {
@@ -439,6 +449,8 @@ func (s *Store) submitAudit(appID string) error {
 // CategoryUnknown — cloud should treat those as not-auto-retryable.
 func classifyHonor(code int) store.Category {
 	switch code {
+	case 10002: // IAM-TOKEN format error — wrong credential type
+		return store.CategoryAuthFailed
 	case 20076: // app introduction is empty
 		return store.CategoryConfigInvalid
 	case 20032: // app classification is empty

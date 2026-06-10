@@ -1,6 +1,12 @@
 package store
 
-import "errors"
+import (
+	"context"
+	"errors"
+	"net"
+	"net/url"
+	"strings"
+)
 
 // Category classifies an upload outcome into one of a small,
 // orchestrator-friendly set of buckets so cloud schedulers can decide
@@ -101,8 +107,11 @@ func Categorize(cat Category, err error) error {
 }
 
 // CategoryOf walks the error chain and returns the first
-// CategorizedError's category. Returns CategorySuccess for nil err
-// and CategoryUnknown when no categorization is present.
+// CategorizedError's category. Returns CategorySuccess for nil err.
+// Uncategorized errors get a transport-level fallback: anything that
+// looks like a network/timeout failure is classified network_retry, so
+// individual stores don't have to wrap every HTTP call site; everything
+// else is CategoryUnknown.
 func CategoryOf(err error) Category {
 	if err == nil {
 		return CategorySuccess
@@ -111,7 +120,50 @@ func CategoryOf(err error) Category {
 	if errors.As(err, &ce) {
 		return ce.Cat
 	}
+	if isNetworkError(err) {
+		return CategoryNetworkRetry
+	}
 	return CategoryUnknown
+}
+
+// isNetworkError reports whether err's chain is a transport-level
+// failure — timeout, connection drop, DNS — as opposed to an
+// application-level rejection by the store. Store APIs return their
+// rejections as parsed response envelopes (plain fmt.Errorf), so a
+// net.Error / url.Error in the chain reliably means the request never
+// completed at the HTTP layer.
+//
+// The string checks cover cases the typed checks miss: the http
+// transport reports a peer closing the connection mid-upload as a raw
+// errors.New("use of closed network connection") that implements no
+// net.Error, and resty sometimes flattens transport errors into plain
+// strings when retrying.
+func isNetworkError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return true
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return true
+	}
+	msg := err.Error()
+	for _, marker := range []string{
+		"use of closed network connection",
+		"connection reset by peer",
+		"broken pipe",
+		"Client.Timeout exceeded",
+		"TLS handshake timeout",
+		"unexpected EOF",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // AlreadyDoneError is a sentinel that store implementations return
