@@ -13,6 +13,7 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -103,7 +104,28 @@ func DoMultipart(ctx context.Context, mr MultipartRequest) (*http.Response, erro
 	if client == nil {
 		client = defaultClient
 	}
-	return client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, RedactURLError(err)
+	}
+	return resp, nil
+}
+
+// RedactURLError strips the query string from the URL embedded in any
+// *url.Error in err's chain. Store upload URLs are pre-signed: the query
+// carries signatures and security tokens, and transport errors (`Put
+// "https://…?x-cos-security-token=…": context deadline exceeded`) would
+// otherwise leak them into logs and user-facing failure reasons — as
+// well as burying the actual error behind a thousand characters of
+// base64. The error is mutated in place and returned for chaining.
+func RedactURLError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		if i := strings.IndexByte(ue.URL, '?'); i >= 0 {
+			ue.URL = ue.URL[:i]
+		}
+	}
+	return err
 }
 
 // computeContentLength does a dry-run multipart write into a counting
