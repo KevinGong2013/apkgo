@@ -27,8 +27,9 @@ import (
 
 func init() {
 	store.Register("samsung", store.ConfigSchema{
-		Name:       "samsung",
-		ConsoleURL: "https://seller.samsungapps.com",
+		Name:                     "samsung",
+		ConsoleURL:               "https://seller.samsungapps.com",
+		SupportsScheduledRelease: true,
 		Fields: []store.FieldSchema{
 			{Key: "service_account_id", Required: true, Desc: "Samsung Seller Portal service account ID"},
 			{Key: "private_key", Required: true, Desc: "RSA private key (PEM) from Seller Portal"},
@@ -155,15 +156,23 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 
 	// 3. Update content
 	rep.Phase("publishing")
+	contentBody := map[string]any{
+		"contentId": s.contentID,
+		"binaryList": []map[string]string{{
+			"fileKey":         uploadResp.FileKey,
+			"gmsYn":           "Y",
+			"nativePlatforms": "APK",
+		}},
+	}
+	if req.ReleaseTime != nil {
+		// Scheduled release: publicationType 02 = scheduled date, with
+		// startPublicationDate as a Beijing-local datetime string
+		// (01 = auto after review, 03 = manual).
+		contentBody["publicationType"] = "02"
+		contentBody["startPublicationDate"] = store.BeijingLocalTime(*req.ReleaseTime)
+	}
 	_, err = s.client.R().
-		SetBody(map[string]any{
-			"contentId": s.contentID,
-			"binaryList": []map[string]string{{
-				"fileKey":         uploadResp.FileKey,
-				"gmsYn":           "Y",
-				"nativePlatforms": "APK",
-			}},
-		}).
+		SetBody(contentBody).
 		Post("/seller/contentUpdate")
 	if err != nil {
 		return fmt.Errorf("update content: %w", err)

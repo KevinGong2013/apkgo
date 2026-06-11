@@ -29,8 +29,9 @@ const vivoBaseURL = "https://developer-api.vivo.com.cn/router/rest"
 
 func init() {
 	store.Register("vivo", store.ConfigSchema{
-		Name:       "vivo",
-		ConsoleURL: "https://dev.vivo.com.cn/documentCenter/doc/326",
+		Name:                     "vivo",
+		ConsoleURL:               "https://dev.vivo.com.cn/documentCenter/doc/326",
+		SupportsScheduledRelease: true,
 		Fields: []store.FieldSchema{
 			{Key: "access_key", Required: true, Desc: "vivo open platform access key"},
 			{Key: "access_secret", Required: true, Desc: "vivo open platform access secret"},
@@ -83,6 +84,12 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		"onlineType":       "1",
 		"updateDesc":       req.ReleaseNotes,
 		"compatibleDevice": "2",
+	}
+	if req.ReleaseTime != nil {
+		// Scheduled release (定时上架): onlineType 2 = 定时上架, with
+		// scheOnlineTime as a Beijing-local datetime string.
+		updateReq["onlineType"] = "2"
+		updateReq["scheOnlineTime"] = store.BeijingLocalTime(*req.ReleaseTime)
 	}
 
 	// Pre-declare combined upload bytes so the bar is stable across
@@ -243,8 +250,8 @@ func (s *Store) updateApp(method string, bizParams map[string]string) error {
 // vivo splits errors into two layers:
 //   - Code: gateway-level result (0 = the call reached the service)
 //   - SubCode: business-level error code; non-empty SubCode means the
-//             call was accepted by the gateway but the service rejected
-//             it (e.g. SubCode=15042 "请上传与历史签名一致的APK包").
+//     call was accepted by the gateway but the service rejected
+//     it (e.g. SubCode=15042 "请上传与历史签名一致的APK包").
 //
 // A response with Code=0 and a non-empty SubCode is therefore NOT a
 // success — the original code only checking Code led to real upload
@@ -388,12 +395,12 @@ func (s *Store) queryApp(packageName string) (*appDetails, error) {
 
 // diagnose is registered with `apkgo doctor`. Single probe:
 //
-//   app-info — calls /router/rest with method=app.query.details, which
-//              both validates the HMAC-SHA256 signature server-side and
-//              checks that the package exists under this developer
-//              account. A package-name hint is required since vivo has
-//              no separate "verify credentials" endpoint to probe with
-//              an empty body.
+//	app-info — calls /router/rest with method=app.query.details, which
+//	           both validates the HMAC-SHA256 signature server-side and
+//	           checks that the package exists under this developer
+//	           account. A package-name hint is required since vivo has
+//	           no separate "verify credentials" endpoint to probe with
+//	           an empty body.
 func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
 	probes := make([]store.Probe, 0, 1)
 

@@ -23,6 +23,16 @@ type UploadRequest struct {
 	VersionName  string
 	ReleaseNotes string
 
+	// ReleaseTime, when non-nil, requests a scheduled (定时/timed) release
+	// at that instant instead of the default "go live immediately after
+	// review". It carries a timezone offset: epoch-based stores (xiaomi,
+	// tencent) use it as an absolute instant; local-datetime stores (oppo,
+	// vivo, samsung) render it in Beijing time via BeijingLocalTime;
+	// huawei/honor send it with its offset. Stores that can't schedule
+	// (googleplay, pgyer, fir, script) ignore it and release immediately.
+	// nil = immediate (the default, unchanged behaviour).
+	ReleaseTime *time.Time `json:",omitempty"`
+
 	// Progress receives phase and byte-count events during upload.
 	// May be nil; stores must use progress.Safe() to guard against that.
 	// Tagged json:"-" so it's excluded when script-store marshals the
@@ -85,6 +95,11 @@ type ConfigSchema struct {
 	Fields     []FieldSchema `json:"fields"`
 	ConsoleURL string        `json:"console_url"`           // developer console URL where credentials are managed
 	AcceptsAAB bool          `json:"accepts_aab,omitempty"` // true if the store accepts .aab in addition to .apk
+	// SupportsScheduledRelease is true if the store's API can schedule a
+	// release for a future time (定时发布). Surfaced by `apkgo stores`;
+	// also drives the warning when --release-time targets a store that
+	// can't honor it.
+	SupportsScheduledRelease bool `json:"supports_scheduled_release,omitempty"`
 }
 
 type FieldSchema struct {
@@ -95,3 +110,15 @@ type FieldSchema struct {
 
 // Factory creates a Store from a flat config map.
 type Factory func(cfg map[string]string) (Store, error)
+
+// beijing is China Standard Time (UTC+8, no DST). Built as a fixed zone
+// so scheduled-release formatting never depends on the host having the
+// IANA tzdata database installed.
+var beijing = time.FixedZone("UTC+8", 8*60*60)
+
+// BeijingLocalTime renders t as "2006-01-02 15:04:05" in Beijing time.
+// Used by stores whose scheduled-release field is a local datetime
+// string with no timezone of its own (oppo, vivo, samsung).
+func BeijingLocalTime(t time.Time) string {
+	return t.In(beijing).Format("2006-01-02 15:04:05")
+}

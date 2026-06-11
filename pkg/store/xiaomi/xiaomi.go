@@ -38,8 +38,9 @@ const xiaomiBaseURL = "https://api.developer.xiaomi.com/devupload"
 
 func init() {
 	store.Register("xiaomi", store.ConfigSchema{
-		Name:       "xiaomi",
-		ConsoleURL: "https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1134",
+		Name:                     "xiaomi",
+		ConsoleURL:               "https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1134",
+		SupportsScheduledRelease: true,
 		Fields: []store.FieldSchema{
 			{Key: "email", Required: true, Desc: "Xiaomi developer account email (mapped to userName)"},
 			{Key: "private_key", Required: true, Desc: "Xiaomi API private key (the value the upload SDK calls 'password')"},
@@ -172,6 +173,11 @@ func (s *Store) push(synchroType int, req *store.UploadRequest, iconPath string,
 		"appName":     req.AppName,
 		"packageName": req.PackageName,
 		"updateDesc":  req.ReleaseNotes,
+	}
+	if req.ReleaseTime != nil {
+		// Scheduled release (定时上线): onlineTime is a Unix millisecond
+		// timestamp (absolute instant, timezone-independent).
+		appInfo["onlineTime"] = req.ReleaseTime.UnixMilli()
 	}
 
 	files := map[string]string{
@@ -428,7 +434,7 @@ type packageInfo struct {
 //
 //  1. cert  — public-key certificate is loadable, RSA, and not expired
 //  2. query — /dev/query accepts the SIG (proves email + private_key + cert
-//             all line up) and returns the stored package info if any
+//     all line up) and returns the stored package info if any
 //
 // Probe 2 needs a package-name hint and is reported as skipped without it,
 // since /dev/query requires `packageName`.

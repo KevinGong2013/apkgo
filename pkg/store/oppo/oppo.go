@@ -26,8 +26,9 @@ import (
 
 func init() {
 	store.Register("oppo", store.ConfigSchema{
-		Name:       "oppo",
-		ConsoleURL: "https://open.oppomobile.com/new/developmentDoc/info?id=10998",
+		Name:                     "oppo",
+		ConsoleURL:               "https://open.oppomobile.com/new/developmentDoc/info?id=10998",
+		SupportsScheduledRelease: true,
 		Fields: []store.FieldSchema{
 			{Key: "client_id", Required: true, Desc: "OPPO open platform client ID"},
 			{Key: "client_secret", Required: true, Desc: "OPPO open platform client secret"},
@@ -343,6 +344,12 @@ func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkIn
 	values.Set("icon_url", app.IconURL)
 	values.Set("pic_url", app.PicURL)
 	values.Set("online_type", "1")
+	if req.ReleaseTime != nil {
+		// Scheduled release (定时发布): online_type 2 = 定时发布, with
+		// sche_online_time as a Beijing-local datetime string.
+		values.Set("online_type", "2")
+		values.Set("sche_online_time", store.BeijingLocalTime(*req.ReleaseTime))
+	}
 	values.Set("test_desc", "submitted by apkgo")
 	values.Set("copyright_url", app.CopyrightURL)
 	values.Set("business_username", app.BusinessUsername)
@@ -485,9 +492,9 @@ type appData struct {
 }
 
 type uploadResultData struct {
-	URL  string `json:"url"`
-	MD5  string `json:"md5"`
-	ID   string `json:"id"`
+	URL string `json:"url"`
+	MD5 string `json:"md5"`
+	ID  string `json:"id"`
 }
 
 type apkInfo struct {
@@ -500,9 +507,9 @@ type apkInfo struct {
 //
 //  1. token       — credentials are accepted by /developer/v1/token
 //  2. app-info    — the package exists under this developer account, and
-//                   the HMAC-SHA256 signature is being computed correctly
-//                   (without a sig that lines up server-side, app/info
-//                   returns errno=… instead of the package data)
+//     the HMAC-SHA256 signature is being computed correctly
+//     (without a sig that lines up server-side, app/info
+//     returns errno=… instead of the package data)
 func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
 	probes := make([]store.Probe, 0, 2)
 

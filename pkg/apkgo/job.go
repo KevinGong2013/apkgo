@@ -63,6 +63,14 @@ type Job struct {
 	// (trimmed) are used instead.
 	NotesFile string
 
+	// ReleaseTime, when non-zero, schedules a timed release (定时发布) at
+	// that instant on stores that support it (huawei, honor, xiaomi,
+	// oppo, vivo, samsung, tencent). Stores that can't schedule
+	// (googleplay, pgyer, fir, script) log a warning and release
+	// immediately. The value carries its own timezone offset. Zero means
+	// immediate release (the default, unchanged behaviour).
+	ReleaseTime time.Time
+
 	// Config is the resolved store + hooks config. Required.
 	Config *config.Config
 
@@ -197,6 +205,30 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		}
 	}
 
+	// Scheduled release (定时发布): ReleaseTime carries its own timezone;
+	// each store converts to its own field+format. Per design we warn —
+	// not fail — when targeted stores can't schedule, and they publish
+	// immediately. Runs before the dry-run return so --dry-run is a real
+	// preflight for the schedule too.
+	var releaseTime *time.Time
+	if !job.ReleaseTime.IsZero() {
+		if !job.ReleaseTime.After(time.Now()) {
+			return nil, fmt.Errorf("release-time must be in the future, got %s", job.ReleaseTime.Format(time.RFC3339))
+		}
+		rt := job.ReleaseTime
+		releaseTime = &rt
+		var unsupported []string
+		for _, name := range storeNames {
+			if !store.SupportsScheduledRelease(name) {
+				unsupported = append(unsupported, name)
+			}
+		}
+		if len(unsupported) > 0 {
+			ctxlog.FromContext(ctx).Warn("scheduled release not supported by some stores; they will publish immediately",
+				"release_time", job.ReleaseTime.Format(time.RFC3339), "stores", unsupported)
+		}
+	}
+
 	// Reject AAB up-front for stores that don't accept it — Chinese
 	// stores all want APKs, and silently letting the upload reach them
 	// produces inscrutable server-side errors mid-run.
@@ -241,6 +273,7 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		VersionCode:  info.VersionCode,
 		VersionName:  info.VersionName,
 		ReleaseNotes: notes,
+		ReleaseTime:  releaseTime,
 	}
 
 	hookEnv := map[string]string{

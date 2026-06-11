@@ -20,8 +20,9 @@ import (
 
 func init() {
 	store.Register("huawei", store.ConfigSchema{
-		Name:       "huawei",
-		ConsoleURL: "https://developer.huawei.com/consumer/cn/doc/AppGallery-connect-Guides/agcapi-getstarted-0000001111845114#section1785535363715",
+		Name:                     "huawei",
+		ConsoleURL:               "https://developer.huawei.com/consumer/cn/doc/AppGallery-connect-Guides/agcapi-getstarted-0000001111845114#section1785535363715",
+		SupportsScheduledRelease: true,
 		Fields: []store.FieldSchema{
 			{Key: "service_account", Required: false, Desc: "Service Account credential JSON (raw or base64); recommended"},
 			{Key: "service_account_file", Required: false, Desc: "Path to Service Account credential JSON file"},
@@ -138,7 +139,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	// Poll for compilation readiness then submit
 	rep.Phase("submitting")
-	if err := s.pollAndSubmit(ctx, appID); err != nil {
+	if err := s.pollAndSubmit(ctx, appID, req.ReleaseTime); err != nil {
 		return err
 	}
 	return nil
@@ -346,13 +347,13 @@ const hwConsoleURL = "https://developer.huawei.com/consumer/cn/console"
 // also come back as 204144660, so we must inspect the message and only
 // retry the "still parsing" subset; otherwise we'd burn 5 minutes hiding
 // an error the operator can fix immediately.
-func (s *Store) pollAndSubmit(ctx context.Context, appID string) error {
+func (s *Store) pollAndSubmit(ctx context.Context, appID string, releaseTime *time.Time) error {
 	wrap := func(format string, args ...any) error {
 		return fmt.Errorf(format+" (APK 已上传成功，请在 AGC 后台完成审核：%s)", append(args, hwConsoleURL)...)
 	}
 
 	// Immediate attempt so fast-parsing APKs don't wait 30s for nothing.
-	ret, err := s.submitApp(appID)
+	ret, err := s.submitApp(appID, releaseTime)
 	if err != nil {
 		return wrap("submit: %v", err)
 	}
@@ -377,7 +378,7 @@ func (s *Store) pollAndSubmit(ctx context.Context, appID string) error {
 		case <-ticker.C:
 		}
 
-		ret, err := s.submitApp(appID)
+		ret, err := s.submitApp(appID, releaseTime)
 		if err != nil {
 			return wrap("submit: %v", err)
 		}
@@ -417,15 +418,22 @@ func isParsingInProgress(ret retInfo) bool {
 // HTTP-level failures (transport error, non-2xx with no parseable ret)
 // are surfaced as the second return value rather than being silently
 // converted into a zero-valued ret, which would look like success.
-func (s *Store) submitApp(appID string) (retInfo, error) {
+func (s *Store) submitApp(appID string, releaseTime *time.Time) (retInfo, error) {
 	var resp struct {
 		Ret retInfo `json:"ret"`
 	}
+	query := map[string]string{
+		"appId":       appID,
+		"releaseType": "1",
+	}
+	if releaseTime != nil {
+		// Scheduled release (定时发布): Huawei's releaseTime query param,
+		// UTC format with offset (e.g. 2026-06-20T10:00:00+0800). When
+		// omitted the app goes live immediately after the review passes.
+		query["releaseTime"] = releaseTime.Format("2006-01-02T15:04:05Z0700")
+	}
 	httpResp, err := s.client.R().
-		SetQueryParams(map[string]string{
-			"appId":       appID,
-			"releaseType": "1",
-		}).
+		SetQueryParams(query).
 		SetBody(map[string]any{}).
 		SetResult(&resp).
 		Post("/api/publish/v2/app-submit")
@@ -471,7 +479,7 @@ func (s *Store) getUploadURL(appID string) (uploadURL, authCode string, err erro
 //  1. token              — credentials are accepted (catches wrong client_id type)
 //  2. appid-list         — package name resolves to an appId in this AGC team
 //  3. release-permission — upload-url returns a destination, which the API
-//                          only does when the API key has "App release" rights
+//     only does when the API key has "App release" rights
 //
 // Probes 2 and 3 require a package name (DiagnoseHint.Package). They are
 // reported as skipped when that hint is absent.

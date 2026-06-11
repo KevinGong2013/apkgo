@@ -27,11 +27,23 @@ apkgo version                                     # Version info (JSON)
 -s, --store        Comma-separated store names (default: all configured)
 -n, --notes        Release notes text
     --notes-file   Read release notes from file (overrides --notes)
+    --release-time Schedule a timed release (定时发布) at an RFC3339 time, e.g. 2026-06-20T10:00:00+08:00
     --dry-run      Validate without uploading
 -t, --timeout      Global timeout (default: 10m)
 -c, --config       Config file path (default: apkgo.yaml)
 -o, --output       Output format: json or text (default: json)
 ```
+
+### Scheduled release (`--release-time`)
+
+Schedules a timed release instead of going live immediately after review.
+Value is RFC3339 **with a timezone offset** and must be in the future.
+Supported stores: **huawei, honor, xiaomi, oppo, vivo, samsung, tencent**
+(see `supports_scheduled_release` in `apkgo stores`). Stores that can't
+schedule (googleplay, pgyer, fir, script) log a warning and release
+immediately. Each store maps the instant to its own field/format
+internally — epoch-based stores use the absolute instant; oppo/vivo/samsung
+render it in Beijing time (UTC+8).
 
 ## Supported stores
 

@@ -34,8 +34,9 @@ var cosClient = &http.Client{}
 
 func init() {
 	store.Register("tencent", store.ConfigSchema{
-		Name:       "tencent",
-		ConsoleURL: "https://wikinew.open.qq.com/index.html#/iwiki/4015262492",
+		Name:                     "tencent",
+		ConsoleURL:               "https://wikinew.open.qq.com/index.html#/iwiki/4015262492",
+		SupportsScheduledRelease: true,
 		Fields: []store.FieldSchema{
 			{Key: "user_id", Required: true, Desc: "Tencent open platform developer user ID"},
 			{Key: "access_secret", Required: true, Desc: "API access secret (账户管理 → API 发布接口 → 申请开通)"},
@@ -305,6 +306,14 @@ func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial
 	params.Set("pkg_name", pkg)
 	params.Set("app_id", appID)
 	params.Set("deploy_type", "1") // publish immediately after approval
+	if req.ReleaseTime != nil {
+		// Scheduled release (定时发布): deploy_type 2 = 定时发布, with
+		// deploy_time as a Unix *second* timestamp (absolute instant;
+		// Tencent documents it as Beijing time but epoch seconds are
+		// timezone-independent).
+		params.Set("deploy_type", "2")
+		params.Set("deploy_time", strconv.FormatInt(req.ReleaseTime.Unix(), 10))
+	}
 
 	// APK files
 	switch {
@@ -487,14 +496,14 @@ func calcFileMD5(path string) (string, error) {
 
 // diagnose is registered with `apkgo doctor`. Two probes:
 //
-//   app-detail   — calls /query_app_detail to verify HMAC-SHA256 sign +
-//                  auth path AND that the app_id/pkg_name combo binds
-//                  correctly under this developer (ret 1000009 if not).
-//                  Reports app_name + category for sanity.
-//   audit-status — calls /query_app_update_status to surface the most
-//                  recent submission's audit state (auditing / approved /
-//                  rejected / withdrawn) so the operator knows whether
-//                  the slot is free for a new upload.
+//	app-detail   — calls /query_app_detail to verify HMAC-SHA256 sign +
+//	               auth path AND that the app_id/pkg_name combo binds
+//	               correctly under this developer (ret 1000009 if not).
+//	               Reports app_name + category for sanity.
+//	audit-status — calls /query_app_update_status to surface the most
+//	               recent submission's audit state (auditing / approved /
+//	               rejected / withdrawn) so the operator knows whether
+//	               the slot is free for a new upload.
 func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
 	probes := make([]store.Probe, 0, 2)
 
