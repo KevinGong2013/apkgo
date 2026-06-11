@@ -24,8 +24,9 @@ import (
 
 func init() {
 	store.Register("honor", store.ConfigSchema{
-		Name:       "honor",
-		ConsoleURL: "https://developer.honor.com/cn/doc/guides/101360",
+		Name:                     "honor",
+		ConsoleURL:               "https://developer.honor.com/cn/doc/guides/101360",
+		SupportsScheduledRelease: true,
 		Fields: []store.FieldSchema{
 			{Key: "client_id", Required: true, Desc: "Honor developer API client ID"},
 			{Key: "client_secret", Required: true, Desc: "Honor developer API client secret"},
@@ -139,7 +140,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	}
 
 	rep.Phase("submitting")
-	return s.submitAudit(appID)
+	return s.submitAudit(appID, req.ReleaseTime)
 }
 
 // ---- auth ----
@@ -422,13 +423,20 @@ func (s *Store) updateLanguageInfo(appID string, existing *languageInfo, release
 
 // ---- submit ----
 
-func (s *Store) submitAudit(appID string) error {
+func (s *Store) submitAudit(appID string, releaseTime *time.Time) error {
 	var resp honorResp
+	body := map[string]any{
+		"releaseType": 1, // 1 = 全网发布
+	}
+	if releaseTime != nil {
+		// Scheduled release (定时发布): releaseType 2 = 指定时间发布, with
+		// releaseTime in UTC format with offset (e.g. 2026-06-20T10:00:00+0800).
+		body["releaseType"] = 2
+		body["releaseTime"] = releaseTime.Format("2006-01-02T15:04:05Z0700")
+	}
 	httpResp, err := s.client.R().
 		SetQueryParam("appId", appID).
-		SetBody(map[string]any{
-			"releaseType": 1, // 1 = 全网发布
-		}).
+		SetBody(body).
 		SetResult(&resp).
 		Post("/openapi/v1/publish/submit-audit")
 	if err != nil {
@@ -484,9 +492,9 @@ func statAndSha256(path string) (size int64, hashHex string, err error) {
 //
 //  1. token       — credentials exchange for an OAuth2 access token
 //  2. get-app-id  — package resolves to an appId under this developer
-//                   account (skipped if app_id was supplied in config)
+//     account (skipped if app_id was supplied in config)
 //  3. app-detail  — the access token has read access to the app, used
-//                   to confirm the publish-API permission scope
+//     to confirm the publish-API permission scope
 func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
 	probes := make([]store.Probe, 0, 3)
 

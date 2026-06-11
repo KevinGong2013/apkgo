@@ -76,3 +76,16 @@ func AcceptsAAB(name string) bool {
 	}
 	return ok && e.schema.AcceptsAAB
 }
+
+// SupportsScheduledRelease reports whether the named store declared
+// scheduled-release (定时发布) support in its ConfigSchema. Uses the same
+// "type.instance" resolution as AcceptsAAB. Unknown names return false.
+func SupportsScheduledRelease(name string) bool {
+	e, ok := registry[name]
+	if !ok {
+		if dot := strings.Index(name, "."); dot > 0 {
+			e, ok = registry[name[:dot]]
+		}
+	}
+	return ok && e.schema.SupportsScheduledRelease
+}

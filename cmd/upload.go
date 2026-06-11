@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/vbauerster/mpb/v8"
@@ -24,6 +25,7 @@ var (
 	flagStore          string
 	flagNotes          string
 	flagNotesFile      string
+	flagReleaseTime    string
 	flagDryRun         bool
 	flagFetchHeaders   []string
 	flagProgressStream bool
@@ -35,6 +37,7 @@ func init() {
 	uploadCmd.Flags().StringVarP(&flagStore, "store", "s", "", "comma-separated store names (default: all configured)")
 	uploadCmd.Flags().StringVarP(&flagNotes, "notes", "n", "", "release notes (text)")
 	uploadCmd.Flags().StringVar(&flagNotesFile, "notes-file", "", "read release notes from file (overrides --notes)")
+	uploadCmd.Flags().StringVar(&flagReleaseTime, "release-time", "", "schedule a timed release (定时发布) at an RFC3339 time, e.g. 2026-06-20T10:00:00+08:00 (supported: huawei,honor,xiaomi,oppo,vivo,samsung,tencent; others release immediately)")
 	uploadCmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "validate config and APK without uploading")
 	uploadCmd.Flags().StringArrayVar(&flagFetchHeaders, "fetch-header", nil, `extra HTTP header for URL fetches (repeatable; "Name: value")`)
 	uploadCmd.Flags().BoolVar(&flagProgressStream, "progress-stream", false, "emit NDJSON progress events on stdout (one JSON object per line) for parent-process consumption")
@@ -75,6 +78,14 @@ var uploadCmd = &cobra.Command{
 			return err
 		}
 
+		var releaseTime time.Time
+		if flagReleaseTime != "" {
+			releaseTime, err = time.Parse(time.RFC3339, flagReleaseTime)
+			if err != nil {
+				return fmt.Errorf("invalid --release-time %q (want RFC3339 with timezone, e.g. 2026-06-20T10:00:00+08:00): %w", flagReleaseTime, err)
+			}
+		}
+
 		cfg, err := loadConfigForCmd()
 		if err != nil {
 			return fmt.Errorf("config: %w", err)
@@ -96,6 +107,7 @@ var uploadCmd = &cobra.Command{
 			Stores:       stores,
 			Notes:        flagNotes,
 			NotesFile:    flagNotesFile,
+			ReleaseTime:  releaseTime,
 			Config:       cfg,
 			FetchHeaders: fetchHeaders,
 			Progress:     pm,
