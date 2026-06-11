@@ -23,6 +23,7 @@ func init() {
 		Name:                     "huawei",
 		ConsoleURL:               "https://developer.huawei.com/consumer/cn/doc/AppGallery-connect-Guides/agcapi-getstarted-0000001111845114#section1785535363715",
 		SupportsScheduledRelease: true,
+		SupportsURLPush:          true,
 		Fields: []store.FieldSchema{
 			{Key: "service_account", Required: false, Desc: "Service Account credential JSON (raw or base64); recommended"},
 			{Key: "service_account_file", Required: false, Desc: "Path to Service Account credential JSON file"},
@@ -34,6 +35,70 @@ func init() {
 		return New(cfg)
 	})
 	store.RegisterDiagnoser("huawei", diagnose)
+	store.RegisterAuditor("huawei", audit)
+}
+
+// audit is registered with `apkgo audit`. It reads the app's releaseState
+// via the read-only app-info query (GET), mapping it to the unified review
+// state — independent of the upload flow.
+func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+	res := store.AuditResult{Store: "huawei"}
+	s, err := New(cfg)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	appID := s.configAppID
+	if appID == "" {
+		appID, err = s.fetchAppID(q.Package)
+		if err != nil {
+			res.Error = err.Error()
+			return res
+		}
+	}
+	var resp struct {
+		Ret          retInfo `json:"ret"`
+		ReleaseState int     `json:"releaseState"`
+	}
+	httpResp, err := s.client.R().
+		SetQueryParams(map[string]string{"appId": appID, "releaseType": "1"}).
+		SetResult(&resp).
+		Get("/api/publish/v2/app-info")
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	if httpResp.IsError() {
+		res.Error = fmt.Sprintf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+		return res
+	}
+	if resp.Ret.Code != 0 {
+		res.Error = fmt.Sprintf("[%d] %s", resp.Ret.Code, resp.Ret.text())
+		return res
+	}
+	res.State, res.Detail = mapHuaweiReleaseState(resp.ReleaseState)
+	return res
+}
+
+// mapHuaweiReleaseState maps app-info releaseState (releaseType=1) to the
+// unified state. 0=已上架, 1=上架审核不通过, 2=已下架, 3=待上架(预约), 4=审核中,
+// 5=升级审核中, 6=申请下架, 7=草稿, 8=升级审核不通过, 9=下架审核不通过,
+// 10=开发者下架, 11=撤销上架, 12=预审中, 13=预审不通过.
+func mapHuaweiReleaseState(state int) (store.AuditState, string) {
+	switch state {
+	case 4, 5, 12:
+		return store.AuditReviewing, fmt.Sprintf("releaseState=%d", state)
+	case 0, 3:
+		return store.AuditApproved, fmt.Sprintf("releaseState=%d", state)
+	case 1, 8, 13:
+		return store.AuditRejected, fmt.Sprintf("releaseState=%d", state)
+	case 2, 10, 11:
+		return store.AuditWithdrawn, fmt.Sprintf("releaseState=%d", state)
+	case 7:
+		return store.AuditUnknown, "draft (草稿)"
+	default:
+		return store.AuditUnknown, fmt.Sprintf("releaseState=%d", state)
+	}
 }
 
 // authMode reflects which credential type is in effect; used by diagnostics.
@@ -124,8 +189,17 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		}
 	}
 
-	// Upload APK
-	if err := s.uploadAPK(appID, req.FilePath, rep); err != nil {
+	// Get the APK to Huawei. When -f was a public URL, hand Huawei the URL
+	// and let it download the package itself (skips re-uploading the
+	// bytes); otherwise upload the local file. The by-url path is async —
+	// pollAndSubmit below already retries while Huawei is still parsing,
+	// which absorbs the download wait.
+	if req.SourceURL != "" {
+		rep.Phase("submitting url")
+		if err := s.submitPackageByURL(appID, req.SourceURL, req); err != nil {
+			return fmt.Errorf("submit package by url: %w", err)
+		}
+	} else if err := s.uploadAPK(appID, req.FilePath, rep); err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
 
@@ -323,6 +397,54 @@ func (s *Store) uploadAPK(appID, apkPath string, rep progress.Reporter) error {
 	}
 	if updateResp.Ret.Code != 0 {
 		return fmt.Errorf("update file info: [%d] %s", updateResp.Ret.Code, updateResp.Ret.text())
+	}
+	return nil
+}
+
+// submitPackageByURL hands Huawei a developer-hosted download URL
+// (POST /publish/v2/app-package-file/by-url) instead of uploading the APK
+// bytes. Huawei downloads the package from the URL on its own side and
+// associates it with the app's draft version — no fileDestUrl is returned
+// to bind, so unlike the upload path there is no app-file-info step. The
+// download is asynchronous: this call only enqueues it (ret.code 0), and
+// the subsequent pollAndSubmit absorbs the wait via its parsing-retry.
+// The URL must be publicly GET-able (Huawei fetches it unauthenticated).
+func (s *Store) submitPackageByURL(appID, sourceURL string, req *store.UploadRequest) error {
+	// downloadFileName must carry the real suffix; derive it from the URL
+	// path, falling back to "<package>.apk".
+	name := sourceURL
+	if i := strings.IndexAny(name, "?#"); i >= 0 {
+		name = name[:i]
+	}
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
+	if name == "" {
+		name = req.PackageName + ".apk"
+	}
+	requestID := fmt.Sprintf("apkgo-%s-%d-%d", req.PackageName, req.VersionCode, time.Now().UnixNano())
+
+	var resp struct {
+		Ret retInfo `json:"ret"`
+	}
+	httpResp, err := s.client.R().
+		SetQueryParams(map[string]string{"appId": appID}).
+		SetBody(map[string]any{
+			"downloadUrl":      sourceURL,
+			"downloadFileName": name,
+			"requestId":        requestID,
+			"packageType":      1, // 1 = APK
+		}).
+		SetResult(&resp).
+		Post("/api/publish/v2/app-package-file/by-url")
+	if err != nil {
+		return err
+	}
+	if httpResp.IsError() {
+		return fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+	}
+	if resp.Ret.Code != 0 {
+		return fmt.Errorf("[%d] %s", resp.Ret.Code, resp.Ret.text())
 	}
 	return nil
 }

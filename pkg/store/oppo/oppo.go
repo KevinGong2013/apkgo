@@ -37,6 +37,63 @@ func init() {
 		return New(cfg)
 	})
 	store.RegisterDiagnoser("oppo", diagnose)
+	store.RegisterAuditor("oppo", audit)
+}
+
+// audit is registered with `apkgo audit`. It reads the latest version's
+// review status from the read-only app/info query, independent of upload.
+func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+	res := store.AuditResult{Store: "oppo"}
+	s, err := New(cfg)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	app, err := s.queryApp(q.Package)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	if app == nil {
+		res.Error = fmt.Sprintf("no app found for package %s under this developer account", q.Package)
+		return res
+	}
+	res.State, res.Detail = mapOppoAudit(app.AuditStatusName, app.RefuseReason)
+	return res
+}
+
+// mapOppoAudit maps OPPO's audit_status_name (the human label from
+// app/info) to the unified state. OPPO returns a numeric audit_status plus
+// this description; we key off the description's keywords since the code
+// table isn't published in the API传包 docs. The exact label is always
+// surfaced in Detail so the operator sees ground truth regardless.
+func mapOppoAudit(name, refuse string) (store.AuditState, string) {
+	switch {
+	case containsAny(name, "拒绝", "不通过", "驳回", "失败", "打回"):
+		if refuse != "" {
+			return store.AuditRejected, name + ": " + refuse
+		}
+		return store.AuditRejected, name
+	case containsAny(name, "上线", "上架", "已发布", "通过"):
+		return store.AuditApproved, name
+	case containsAny(name, "下架", "撤销", "冻结"):
+		return store.AuditWithdrawn, name
+	case containsAny(name, "审核", "待审", "审查", "送审"):
+		return store.AuditReviewing, name
+	case name == "":
+		return store.AuditUnknown, "no audit status returned"
+	default:
+		return store.AuditUnknown, name
+	}
+}
+
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // errEnvelope only carries `errno` so it can be embedded in any response
@@ -489,6 +546,9 @@ type appData struct {
 	AgeLevel          string `json:"age_level"`
 	AdaptiveEquipment string `json:"adaptive_equipment"`
 	CustomerContact   string `json:"customer_contact"`
+	AuditStatus       string `json:"audit_status"`      // numeric code (审核状态对照表 not published in the API传包 docs)
+	AuditStatusName   string `json:"audit_status_name"` // human label, e.g. "上线" / "审核中"
+	RefuseReason      string `json:"refuse_reason"`
 }
 
 type uploadResultData struct {

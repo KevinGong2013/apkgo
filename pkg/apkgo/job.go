@@ -265,6 +265,23 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 	}
 	pm.Start(info, storeNames)
 
+	// URL pass-through (download mode): when the input was a public
+	// http(s) URL fetched without auth headers, hand the original URL to
+	// stores that can pull it themselves (huawei/honor/vivo) so they
+	// download from your OSS instead of apkgo re-uploading the bytes. If
+	// auth headers were needed, the store couldn't GET it anonymously, so
+	// we don't pass it and those stores upload the local copy instead. We
+	// still fetched a local copy above for APK metadata either way.
+	var sourceURL, source64URL string
+	if len(job.FetchHeaders) == 0 {
+		if httpx.IsURL(job.APKFile) {
+			sourceURL = job.APKFile
+		}
+		if httpx.IsURL(job.APKFile64) {
+			source64URL = job.APKFile64
+		}
+	}
+
 	req := &store.UploadRequest{
 		FilePath:     apkPath,
 		File64Path:   apk64Path,
@@ -274,6 +291,8 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		VersionName:  info.VersionName,
 		ReleaseNotes: notes,
 		ReleaseTime:  releaseTime,
+		SourceURL:    sourceURL,
+		Source64URL:  source64URL,
 	}
 
 	hookEnv := map[string]string{

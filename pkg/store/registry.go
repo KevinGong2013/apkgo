@@ -89,3 +89,16 @@ func SupportsScheduledRelease(name string) bool {
 	}
 	return ok && e.schema.SupportsScheduledRelease
 }
+
+// SupportsURLPush reports whether the named store declared download-mode
+// (pull-from-URL) support in its ConfigSchema. Same "type.instance"
+// resolution as AcceptsAAB. Unknown names return false.
+func SupportsURLPush(name string) bool {
+	e, ok := registry[name]
+	if !ok {
+		if dot := strings.Index(name, "."); dot > 0 {
+			e, ok = registry[name[:dot]]
+		}
+	}
+	return ok && e.schema.SupportsURLPush
+}

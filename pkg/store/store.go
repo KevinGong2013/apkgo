@@ -33,6 +33,18 @@ type UploadRequest struct {
 	// nil = immediate (the default, unchanged behaviour).
 	ReleaseTime *time.Time `json:",omitempty"`
 
+	// SourceURL / Source64URL carry the original public http(s) URL the
+	// APK (and optional 64-bit APK) were given as, when no auth headers
+	// were needed to fetch them. Stores that support "download mode"
+	// (huawei, honor, vivo — see SupportsURLPush) hand this URL to the
+	// store so it pulls the binary from your OSS instead of apkgo
+	// re-uploading the bytes. Empty when the input was a local file or
+	// required --fetch-header auth (the store must be able to GET it
+	// anonymously). FilePath is always set regardless, so stores that
+	// can't (or choose not to) URL-push still upload the local copy.
+	SourceURL   string `json:",omitempty"`
+	Source64URL string `json:",omitempty"`
+
 	// Progress receives phase and byte-count events during upload.
 	// May be nil; stores must use progress.Safe() to guard against that.
 	// Tagged json:"-" so it's excluded when script-store marshals the
@@ -100,6 +112,11 @@ type ConfigSchema struct {
 	// also drives the warning when --release-time targets a store that
 	// can't honor it.
 	SupportsScheduledRelease bool `json:"supports_scheduled_release,omitempty"`
+	// SupportsURLPush is true if the store's API can pull the APK from a
+	// developer-hosted URL (download mode) instead of requiring a byte
+	// upload. apkgo uses it to skip re-uploading when -f is a public URL.
+	// Surfaced by `apkgo stores`.
+	SupportsURLPush bool `json:"supports_url_push,omitempty"`
 }
 
 type FieldSchema struct {
