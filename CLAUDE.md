@@ -45,6 +45,25 @@ immediately. Each store maps the instant to its own field/format
 internally — epoch-based stores use the absolute instant; oppo/vivo/samsung
 render it in Beijing time (UTC+8).
 
+### Download mode (URL pass-through)
+
+When `-f` (or `--file64`) is a **public** http(s) URL, stores that support
+it pull the APK straight from your OSS instead of apkgo re-uploading the
+bytes — faster, especially for large APKs or cloud runs. Supported stores:
+**huawei, honor, vivo** (see `supports_url_push` in `apkgo stores`); the
+others always upload. apkgo still fetches the APK once locally for metadata.
+
+- The URL must be reachable **without auth** (the store GETs it directly).
+  Passing `--fetch-header` (auth) makes apkgo upload instead of passing the
+  URL through.
+- These flows are **asynchronous**: the store downloads in the background
+  and apkgo polls until it finishes. Each store has its own download
+  interface (huawei `app-package-file/by-url`, honor `upload-by-url`, vivo
+  `app.update.app` + `app.query.task.status`).
+- **honor** throttles its status poll to ~once/3min, so it only URL-pushes
+  when the APK is at least `url_push_min_mb` MB (default 100); smaller APKs
+  upload directly. huawei and vivo URL-push whenever the source is a URL.
+
 ## Supported stores
 
 huawei, xiaomi, oppo, vivo, honor, tencent, googleplay, samsung, pgyer, fir, script

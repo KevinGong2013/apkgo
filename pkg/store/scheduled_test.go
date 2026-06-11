@@ -64,3 +64,32 @@ func TestSupportsScheduledRelease(t *testing.T) {
 		}
 	}
 }
+
+// TestSupportsURLPush mirrors TestSupportsScheduledRelease for the
+// download-mode (pull-from-URL) capability flag that apkgo.Run uses to
+// decide whether a store can take a developer-hosted URL instead of an
+// uploaded binary.
+func TestSupportsURLPush(t *testing.T) {
+	store.Register("test-urlpush-yes", store.ConfigSchema{
+		Name:            "test-urlpush-yes",
+		SupportsURLPush: true,
+	}, func(map[string]string) (store.Store, error) { return nil, nil })
+	store.Register("test-urlpush-no", store.ConfigSchema{
+		Name: "test-urlpush-no",
+	}, func(map[string]string) (store.Store, error) { return nil, nil })
+
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"test-urlpush-yes", true},
+		{"test-urlpush-no", false},
+		{"test-urlpush-yes.instance", true}, // type.instance resolves to base type
+		{"unregistered", false},
+	}
+	for _, c := range cases {
+		if got := store.SupportsURLPush(c.name); got != c.want {
+			t.Errorf("SupportsURLPush(%q) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

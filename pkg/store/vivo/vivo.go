@@ -32,6 +32,7 @@ func init() {
 		Name:                     "vivo",
 		ConsoleURL:               "https://dev.vivo.com.cn/documentCenter/doc/326",
 		SupportsScheduledRelease: true,
+		SupportsURLPush:          true,
 		Fields: []store.FieldSchema{
 			{Key: "access_key", Required: true, Desc: "vivo open platform access key"},
 			{Key: "access_secret", Required: true, Desc: "vivo open platform access secret"},
@@ -75,7 +76,7 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 	return store.NewResult(s.Name(), start)
 }
 
-func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
+func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	rep := progress.Safe(req.Progress)
 
 	updateReq := map[string]string{
@@ -90,6 +91,13 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		// scheOnlineTime as a Beijing-local datetime string.
 		updateReq["onlineType"] = "2"
 		updateReq["scheOnlineTime"] = store.BeijingLocalTime(*req.ReleaseTime)
+	}
+
+	// URL pass-through (download mode): when -f (and --file64 for split)
+	// are public URLs, hand vivo the download addresses and let it pull
+	// the APKs itself (async), instead of uploading the bytes.
+	if pushed, err := s.maybeURLPush(ctx, req, updateReq, rep); pushed {
+		return err
 	}
 
 	// Pre-declare combined upload bytes so the bar is stable across
@@ -126,6 +134,118 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	updateReq["fileMd5"] = resp.FileMD5
 	rep.Phase("publishing")
 	return s.updateApp("app.sync.update.app", updateReq)
+}
+
+// vivoTaskPollPeriod is how often we poll vivo's async task-status while it
+// downloads the APK(s) from the developer URL. vivo documents no rate
+// limit here, so a short interval is fine.
+const vivoTaskPollPeriod = 15 * time.Second
+
+// maybeURLPush implements vivo's download mode. When the APK(s) came in as
+// public URLs it hands vivo the download addresses (the app.update.* async
+// interfaces) and polls the task status, instead of uploading the bytes.
+// Returns (true, err) when it owns the publish, or (false, nil) to fall
+// through to the upload path (e.g. local file, or split with only one URL).
+func (s *Store) maybeURLPush(ctx context.Context, req *store.UploadRequest, bizParams map[string]string, rep progress.Reporter) (bool, error) {
+	switch {
+	case req.File64Path != "":
+		// Split arch: vivo's subpackage download needs BOTH public URLs;
+		// if either side is a local file, fall back to the upload path.
+		if req.SourceURL == "" || req.Source64URL == "" {
+			return false, nil
+		}
+		md32, err := fileMD5(req.FilePath)
+		if err != nil {
+			return true, fmt.Errorf("md5 32-bit apk: %w", err)
+		}
+		md64, err := fileMD5(req.File64Path)
+		if err != nil {
+			return true, fmt.Errorf("md5 64-bit apk: %w", err)
+		}
+		// FilePath is the 32-bit (-f), File64Path the 64-bit (--file64);
+		// vivo names the 64-bit md5 field apkMd5 and the 32-bit apk32Md5.
+		bizParams["apkUrl32"] = req.SourceURL
+		bizParams["apk32Md5"] = md32
+		bizParams["apkUrl64"] = req.Source64URL
+		bizParams["apkMd5"] = md64
+		rep.Phase("url push")
+		if err := s.updateApp("app.update.subpackage.app", bizParams); err != nil {
+			return true, err
+		}
+	case req.SourceURL != "":
+		md, err := fileMD5(req.FilePath)
+		if err != nil {
+			return true, fmt.Errorf("md5 apk: %w", err)
+		}
+		bizParams["apkUrl"] = req.SourceURL
+		bizParams["apkMd5"] = md
+		rep.Phase("url push")
+		if err := s.updateApp("app.update.app", bizParams); err != nil {
+			return true, err
+		}
+	default:
+		return false, nil
+	}
+
+	// vivo processes the download asynchronously; poll until it finishes.
+	rep.Phase("publishing")
+	return true, s.pollTaskStatus(ctx, req.PackageName)
+}
+
+// pollTaskStatus polls app.query.task.status until vivo's async
+// download-update resolves (status 3 = success, 4 = failure).
+func (s *Store) pollTaskStatus(ctx context.Context, packageName string) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for vivo to download package: %w", ctx.Err())
+		case <-time.After(vivoTaskPollPeriod):
+		}
+		status, reason, err := s.queryTaskStatus(packageName)
+		if err != nil {
+			return err
+		}
+		switch status {
+		case 3: // 处理成功
+			return nil
+		case 4: // 处理失败
+			if reason == "" {
+				reason = "vivo reported the download task failed"
+			}
+			return store.Categorize(store.CategoryUnknown, fmt.Errorf("vivo download task failed: %s", reason))
+		}
+		// 1 待处理 / 2 处理中 → keep waiting
+	}
+}
+
+// queryTaskStatus calls app.query.task.status for an update task
+// (packetType 0) and returns the task status and any error reason.
+func (s *Store) queryTaskStatus(packageName string) (status int, reason string, err error) {
+	params := s.signParams("app.query.task.status", map[string]string{
+		"packageName": packageName,
+		"packetType":  "0", // 0 = update package
+	})
+	httpResp, err := s.client.R().SetQueryParams(params).Post("")
+	if err != nil {
+		return 0, "", err
+	}
+	body := httpResp.Body()
+	var resp struct {
+		envelope
+		Data struct {
+			Status      int    `json:"status"`
+			ErrorReason string `json:"errorReason"`
+		} `json:"data"`
+	}
+	if jerr := json.Unmarshal(body, &resp); jerr != nil {
+		return 0, "", fmt.Errorf("decode task status (HTTP %d): %v: %s",
+			httpResp.StatusCode(), jerr, truncateBody(string(body)))
+	}
+	if resp.failed() {
+		return 0, "", store.Categorize(classifyVivo(resp.SubCode),
+			fmt.Errorf("[%s] %s", resp.errorCode(), resp.text()))
+	}
+	return resp.Data.Status, resp.Data.ErrorReason, nil
 }
 
 // sumFileSizes totals the byte sizes of the given paths. Empty paths are ignored.

@@ -27,10 +27,12 @@ func init() {
 		Name:                     "honor",
 		ConsoleURL:               "https://developer.honor.com/cn/doc/guides/101360",
 		SupportsScheduledRelease: true,
+		SupportsURLPush:          true,
 		Fields: []store.FieldSchema{
 			{Key: "client_id", Required: true, Desc: "Honor developer API client ID"},
 			{Key: "client_secret", Required: true, Desc: "Honor developer API client secret"},
 			{Key: "app_id", Required: false, Desc: "Honor app ID (auto-detected from package name if omitted)"},
+			{Key: "url_push_min_mb", Required: false, Desc: "min APK size (MB) to pull from -f URL instead of uploading; honor throttles its download-status poll to ~3min so small files upload faster (default 100)"},
 		},
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
@@ -70,10 +72,21 @@ const (
 // get-file-upload-url / update-file-info requests.
 const fileTypeAPK = 100
 
+// Download-mode (upload-by-url) constants. Honor pulls the package from a
+// public URL asynchronously and rate-limits status queries to ~once/3min,
+// so direct upload is faster for small APKs — we only URL-push above the
+// size gate, and poll no more often than Honor allows.
+const (
+	honorUploadDone        = 0 // upload-by-url status: 0=成功, 1=待上传, 2=上传中
+	honorURLPushDefaultMB  = 100
+	honorURLPushPollPeriod = 3 * time.Minute
+)
+
 type Store struct {
-	client      *resty.Client // bound to publishBase with Bearer auth
-	accessToken string        // kept separately so we can pass it on the signed upload URL, which belongs to a different host
-	configAppID string        // optional; when set, skips the get-app-id lookup
+	client          *resty.Client // bound to publishBase with Bearer auth
+	accessToken     string        // kept separately so we can pass it on the signed upload URL, which belongs to a different host
+	configAppID     string        // optional; when set, skips the get-app-id lookup
+	urlPushMinBytes int64         // APK must be at least this big to pull from -f URL; 0 = default
 }
 
 func New(cfg map[string]string) (*Store, error) {
@@ -93,7 +106,19 @@ func New(cfg map[string]string) (*Store, error) {
 		SetAuthToken(token).
 		SetHeader("Content-Type", "application/json")
 
-	return &Store{client: client, accessToken: token, configAppID: cfg["app_id"]}, nil
+	minMB := honorURLPushDefaultMB
+	if v := strings.TrimSpace(cfg["url_push_min_mb"]); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			minMB = n
+		}
+	}
+
+	return &Store{
+		client:          client,
+		accessToken:     token,
+		configAppID:     cfg["app_id"],
+		urlPushMinBytes: int64(minMB) << 20,
+	}, nil
 }
 
 func (s *Store) Name() string { return "honor" }
@@ -127,8 +152,15 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		return fmt.Errorf("get app detail: %w", err)
 	}
 
-	// Upload phase: get signed URL, PUT/POST the APK, bind by objectId.
-	if err := s.uploadAPK(ctx, appID, req.FilePath, rep); err != nil {
+	// Get the APK to Honor. When -f is a public URL and the APK is large
+	// enough to be worth Honor's async download (it throttles status polls
+	// to ~once/3min, so small files upload faster directly), hand Honor the
+	// URL and let it pull the binary; otherwise upload the bytes.
+	if req.SourceURL != "" && s.shouldURLPush(req.FilePath) {
+		if err := s.uploadByURL(ctx, appID, req.SourceURL, req.FilePath, rep); err != nil {
+			return fmt.Errorf("upload apk by url: %w", err)
+		}
+	} else if err := s.uploadAPK(ctx, appID, req.FilePath, rep); err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
 
@@ -357,12 +389,117 @@ func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progre
 
 	// Step 4: tell honor that objectId is the new binary for this app.
 	rep.Phase("publishing")
+	return s.bindFile(ctx, appID, upload.ObjectID)
+}
+
+// shouldURLPush reports whether the APK is large enough that Honor's async
+// download-from-URL (with its ~3min status-poll floor) beats a direct
+// upload. Below the threshold, uploading the bytes is faster. A stat
+// failure falls back to the upload path.
+func (s *Store) shouldURLPush(apkPath string) bool {
+	min := s.urlPushMinBytes
+	if min <= 0 {
+		min = int64(honorURLPushDefaultMB) << 20
+	}
+	fi, err := os.Stat(apkPath)
+	if err != nil {
+		return false
+	}
+	return fi.Size() >= min
+}
+
+// uploadByURL hands Honor a public download URL (upload-by-url) instead of
+// uploading the APK bytes. Honor downloads the file on its own side
+// (async); we poll until it reports the upload finished, then bind the
+// objectId exactly as the upload path does. The URL must be HTTPS, public
+// and unauthenticated — Honor GETs it directly.
+func (s *Store) uploadByURL(ctx context.Context, appID, sourceURL, apkPath string, rep progress.Reporter) error {
+	rep.Phase("hashing")
+	size, sum, err := statAndSha256(apkPath)
+	if err != nil {
+		return fmt.Errorf("hash apk: %w", err)
+	}
+	fileName := filepath.Base(apkPath)
+
+	// Step 1: enqueue the download task (type=1).
+	rep.Phase("url push")
+	objectID, status, err := s.urlPushTask(ctx, appID, map[string]any{
+		"type": 1,
+		"uploadList": []map[string]any{{
+			"fileName":      fileName,
+			"fileType":      fileTypeAPK,
+			"fileSize":      size,
+			"fileSha256":    sum,
+			"fileUploadUrl": sourceURL,
+		}},
+	})
+	if err != nil {
+		return fmt.Errorf("create url upload task: %w", err)
+	}
+
+	// Step 2: poll until Honor finishes downloading (status 0). Honor
+	// rate-limits status queries, so wait ~3min between checks; ctx
+	// (the run timeout) bounds the wait.
+	for status != honorUploadDone {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for honor to download package from url: %w", ctx.Err())
+		case <-time.After(honorURLPushPollPeriod):
+		}
+		_, status, err = s.urlPushTask(ctx, appID, map[string]any{
+			"type":       2,
+			"objectList": []map[string]any{{"objectId": objectID}},
+		})
+		if err != nil {
+			return fmt.Errorf("query url upload status: %w", err)
+		}
+	}
+
+	// Step 3: bind the objectId to the app, same as the upload path.
+	rep.Phase("publishing")
+	return s.bindFile(ctx, appID, objectID)
+}
+
+// urlPushTask POSTs to upload-by-url and returns the first object's id and
+// status. Serves both the create (type=1) and status-query (type=2) calls.
+func (s *Store) urlPushTask(ctx context.Context, appID string, body map[string]any) (objectID int64, status int, err error) {
+	var resp struct {
+		honorResp
+		Data []struct {
+			ObjectID int64 `json:"objectId"`
+			Status   int   `json:"status"`
+		} `json:"data"`
+	}
+	httpResp, err := s.client.R().
+		SetContext(ctx).
+		SetQueryParam("appId", appID).
+		SetBody(body).
+		SetResult(&resp).
+		Post("/openapi/v1/publish/upload-by-url")
+	if err != nil {
+		return 0, 0, err
+	}
+	if httpResp.IsError() {
+		return 0, 0, fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+	}
+	if resp.Code != 0 {
+		return 0, 0, store.Categorize(classifyHonor(resp.Code), fmt.Errorf("[%d] %s", resp.Code, resp.text()))
+	}
+	if len(resp.Data) == 0 {
+		return 0, 0, fmt.Errorf("empty upload-by-url response")
+	}
+	return resp.Data[0].ObjectID, resp.Data[0].Status, nil
+}
+
+// bindFile tells Honor that objectId is the new binary for the app's draft
+// version (update-file-info). Shared by the upload and URL-push paths.
+func (s *Store) bindFile(ctx context.Context, appID string, objectID int64) error {
 	var bindResp honorResp
 	bindHTTP, err := s.client.R().
 		SetContext(ctx).
 		SetQueryParam("appId", appID).
 		SetBody(map[string]any{
-			"bindingFileList": []map[string]any{{"objectId": upload.ObjectID}},
+			"bindingFileList": []map[string]any{{"objectId": objectID}},
 		}).
 		SetResult(&bindResp).
 		Post("/openapi/v1/publish/update-file-info")
