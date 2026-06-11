@@ -45,7 +45,7 @@ func init() {
 // query-by-contentId status endpoint, so it lists the seller's apps and
 // picks out this content_id's contentStatus, mapping it to the unified
 // review state — independent of upload.
-func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
 	res := store.AuditResult{Store: "samsung"}
 	s, err := New(cfg)
 	if err != nil {
@@ -57,7 +57,7 @@ func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.A
 		ContentName   string `json:"contentName"`
 		ContentStatus string `json:"contentStatus"`
 	}
-	httpResp, err := s.client.R().SetResult(&list).Get("/seller/contentList")
+	httpResp, err := s.client.R().SetContext(ctx).SetResult(&list).Get("/seller/contentList")
 	if err != nil {
 		res.Error = err.Error()
 		return res
