@@ -46,14 +46,14 @@ func init() {
 
 // audit is registered with `apkgo audit`. It reads the package's review
 // status via the read-only app.query.details, independent of upload.
-func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
 	res := store.AuditResult{Store: "vivo"}
 	s, err := New(cfg)
 	if err != nil {
 		res.Error = err.Error()
 		return res
 	}
-	app, err := s.queryApp(q.Package)
+	app, err := s.queryApp(ctx, q.Package)
 	if err != nil {
 		res.Error = err.Error()
 		return res
@@ -549,11 +549,11 @@ type appDetails struct {
 // and resty's auto-decode keys off content-type — so SetResult would
 // silently leave the struct zero-valued, making a real auth failure
 // look like "no app found".
-func (s *Store) queryApp(packageName string) (*appDetails, error) {
+func (s *Store) queryApp(ctx context.Context, packageName string) (*appDetails, error) {
 	params := s.signParams("app.query.details", map[string]string{
 		"packageName": packageName,
 	})
-	httpResp, err := s.client.R().SetQueryParams(params).Post("")
+	httpResp, err := s.client.R().SetContext(ctx).SetQueryParams(params).Post("")
 	if err != nil {
 		return nil, err
 	}
@@ -595,7 +595,7 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 		return probes
 	}
 
-	app, err := s.queryApp(hint.Package)
+	app, err := s.queryApp(ctx, hint.Package)
 	if err != nil {
 		probes = append(probes, store.Probe{Name: "app-info", Status: "fail", Error: err.Error()})
 		return probes

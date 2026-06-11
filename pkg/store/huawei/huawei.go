@@ -41,7 +41,7 @@ func init() {
 // audit is registered with `apkgo audit`. It reads the app's releaseState
 // via the read-only app-info query (GET), mapping it to the unified review
 // state — independent of the upload flow.
-func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
 	res := store.AuditResult{Store: "huawei"}
 	s, err := New(cfg)
 	if err != nil {
@@ -61,6 +61,7 @@ func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.A
 		ReleaseState int     `json:"releaseState"`
 	}
 	httpResp, err := s.client.R().
+		SetContext(ctx).
 		SetQueryParams(map[string]string{"appId": appID, "releaseType": "1"}).
 		SetResult(&resp).
 		Get("/api/publish/v2/app-info")

@@ -42,14 +42,14 @@ func init() {
 
 // audit is registered with `apkgo audit`. It reads the latest version's
 // review status from the read-only app/info query, independent of upload.
-func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
 	res := store.AuditResult{Store: "oppo"}
 	s, err := New(cfg)
 	if err != nil {
 		res.Error = err.Error()
 		return res
 	}
-	app, err := s.queryApp(q.Package)
+	app, err := s.queryApp(ctx, q.Package)
 	if err != nil {
 		res.Error = err.Error()
 		return res
@@ -206,7 +206,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	// 1. Query app info
 	rep.Phase("query")
-	app, err := s.queryApp(req.PackageName)
+	app, err := s.queryApp(ctx, req.PackageName)
 	if err != nil {
 		return fmt.Errorf("query app: %w", err)
 	}
@@ -297,7 +297,7 @@ func sumFileSizes(paths ...string) (int64, error) {
 	return total, nil
 }
 
-func (s *Store) queryApp(pkgName string) (*appData, error) {
+func (s *Store) queryApp(ctx context.Context, pkgName string) (*appData, error) {
 	data := url.Values{}
 	data.Set("pkg_name", pkgName)
 	var resp struct {
@@ -305,6 +305,7 @@ func (s *Store) queryApp(pkgName string) (*appData, error) {
 		Data *appData `json:"data"`
 	}
 	httpResp, err := s.client.R().
+		SetContext(ctx).
 		SetResult(&resp).
 		SetQueryParamsFromValues(s.sign(data)).
 		Get("/resource/v1/app/info")
@@ -585,7 +586,7 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 		return probes
 	}
 
-	app, err := s.queryApp(hint.Package)
+	app, err := s.queryApp(ctx, hint.Package)
 	if err != nil {
 		probes = append(probes, store.Probe{Name: "app-info", Status: "fail", Error: err.Error()})
 		return probes
