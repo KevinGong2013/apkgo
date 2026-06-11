@@ -38,6 +38,73 @@ func init() {
 		return New(cfg)
 	})
 	store.RegisterDiagnoser("honor", diagnose)
+	store.RegisterAuditor("honor", audit)
+}
+
+// audit is registered with `apkgo audit`. It reads the package's current
+// release/review status via get-app-current-release (which keys off appId
+// alone — no releaseId needed), independent of the upload flow.
+func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+	res := store.AuditResult{Store: "honor"}
+	s, err := New(cfg)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	appID := s.configAppID
+	if appID == "" {
+		appID, err = s.getAppID(q.Package)
+		if err != nil {
+			res.Error = err.Error()
+			return res
+		}
+	}
+	var resp struct {
+		honorResp
+		Data struct {
+			AuditResult  int    `json:"auditResult"`
+			AuditMessage string `json:"auditMessage"`
+			VersionName  string `json:"versionName"`
+		} `json:"data"`
+	}
+	httpResp, err := s.client.R().
+		SetContext(ctx).
+		SetQueryParam("appId", appID).
+		SetResult(&resp).
+		Get("/openapi/v1/publish/get-app-current-release")
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	if httpResp.IsError() {
+		res.Error = fmt.Sprintf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+		return res
+	}
+	if resp.Code != 0 {
+		res.Error = fmt.Sprintf("[%d] %s", resp.Code, resp.text())
+		return res
+	}
+	res.State, res.Detail = mapHonorAudit(resp.Data.AuditResult, resp.Data.AuditMessage)
+	return res
+}
+
+// mapHonorAudit maps get-app-current-release auditResult to the unified
+// state. 0=审核中, 1=审核通过, 2=审核不通过, 3=其他非审核状态, 4=编辑中未提交.
+func mapHonorAudit(auditResult int, msg string) (store.AuditState, string) {
+	switch auditResult {
+	case 0:
+		return store.AuditReviewing, ""
+	case 1:
+		return store.AuditApproved, ""
+	case 2:
+		return store.AuditRejected, msg
+	case 3:
+		return store.AuditUnknown, "non-review state"
+	case 4:
+		return store.AuditUnknown, "editing, not submitted"
+	default:
+		return store.AuditUnknown, fmt.Sprintf("auditResult=%d", auditResult)
+	}
 }
 
 // honorResp is honor's standard response envelope. Code 0 = success.

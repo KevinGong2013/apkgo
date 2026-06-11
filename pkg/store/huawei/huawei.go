@@ -35,6 +35,70 @@ func init() {
 		return New(cfg)
 	})
 	store.RegisterDiagnoser("huawei", diagnose)
+	store.RegisterAuditor("huawei", audit)
+}
+
+// audit is registered with `apkgo audit`. It reads the app's releaseState
+// via the read-only app-info query (GET), mapping it to the unified review
+// state — independent of the upload flow.
+func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+	res := store.AuditResult{Store: "huawei"}
+	s, err := New(cfg)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	appID := s.configAppID
+	if appID == "" {
+		appID, err = s.fetchAppID(q.Package)
+		if err != nil {
+			res.Error = err.Error()
+			return res
+		}
+	}
+	var resp struct {
+		Ret          retInfo `json:"ret"`
+		ReleaseState int     `json:"releaseState"`
+	}
+	httpResp, err := s.client.R().
+		SetQueryParams(map[string]string{"appId": appID, "releaseType": "1"}).
+		SetResult(&resp).
+		Get("/api/publish/v2/app-info")
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	if httpResp.IsError() {
+		res.Error = fmt.Sprintf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+		return res
+	}
+	if resp.Ret.Code != 0 {
+		res.Error = fmt.Sprintf("[%d] %s", resp.Ret.Code, resp.Ret.text())
+		return res
+	}
+	res.State, res.Detail = mapHuaweiReleaseState(resp.ReleaseState)
+	return res
+}
+
+// mapHuaweiReleaseState maps app-info releaseState (releaseType=1) to the
+// unified state. 0=已上架, 1=上架审核不通过, 2=已下架, 3=待上架(预约), 4=审核中,
+// 5=升级审核中, 6=申请下架, 7=草稿, 8=升级审核不通过, 9=下架审核不通过,
+// 10=开发者下架, 11=撤销上架, 12=预审中, 13=预审不通过.
+func mapHuaweiReleaseState(state int) (store.AuditState, string) {
+	switch state {
+	case 4, 5, 12:
+		return store.AuditReviewing, fmt.Sprintf("releaseState=%d", state)
+	case 0, 3:
+		return store.AuditApproved, fmt.Sprintf("releaseState=%d", state)
+	case 1, 8, 13:
+		return store.AuditRejected, fmt.Sprintf("releaseState=%d", state)
+	case 2, 10, 11:
+		return store.AuditWithdrawn, fmt.Sprintf("releaseState=%d", state)
+	case 7:
+		return store.AuditUnknown, "draft (草稿)"
+	default:
+		return store.AuditUnknown, fmt.Sprintf("releaseState=%d", state)
+	}
 }
 
 // authMode reflects which credential type is in effect; used by diagnostics.

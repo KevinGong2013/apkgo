@@ -15,9 +15,22 @@ go install github.com/KevinGong2013/apkgo@latest
 apkgo init [-s store1,store2] [-c config.yaml]   # Generate config file
 apkgo upload -f <apk> [flags]                     # Upload APK to stores
 apkgo doctor [-s stores] [-f apk | -p package]    # Diagnose store credentials/permissions
+apkgo audit [-f apk | -p package] [-s stores] [--watch]  # Query review (审核) status
 apkgo stores                                      # List stores and config schema (JSON)
 apkgo version                                     # Version info (JSON)
 ```
+
+### Review status (`apkgo audit`)
+
+Upload finishes at **submitted (审核中)** — it does not block waiting for the
+review outcome (tencent's old in-upload audit poll was removed). Poll review
+progress separately with `apkgo audit -p <package>` (or `-f <apk>`), which runs
+on its own context like `doctor`. `--watch [--interval 30s]` loops until every
+store reaches a terminal state (approved / rejected / withdrawn) or the global
+`-t` timeout. Each store's status is normalised to a unified `state`
+(reviewing / approved / rejected / withdrawn / unknown) with the raw label in
+`detail`. Supported: **tencent, huawei, honor, vivo, oppo, samsung** (stores
+with a review-status API; others report "audit not supported").
 
 ## Upload flags
 

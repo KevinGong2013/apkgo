@@ -48,6 +48,7 @@ func init() {
 		return New(cfg)
 	})
 	store.RegisterDiagnoser("tencent", diagnose)
+	store.RegisterAuditor("tencent", audit)
 }
 
 // tencentResp is the standard response envelope. Some endpoints use
@@ -188,15 +189,11 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		}
 	}
 
-	// 3. Submit update
+	// 3. Submit update. The app is now submitted and under review (审核中).
+	// Review progress is decoupled from upload — poll it with `apkgo audit`
+	// (which runs on its own context) instead of blocking the upload here.
 	rep.Phase("publishing")
-	if err := s.updateApp(pkg, appID, req, apkSerial, apkMD5, apk64Serial, apk64MD5); err != nil {
-		return fmt.Errorf("update app: %w", err)
-	}
-
-	// 4. Poll audit status
-	rep.Phase("auditing")
-	return s.pollAuditStatus(ctx, pkg, appID)
+	return s.updateApp(pkg, appID, req, apkSerial, apkMD5, apk64Serial, apk64MD5)
 }
 
 // sumFileSizes totals the byte sizes of the given paths. Empty paths are ignored.
@@ -366,56 +363,67 @@ func isAPK64BitOnly(path string) bool {
 	return apk.Is64BitOnly(abis)
 }
 
-// pollAuditStatus checks the audit status until resolved or timeout.
-//
-// A non-zero envelope `ret` is treated as a hard failure rather than a
-// transient state — without this an auth/sign failure or "app not found"
-// would loop silently for the full polling window before reporting a
-// useless "polling timed out".
-func (s *Store) pollAuditStatus(ctx context.Context, pkg, appID string) error {
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-
-	for attempt := 0; attempt < 20; attempt++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-
-		params := url.Values{}
-		params.Set("pkg_name", pkg)
-		params.Set("app_id", appID)
-
-		var resp struct {
-			tencentResp
-			AuditStatus int    `json:"audit_status"`
-			AuditReason string `json:"audit_reason"`
-		}
-		if err := s.post("/query_app_update_status", params, &resp); err != nil {
-			return err
-		}
-		if resp.Ret != 0 {
-			return fmt.Errorf("query audit status: [%d] %s", resp.Ret, resp.text())
-		}
-
-		switch resp.AuditStatus {
-		case 3: // approved
-			return nil
-		case 2: // rejected
-			return store.Categorize(store.CategoryPolicyBlock,
-				fmt.Errorf("audit rejected: %s", resp.AuditReason))
-		case 8: // withdrawn
-			return store.Categorize(store.CategoryPolicyBlock,
-				fmt.Errorf("audit withdrawn"))
-		}
-		// status 1 = auditing, continue polling
+// audit is registered with `apkgo audit`. It looks up the latest
+// submission's review status for the package, independent of the upload
+// flow — it builds its own client from the raw config so it can run on an
+// independent context (e.g. a watch loop or a cron).
+func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+	res := store.AuditResult{Store: "tencent"}
+	s, err := New(cfg)
+	if err != nil {
+		res.Error = err.Error()
+		return res
 	}
+	pkg, err := s.resolvePackage(q.Package)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	appID, err := s.resolveAppID(pkg)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	state, detail, err := s.queryAuditStatus(pkg, appID)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	res.State = state
+	res.Detail = detail
+	return res
+}
 
-	// Timeout is not an error — the update was submitted successfully and
-	// is in audit. Mirror the huawei/oppo pattern by pointing the operator
-	// at the console for the rest.
-	return nil
+// queryAuditStatus does a single audit-status query and maps Tencent's
+// audit_status to the unified AuditState (1=审核中, 2=驳回, 3=通过, 8=撤回).
+func (s *Store) queryAuditStatus(pkg, appID string) (store.AuditState, string, error) {
+	params := url.Values{}
+	params.Set("pkg_name", pkg)
+	params.Set("app_id", appID)
+
+	var resp struct {
+		tencentResp
+		AuditStatus int    `json:"audit_status"`
+		AuditReason string `json:"audit_reason"`
+	}
+	if err := s.post("/query_app_update_status", params, &resp); err != nil {
+		return "", "", err
+	}
+	if resp.Ret != 0 {
+		return "", "", fmt.Errorf("[%d] %s", resp.Ret, resp.text())
+	}
+	switch resp.AuditStatus {
+	case 1:
+		return store.AuditReviewing, "", nil
+	case 2:
+		return store.AuditRejected, resp.AuditReason, nil
+	case 3:
+		return store.AuditApproved, "", nil
+	case 8:
+		return store.AuditWithdrawn, "", nil
+	default:
+		return store.AuditUnknown, fmt.Sprintf("audit_status=%d", resp.AuditStatus), nil
+	}
 }
 
 // post makes a signed POST request to the Tencent API.

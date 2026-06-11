@@ -38,6 +38,64 @@ func init() {
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
+	store.RegisterAuditor("samsung", audit)
+}
+
+// audit is registered with `apkgo audit`. Galaxy Store has no
+// query-by-contentId status endpoint, so it lists the seller's apps and
+// picks out this content_id's contentStatus, mapping it to the unified
+// review state — independent of upload.
+func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+	res := store.AuditResult{Store: "samsung"}
+	s, err := New(cfg)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	var list []struct {
+		ContentID     string `json:"contentId"`
+		ContentName   string `json:"contentName"`
+		ContentStatus string `json:"contentStatus"`
+	}
+	httpResp, err := s.client.R().SetResult(&list).Get("/seller/contentList")
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	if httpResp.StatusCode() >= 400 {
+		res.Error = fmt.Sprintf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+		return res
+	}
+	for _, c := range list {
+		if c.ContentID == s.contentID {
+			res.State, res.Detail = mapSamsungStatus(c.ContentStatus)
+			return res
+		}
+	}
+	res.Error = fmt.Sprintf("content_id %s not found in seller app list", s.contentID)
+	return res
+}
+
+// mapSamsungStatus maps Galaxy Store contentStatus to the unified state.
+// There are ~38 values; we key off keywords (the raw status is always in
+// Detail). FOR_SALE/READY_FOR_SALE = approved, *_REJECTED = rejected,
+// UNDER_*/READY_*/DELAYED = in review, CANCELED/TERMINATED = withdrawn.
+func mapSamsungStatus(status string) (store.AuditState, string) {
+	u := strings.ToUpper(status)
+	switch {
+	case u == "FOR_SALE" || u == "READY_FOR_SALE" || u == "READY_FOR_CHANGE" || u == "SUSPENDED":
+		return store.AuditApproved, status
+	case strings.Contains(u, "REJECTED"):
+		return store.AuditRejected, status
+	case strings.Contains(u, "UNDER_") || strings.Contains(u, "READY_FOR_") || strings.Contains(u, "READY_TO_") || strings.Contains(u, "DELAYED"):
+		return store.AuditReviewing, status
+	case strings.Contains(u, "CANCELED") || u == "TERMINATED":
+		return store.AuditWithdrawn, status
+	case strings.Contains(u, "REGISTERING") || strings.Contains(u, "UPDATING"):
+		return store.AuditUnknown, status + " (not submitted)"
+	default:
+		return store.AuditUnknown, status
+	}
 }
 
 type Store struct {

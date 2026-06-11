@@ -41,6 +41,48 @@ func init() {
 		return New(cfg)
 	})
 	store.RegisterDiagnoser("vivo", diagnose)
+	store.RegisterAuditor("vivo", audit)
+}
+
+// audit is registered with `apkgo audit`. It reads the package's review
+// status via the read-only app.query.details, independent of upload.
+func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+	res := store.AuditResult{Store: "vivo"}
+	s, err := New(cfg)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	app, err := s.queryApp(q.Package)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	if app == nil {
+		res.Error = fmt.Sprintf("no app found for package %s under this developer account", q.Package)
+		return res
+	}
+	res.State, res.Detail = mapVivoAuditState(int(app.Status))
+	return res
+}
+
+// mapVivoAuditState maps vivo's app.query.details 审核状态 to the unified
+// AuditState. 1=草稿, 2=待审核, 3=审核通过, 4=审核不通过, 5=撤销审核.
+func mapVivoAuditState(status int) (store.AuditState, string) {
+	switch status {
+	case 2:
+		return store.AuditReviewing, ""
+	case 3:
+		return store.AuditApproved, ""
+	case 4:
+		return store.AuditRejected, ""
+	case 5:
+		return store.AuditWithdrawn, ""
+	case 1:
+		return store.AuditUnknown, "draft (草稿) — not yet submitted"
+	default:
+		return store.AuditUnknown, fmt.Sprintf("status=%d", status)
+	}
 }
 
 type Store struct {
@@ -471,14 +513,32 @@ type uploadResp struct {
 	FileMD5      string `json:"fileMd5"`
 }
 
+// lenientInt unmarshals from either a JSON number or a quoted string,
+// and never fails the surrounding decode — vivo is inconsistent about
+// whether numeric fields are quoted, and a strict int here would break
+// the shared appDetails decode (and the doctor probe with it).
+type lenientInt int
+
+func (n *lenientInt) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		return nil
+	}
+	if v, err := strconv.Atoi(s); err == nil {
+		*n = lenientInt(v)
+	}
+	return nil
+}
+
 // appDetails is the slice of fields apkgo needs from `app.query.details`.
-// vivo returns more (status, app name in zh, online state, etc.) but we
-// only surface what the doctor probe reports.
+// vivo returns more (app name in zh, online state, etc.) but we only
+// surface what the doctor / audit paths report.
 type appDetails struct {
-	PackageName string `json:"packageName"`
-	AppName     string `json:"appName"`
-	VersionName string `json:"versionName"`
-	VersionCode string `json:"versionCode"`
+	PackageName string     `json:"packageName"`
+	AppName     string     `json:"appName"`
+	VersionName string     `json:"versionName"`
+	VersionCode string     `json:"versionCode"`
+	Status      lenientInt `json:"status"` // 审核状态: 1草稿/2待审核/3通过/4不通过/5撤销
 }
 
 // queryApp calls the read-only `app.query.details` method. Used by the
