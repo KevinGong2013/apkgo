@@ -8,6 +8,8 @@
 
 > **不想搭 CI、不想碰命令行？** 试试托管版 [**apkgo cloud**](https://apkgo.baici.tech) —— 浏览器打开就能发版，凭证云端托管、多人协作、发布历史可追溯，免装免运维，运营和产品同事也能独立上手。
 >
+> **用 fastlane？** [**fastlane-plugin-apkgo**](https://github.com/KevinGong2013/fastlane-plugin-apkgo) 一个 lane 即可发布到所有商店（走 apkgo cloud，凭证云端托管）：`fastlane add_plugin apkgo`。
+>
 > **不止安卓？** [**白辞 baici.tech**](https://baici.tech) 提供 iOS / 鸿蒙 / 微信、支付宝、抖音小程序的一站式上架代办，覆盖 ICP 备案、软件著作权、应用核准全流程。98% 一次过审、24h 极速响应、不过退款，已服务 500+ 开发者与企业。
 
 ## 安装
@@ -649,6 +651,22 @@ result, err := apkgo.Run(ctx, apkgo.Job{
       --notes-file CHANGELOG.md \
       --store huawei,xiaomi,oppo,vivo,tencent \
       --timeout 15m
+```
+
+### fastlane
+
+已经在用 fastlane？用 [**fastlane-plugin-apkgo**](https://github.com/KevinGong2013/fastlane-plugin-apkgo) 把发版接进你的 lane，凭证由 [apkgo cloud](https://apkgo.baici.tech) 云端托管，无需在 CI 里堆一堆 secret：
+
+```ruby
+# fastlane add_plugin apkgo
+lane :release do
+  gradle(task: "assembleRelease")
+  upload_to_apkgo(
+    api_key: ENV["APKGO_API_KEY"],
+    release_notes: "Bug fixes and improvements",
+    stores: ["huawei", "xiaomi", "oppo", "vivo", "tencent"]
+  )
+end
 ```
 
 ### Docker
