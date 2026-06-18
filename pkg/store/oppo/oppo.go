@@ -59,6 +59,10 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 		return res
 	}
 	res.State, res.Detail = mapOppoAudit(app.AuditStatusName, app.RefuseReason)
+	res.VersionName = app.VersionName
+	if vc, err := strconv.Atoi(strings.TrimSpace(app.VersionCode)); err == nil {
+		res.VersionCode = int32(vc)
+	}
 	return res
 }
 
@@ -550,6 +554,8 @@ type appData struct {
 	AuditStatus       string `json:"audit_status"`      // numeric code (审核状态对照表 not published in the API传包 docs)
 	AuditStatusName   string `json:"audit_status_name"` // human label, e.g. "上线" / "审核中"
 	RefuseReason      string `json:"refuse_reason"`
+	VersionName       string `json:"version_name"` // 版本名称
+	VersionCode       string `json:"version_code"` // 版本号 (returned as a string)
 }
 
 type uploadResultData struct {

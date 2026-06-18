@@ -85,6 +85,7 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 		return res
 	}
 	res.State, res.Detail = mapHonorAudit(resp.Data.AuditResult, resp.Data.AuditMessage)
+	res.VersionName = resp.Data.VersionName
 	return res
 }
 

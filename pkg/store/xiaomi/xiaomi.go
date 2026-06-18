@@ -51,6 +51,58 @@ func init() {
 		return New(cfg)
 	})
 	store.RegisterDiagnoser("xiaomi", diagnose)
+	store.RegisterAuditor("xiaomi", audit)
+}
+
+// audit is registered with `apkgo audit`. Xiaomi exposes no review-status
+// API (the developer FAQ states it is "暂时没有开放"), so we infer the state
+// by version comparison: /dev/query returns the version currently live on
+// the store, and AuditQuery carries the version we last submitted. A
+// submitted version higher than the live one means our update is still
+// pending review (reviewing); equal — or our hint missing — means the live
+// store already serves it (approved). Xiaomi can't distinguish a rejected
+// submission from an in-review one (both leave the live version unchanged),
+// so a pending version is reported as reviewing.
+func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+	res := store.AuditResult{Store: "xiaomi"}
+	s, err := New(cfg)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	info, err := s.query(q.Package)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	const inferred = "小米无审核状态接口，依据版本推断"
+	if info == nil {
+		// Never uploaded under this account: a submitted version we know about
+		// is freshly pending; otherwise there's nothing to report.
+		if q.VersionCode > 0 {
+			res.State = store.AuditReviewing
+			res.Detail = "首次提交，等待小米审核（" + inferred + "）"
+			res.VersionName, res.VersionCode = q.VersionName, q.VersionCode
+		} else {
+			res.State = store.AuditUnknown
+			res.Detail = "该应用尚未在小米上架"
+		}
+		return res
+	}
+	res.LiveVersionName = info.VersionName
+	res.LiveVersionCode = int32(info.VersionCode)
+	if q.VersionCode > int32(info.VersionCode) {
+		// Our submission is newer than what's live → still pending review.
+		res.State = store.AuditReviewing
+		res.Detail = fmt.Sprintf("提交版本 %d 高于在架版本 %d，等待上线（%s）", q.VersionCode, info.VersionCode, inferred)
+		res.VersionName, res.VersionCode = q.VersionName, q.VersionCode
+	} else {
+		// Live version already matches (or exceeds) our submission → approved.
+		res.State = store.AuditApproved
+		res.Detail = "在架版本已是最新（" + inferred + "）"
+		res.VersionName, res.VersionCode = info.VersionName, int32(info.VersionCode)
+	}
+	return res
 }
 
 type Store struct {

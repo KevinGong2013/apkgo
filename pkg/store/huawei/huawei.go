@@ -56,9 +56,27 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 			return res
 		}
 	}
+	// The app-info response carries two version triplets: the unprefixed
+	// versionNumber/versionCode is the latest submitted (in-review) iteration,
+	// while onShelfVersion* is the version currently live to users. Huawei is
+	// the one store that reports both at once, so when an upgrade is mid-review
+	// the dashboard can show "线上 X / 在审 Y" without a second call.
+	//
+	// releaseState shipped here read from the top level and works in
+	// production; the version fields are documented under an appInfo object.
+	// Decode both shapes and prefer whichever is populated so the mapping is
+	// robust to the exact nesting (version fields simply stay empty if absent).
+	type appInfoFields struct {
+		ReleaseState         int    `json:"releaseState"`
+		VersionNumber        string `json:"versionNumber"`
+		VersionCode          int64  `json:"versionCode"`
+		OnShelfVersionNumber string `json:"onShelfVersionNumber"`
+		OnShelfVersionCode   int64  `json:"onShelfVersionCode"`
+	}
 	var resp struct {
-		Ret          retInfo `json:"ret"`
-		ReleaseState int     `json:"releaseState"`
+		Ret     retInfo       `json:"ret"`
+		AppInfo appInfoFields `json:"appInfo"`
+		appInfoFields
 	}
 	httpResp, err := s.client.R().
 		SetContext(ctx).
@@ -77,7 +95,16 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 		res.Error = fmt.Sprintf("[%d] %s", resp.Ret.Code, resp.Ret.text())
 		return res
 	}
-	res.State, res.Detail = mapHuaweiReleaseState(resp.ReleaseState)
+	// Prefer the appInfo object; fall back to top-level fields.
+	af := resp.AppInfo
+	if af.ReleaseState == 0 && af.VersionNumber == "" && af.OnShelfVersionNumber == "" {
+		af = resp.appInfoFields
+	}
+	res.State, res.Detail = mapHuaweiReleaseState(af.ReleaseState)
+	res.VersionName = af.VersionNumber
+	res.VersionCode = int32(af.VersionCode)
+	res.LiveVersionName = af.OnShelfVersionNumber
+	res.LiveVersionCode = int32(af.OnShelfVersionCode)
 	return res
 }
 

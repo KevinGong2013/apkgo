@@ -38,6 +38,21 @@ type AuditResult struct {
 	State  AuditState `json:"state,omitempty"`
 	Detail string     `json:"detail,omitempty"`
 	Error  string     `json:"error,omitempty"`
+
+	// VersionName/VersionCode identify the version the State refers to —
+	// the latest submitted/under-review iteration the store reports. They
+	// are best-effort: a store with no version field in its audit API
+	// leaves them empty (tencent), and an auditor may fall back to the
+	// caller's AuditQuery hints (xiaomi, which has no review API and infers
+	// state by comparing our submitted version against the live one).
+	VersionName string `json:"version_name,omitempty"`
+	VersionCode int32  `json:"version_code,omitempty"`
+	// LiveVersionName/LiveVersionCode are the version currently published
+	// to users, set only by stores whose API distinguishes the live version
+	// from an in-review one (huawei's onShelf* fields; xiaomi's queried
+	// on-shelf version). Empty when the store reports a single record.
+	LiveVersionName string `json:"live_version_name,omitempty"`
+	LiveVersionCode int32  `json:"live_version_code,omitempty"`
 }
 
 // AuditFn looks up the current review status for one store from its raw

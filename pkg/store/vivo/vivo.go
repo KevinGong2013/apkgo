@@ -63,6 +63,10 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 		return res
 	}
 	res.State, res.Detail = mapVivoAuditState(int(app.Status))
+	res.VersionName = app.VersionName
+	if vc, err := strconv.Atoi(strings.TrimSpace(app.VersionCode)); err == nil {
+		res.VersionCode = int32(vc)
+	}
 	return res
 }
 
