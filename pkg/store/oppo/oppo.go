@@ -60,7 +60,7 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 	}
 	res.State, res.Detail = mapOppoAudit(app.AuditStatusName, app.RefuseReason)
 	res.VersionName = app.VersionName
-	if vc, err := strconv.Atoi(strings.TrimSpace(app.VersionCode)); err == nil {
+	if vc, err := strconv.ParseInt(strings.TrimSpace(app.VersionCode), 10, 32); err == nil {
 		res.VersionCode = int32(vc)
 	}
 	return res
