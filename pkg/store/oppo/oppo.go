@@ -414,6 +414,7 @@ func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkIn
 	}
 	values.Set("test_desc", "submitted by apkgo")
 	values.Set("copyright_url", app.CopyrightURL)
+	values.Set("electronic_cert_url", app.ElectronicCertURL)
 	values.Set("business_username", app.BusinessUsername)
 	values.Set("business_email", app.BusinessEmail)
 	values.Set("business_mobile", app.BusinessMobile)
@@ -545,6 +546,7 @@ type appData struct {
 	IconURL           string `json:"icon_url"`
 	PicURL            string `json:"pic_url"`
 	CopyrightURL      string `json:"copyright_url"`
+	ElectronicCertURL string `json:"electronic_cert_url"` // 电子版权证书; copyright_url 已弃用,改用此字段
 	BusinessUsername  string `json:"business_username"`
 	BusinessEmail     string `json:"business_email"`
 	BusinessMobile    string `json:"business_mobile"`
