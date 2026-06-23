@@ -413,7 +413,14 @@ func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkIn
 		values.Set("sche_online_time", store.BeijingLocalTime(*req.ReleaseTime))
 	}
 	values.Set("test_desc", "submitted by apkgo")
-	values.Set("copyright_url", app.CopyrightURL)
+	// /app/upd validates 软件版权证明 from copyright_url. Accounts that uploaded
+	// an electronic copyright certificate (电子版权证书) get an empty copyright_url
+	// from /app/info with the URL only in electronic_cert_url, so fall back to it.
+	copyrightURL := app.CopyrightURL
+	if copyrightURL == "" {
+		copyrightURL = app.ElectronicCertURL
+	}
+	values.Set("copyright_url", copyrightURL)
 	values.Set("electronic_cert_url", app.ElectronicCertURL)
 	values.Set("business_username", app.BusinessUsername)
 	values.Set("business_email", app.BusinessEmail)
