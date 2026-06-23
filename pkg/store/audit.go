@@ -48,9 +48,11 @@ type AuditResult struct {
 	VersionName string `json:"version_name,omitempty"`
 	VersionCode int32  `json:"version_code,omitempty"`
 	// LiveVersionName/LiveVersionCode are the version currently published
-	// to users, set only by stores whose API distinguishes the live version
+	// to users, set only by stores that expose the live version separately
 	// from an in-review one (huawei's onShelf* fields; xiaomi's queried
-	// on-shelf version). Empty when the store reports a single record.
+	// on-shelf version; tencent best-effort scrapes its public detail page,
+	// which carries name only — no LiveVersionCode). Empty when the store
+	// reports a single record or the lookup fails.
 	LiveVersionName string `json:"live_version_name,omitempty"`
 	LiveVersionCode int32  `json:"live_version_code,omitempty"`
 }

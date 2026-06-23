@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -367,7 +368,7 @@ func isAPK64BitOnly(path string) bool {
 // submission's review status for the package, independent of the upload
 // flow — it builds its own client from the raw config so it can run on an
 // independent context (e.g. a watch loop or a cron).
-func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
 	res := store.AuditResult{Store: "tencent"}
 	s, err := New(cfg)
 	if err != nil {
@@ -391,7 +392,90 @@ func audit(_ context.Context, cfg map[string]string, q store.AuditQuery) store.A
 	}
 	res.State = state
 	res.Detail = detail
+	// The open-API audit endpoint returns no version, so best-effort scrape
+	// the public 应用宝 detail page for the currently-live version name. Any
+	// failure leaves LiveVersionName empty — it never fails the audit.
+	if live, ok := liveVersionFromStorePage(ctx, pkg); ok {
+		res.LiveVersionName = live
+	}
 	return res
+}
+
+// storePageBaseURL is the public (unauthenticated) 应用宝 web detail page,
+// keyed by package name. Unlike the signed open API it carries the live
+// version, embedded in a Next.js __NEXT_DATA__ JSON blob.
+const storePageBaseURL = "https://sj.qq.com/appdetail/"
+
+// storePageClient fetches the public detail page. Separate from the signed
+// open-API resty client: no auth, its own short timeout (the page is ~300 KB
+// and this is a best-effort enrichment, not on the critical path).
+var storePageClient = &http.Client{Timeout: 15 * time.Second}
+
+var nextDataRe = regexp.MustCompile(`(?s)<script id="__NEXT_DATA__"[^>]*>(.*?)</script>`)
+
+// liveVersionFromStorePage best-effort extracts the live version_name for pkg
+// from the public 应用宝 detail page. Returns ("", false) on any failure
+// (network, non-200, markup change, package absent) so the caller can leave
+// LiveVersionName empty rather than surfacing an error — the audit state from
+// the open API is authoritative and must not be lost to a scrape hiccup.
+func liveVersionFromStorePage(ctx context.Context, pkg string) (string, bool) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, storePageBaseURL+url.PathEscape(pkg), nil)
+	if err != nil {
+		return "", false
+	}
+	// A real-browser UA: the page is server-rendered and a blank UA can be served a stub.
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+	httpResp, err := storePageClient.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer httpResp.Body.Close()
+	if httpResp.StatusCode != http.StatusOK {
+		return "", false
+	}
+	body, err := io.ReadAll(io.LimitReader(httpResp.Body, 8<<20)) // cap at 8 MiB
+	if err != nil {
+		return "", false
+	}
+	m := nextDataRe.FindSubmatch(body)
+	if m == nil {
+		return "", false
+	}
+	var data any
+	if err := json.Unmarshal(m[1], &data); err != nil {
+		return "", false
+	}
+	if v := findVersionName(data, pkg); v != "" {
+		return v, true
+	}
+	return "", false
+}
+
+// findVersionName walks the decoded __NEXT_DATA__ tree for the object whose
+// pkg_name matches pkg and returns its version_name. The page embeds many app
+// records (recommendations, similar apps); only the one for pkg carries the
+// version we want, and a stub reference with an empty version_name is skipped.
+func findVersionName(node any, pkg string) string {
+	switch n := node.(type) {
+	case map[string]any:
+		if p, _ := n["pkg_name"].(string); p == pkg {
+			if v, _ := n["version_name"].(string); v != "" {
+				return v
+			}
+		}
+		for _, v := range n {
+			if got := findVersionName(v, pkg); got != "" {
+				return got
+			}
+		}
+	case []any:
+		for _, v := range n {
+			if got := findVersionName(v, pkg); got != "" {
+				return got
+			}
+		}
+	}
+	return ""
 }
 
 // queryAuditStatus does a single audit-status query and maps Tencent's
