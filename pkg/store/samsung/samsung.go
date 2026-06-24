@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -160,11 +159,14 @@ type Store struct {
 
 const samsungBaseURL = "https://devapi.samsungapps.com"
 
-// samsungAuthHeaders returns the Authorization header used by every
-// store API call. Centralised so the streaming upload path stays in
-// sync with the resty client's bearer auth.
+// samsungAuthHeaders returns the headers every content API call needs: the
+// bearer token and the service account id. Centralised so the streaming
+// multipart upload path stays in sync with the resty client's headers.
 func samsungAuthHeaders(s *Store) map[string]string {
-	return map[string]string{"Authorization": "Bearer " + s.accessToken}
+	return map[string]string{
+		"Authorization":      "Bearer " + s.accessToken,
+		"service-account-id": s.serviceAccountID,
+	}
 }
 
 func New(cfg map[string]string) (*Store, error) {
@@ -182,12 +184,7 @@ func New(cfg map[string]string) (*Store, error) {
 
 	client := resty.New().
 		SetBaseURL(samsungBaseURL).
-		SetHeader("Content-Type", "application/json").
-		// Galaxy Store's content APIs (contentList / contentInfo /
-		// createUploadSessionId / contentUpdate / contentSubmit) require the
-		// service account id as a header alongside the bearer token; without
-		// it the gateway answers 401/403.
-		SetHeader("service-account-id", saID)
+		SetHeader("Content-Type", "application/json")
 	// resty does not treat a non-2xx as an error, so without this every call
 	// would sail past a 4xx/5xx with an empty result — how the auth failure
 	// hid as "empty access token", and how a failed contentSubmit would
@@ -211,13 +208,20 @@ func New(cfg map[string]string) (*Store, error) {
 		privateKey:       pk,
 	}
 
-	// Authenticate
+	// Authenticate. Per the docs the token request carries only Content-Type +
+	// Authorization (the bearer JWT) — NOT service-account-id.
 	token, err := s.getAccessToken()
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 	s.accessToken = token
 	client.SetAuthToken(token)
+	// Every *content* API (contentList / contentInfo / createUploadSessionId /
+	// v2/content/binary / contentUpdate / contentSubmit) requires the service
+	// account id header beside the bearer token; without it the gateway
+	// answers 401/403. Set it after auth so it rides on the content calls but
+	// not on the token request above.
+	client.SetHeader("service-account-id", saID)
 
 	return s, nil
 }
@@ -235,24 +239,24 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	rep := progress.Safe(req.Progress)
 
-	// 1. Create upload session
+	// 1. Create an upload session. The response carries an absolute upload URL
+	//    (on seller.samsungapps.com — a different host from the API gateway)
+	//    plus a sessionId valid for 24h.
 	rep.Phase("auth")
-	var sessionResp struct {
+	var session struct {
 		URL       string `json:"url"`
 		SessionID string `json:"sessionId"`
 	}
-	_, err := s.client.R().
-		SetBody(map[string]string{}).
-		SetResult(&sessionResp).
-		Post("/seller/createUploadSessionId")
-	if err != nil {
+	if _, err := s.client.R().SetResult(&session).Post("/seller/createUploadSessionId"); err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
-	if sessionResp.SessionID == "" {
-		return fmt.Errorf("create session: server returned no sessionId")
+	if session.URL == "" || session.SessionID == "" {
+		return fmt.Errorf("create session: response missing url/sessionId")
 	}
 
-	// 2. Upload APK
+	// 2. Upload the APK to the session URL. Per the docs sessionId is a
+	//    multipart form field (not a query param), and the upload needs the
+	//    service-account-id header like every other content call.
 	rep.Phase("uploading")
 	rc, fSize, err := progress.OpenFile(req.FilePath, rep)
 	if err != nil {
@@ -262,9 +266,9 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 
 	httpResp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
 		Method:  http.MethodPost,
-		URL:     samsungBaseURL + "/seller/fileUpload",
-		Query:   url.Values{"sessionId": []string{sessionResp.SessionID}},
+		URL:     session.URL,
 		Headers: samsungAuthHeaders(s),
+		Fields:  map[string]string{"sessionId": session.SessionID},
 		Files:   []httpx.FileField{{Field: "file", FileName: filepath.Base(req.FilePath), Reader: rc, Size: fSize}},
 	})
 	if err != nil {
@@ -276,47 +280,71 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		return fmt.Errorf("upload failed: http %d: %s", httpResp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var uploadResp struct {
-		FileKey string `json:"fileKey"`
-		ErrMsg  string `json:"errorMsg,omitempty"`
+		FileKey  string `json:"fileKey"`
+		ErrorMsg string `json:"errorMsg,omitempty"`
 	}
 	if jerr := json.Unmarshal(body, &uploadResp); jerr != nil {
 		return fmt.Errorf("decode upload response (HTTP %d): %v: %s",
 			httpResp.StatusCode, jerr, strings.TrimSpace(string(body)))
 	}
 	if uploadResp.FileKey == "" {
-		return fmt.Errorf("upload failed: %s", uploadResp.ErrMsg)
+		return fmt.Errorf("upload failed: %s", uploadResp.ErrorMsg)
 	}
 
-	// 3. Update content
+	// 3. Attach the uploaded binary via Add New Binary. The docs steer new
+	//    integrations here instead of the legacy contentUpdate binaryList,
+	//    which "may cause unexpected errors". Note the request field is
+	//    `filekey` (lower-case k) even though fileUpload returns `fileKey`.
+	//    Precondition per docs: the app must be in REGISTERING ("Updating")
+	//    state for this to succeed — verify against a real upload.
 	rep.Phase("publishing")
-	contentBody := map[string]any{
-		"contentId": s.contentID,
-		"binaryList": []map[string]string{{
-			"fileKey":         uploadResp.FileKey,
-			"gmsYn":           "Y",
-			"nativePlatforms": "APK",
-		}},
+	var binResp struct {
+		ResultCode    string `json:"resultCode"`
+		ResultMessage string `json:"resultMessage"`
 	}
-	if req.ReleaseTime != nil {
-		// Scheduled release: publicationType 02 = scheduled date, with
-		// startPublicationDate as a Beijing-local datetime string
-		// (01 = auto after review, 03 = manual).
-		contentBody["publicationType"] = "02"
-		contentBody["startPublicationDate"] = store.BeijingLocalTime(*req.ReleaseTime)
+	if _, err := s.client.R().
+		SetBody(map[string]string{
+			"contentId": s.contentID,
+			"filekey":   uploadResp.FileKey,
+			"gms":       "Y",
+		}).
+		SetResult(&binResp).
+		Post("/seller/v2/content/binary"); err != nil {
+		return fmt.Errorf("add binary: %w", err)
 	}
-	_, err = s.client.R().
-		SetBody(contentBody).
-		Post("/seller/contentUpdate")
-	if err != nil {
-		return fmt.Errorf("update content: %w", err)
+	if binResp.ResultCode != "" && binResp.ResultCode != "0000" {
+		return fmt.Errorf("add binary failed: %s %s", binResp.ResultCode, strings.TrimSpace(binResp.ResultMessage))
 	}
 
-	// 4. Submit for review
+	// 4. Scheduled release only: contentUpdate carries the publication
+	//    schedule. Samsung requires contentId/defaultLanguageCode/paid/
+	//    publicationType together, so echo the current language+paid back
+	//    unchanged (read from contentInfo) rather than clobbering them.
+	if req.ReleaseTime != nil {
+		var info []struct {
+			DefaultLanguageCode string `json:"defaultLanguageCode"`
+			Paid                string `json:"paid"`
+		}
+		if _, err := s.client.R().SetQueryParam("contentId", s.contentID).SetResult(&info).Get("/seller/contentInfo"); err != nil {
+			return fmt.Errorf("read content for schedule: %w", err)
+		}
+		upd := map[string]any{
+			"contentId":            s.contentID,
+			"publicationType":      "02", // scheduled date (01 = auto after review, 03 = manual)
+			"startPublicationDate": store.BeijingLocalTime(*req.ReleaseTime),
+		}
+		if len(info) > 0 {
+			upd["defaultLanguageCode"] = info[0].DefaultLanguageCode
+			upd["paid"] = info[0].Paid
+		}
+		if _, err := s.client.R().SetBody(upd).Post("/seller/contentUpdate"); err != nil {
+			return fmt.Errorf("schedule: %w", err)
+		}
+	}
+
+	// 5. Submit for review.
 	rep.Phase("submitting")
-	_, err = s.client.R().
-		SetBody(map[string]string{"contentId": s.contentID}).
-		Post("/seller/contentSubmit")
-	if err != nil {
+	if _, err := s.client.R().SetBody(map[string]string{"contentId": s.contentID}).Post("/seller/contentSubmit"); err != nil {
 		return fmt.Errorf("submit: %w", err)
 	}
 
