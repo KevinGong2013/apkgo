@@ -132,6 +132,21 @@ func New(cfg map[string]string) (*Store, error) {
 	client := resty.New().
 		SetBaseURL(samsungBaseURL).
 		SetHeader("Content-Type", "application/json")
+	// resty does not treat a non-2xx as an error, so without this every call
+	// would sail past a 4xx/5xx with an empty result — how the auth failure
+	// hid as "empty access token", and how a failed contentSubmit would
+	// otherwise be reported as a successful upload. Fail loudly with the
+	// server's status and body instead.
+	client.OnAfterResponse(func(_ *resty.Client, r *resty.Response) error {
+		if r.IsError() {
+			body := strings.TrimSpace(r.String())
+			if len(body) > 500 {
+				body = body[:500]
+			}
+			return fmt.Errorf("http %d: %s", r.StatusCode(), body)
+		}
+		return nil
+	})
 
 	s := &Store{
 		client:           client,
@@ -176,6 +191,9 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		Post("/seller/createUploadSessionId")
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
+	}
+	if sessionResp.SessionID == "" {
+		return fmt.Errorf("create session: server returned no sessionId")
 	}
 
 	// 2. Upload APK
