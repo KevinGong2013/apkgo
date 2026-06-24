@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -287,6 +288,17 @@ func (s *Store) getAccessToken() (string, error) {
 func parsePrivateKey(pemStr string) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode([]byte(pemStr))
 	if block == nil {
+		// A PEM pasted through a single-line web form loses its newlines —
+		// HTML input value sanitization strips CR/LF — and config files
+		// sometimes carry literal "\n" escapes instead of real breaks.
+		// Either way pem.Decode sees no block. Rebuild the armored form
+		// from whatever BEGIN/END markers and base64 we can find, then retry
+		// once before giving up.
+		if repaired := normalizePEM(pemStr); repaired != "" {
+			block, _ = pem.Decode([]byte(repaired))
+		}
+	}
+	if block == nil {
 		return nil, fmt.Errorf("failed to parse PEM")
 	}
 	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
@@ -299,6 +311,55 @@ func parsePrivateKey(pemStr string) (*rsa.PrivateKey, error) {
 		return nil, fmt.Errorf("not an RSA private key")
 	}
 	return rsaKey, nil
+}
+
+// pemArmorRE matches a PEM BEGIN or END line and captures the label
+// (e.g. "PRIVATE KEY", "RSA PRIVATE KEY") so both markers can be rebuilt.
+var pemArmorRE = regexp.MustCompile(`-----(BEGIN|END) ([A-Z0-9 ]+?)-----`)
+
+// normalizePEM repairs a PEM private key whose line structure was lost in
+// transit: flattened onto a single line, or carrying literal "\n"/"\r\n"
+// escapes. It locates the first BEGIN and last END markers, keeps only the
+// base64 characters of the body between them, and re-emits a canonical block
+// with the body wrapped at 64 columns. Returns "" when no usable armor or
+// body is found, leaving the caller's original parse error to stand.
+func normalizePEM(s string) string {
+	// Convert common literal escapes to real newlines first.
+	s = strings.NewReplacer(`\r\n`, "\n", `\n`, "\n", `\r`, "\n").Replace(s)
+
+	markers := pemArmorRE.FindAllStringSubmatchIndex(s, -1)
+	if len(markers) < 2 {
+		return ""
+	}
+	begin, end := markers[0], markers[len(markers)-1]
+	label := s[begin[4]:begin[5]] // capture group 2 of the BEGIN marker
+	body := s[begin[1]:end[0]]    // text between the two markers
+
+	var raw strings.Builder
+	for i := 0; i < len(body); i++ {
+		switch c := body[i]; {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9',
+			c == '+', c == '/', c == '=':
+			raw.WriteByte(c)
+		}
+	}
+	b64 := raw.String()
+	if b64 == "" {
+		return ""
+	}
+
+	var out strings.Builder
+	out.WriteString("-----BEGIN " + label + "-----\n")
+	for i := 0; i < len(b64); i += 64 {
+		j := i + 64
+		if j > len(b64) {
+			j = len(b64)
+		}
+		out.WriteString(b64[i:j])
+		out.WriteByte('\n')
+	}
+	out.WriteString("-----END " + label + "-----\n")
+	return out.String()
 }
 
 func base64url(data []byte) string {
