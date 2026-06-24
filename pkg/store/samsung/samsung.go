@@ -40,6 +40,57 @@ func init() {
 		return New(cfg)
 	})
 	store.RegisterAuditor("samsung", audit)
+	store.RegisterDiagnoser("samsung", diagnose)
+}
+
+// diagnose is registered with `apkgo doctor`. It exercises the read-only
+// Content Publish endpoints so a credential can be validated without an
+// upload: authenticate, list the seller's apps, resolve the configured
+// content_id, and read the feature endpoints. A non-2xx on a feature
+// endpoint usually means the feature isn't set up for this app rather than a
+// bad credential, so those are reported as skip instead of fail.
+func diagnose(ctx context.Context, cfg map[string]string, _ store.DiagnoseHint) []store.Probe {
+	probes := make([]store.Probe, 0, 6)
+
+	s, err := New(cfg)
+	if err != nil {
+		return append(probes, store.Probe{Name: "auth", Status: "fail", Error: err.Error()})
+	}
+	probes = append(probes, store.Probe{Name: "auth", Status: "ok", Detail: "JWT accepted; access token issued"})
+
+	// contentList — proves the token + service-account-id can read the account.
+	var list []map[string]any
+	if _, err := s.client.R().SetContext(ctx).SetResult(&list).Get("/seller/contentList"); err != nil {
+		probes = append(probes, store.Probe{Name: "content-list", Status: "fail", Error: err.Error()})
+	} else {
+		probes = append(probes, store.Probe{Name: "content-list", Status: "ok", Detail: fmt.Sprintf("%d app(s) in seller account", len(list))})
+	}
+
+	// contentInfo — proves the configured content_id resolves to an app.
+	var info []map[string]any
+	if _, err := s.client.R().SetContext(ctx).SetQueryParam("contentId", s.contentID).SetResult(&info).Get("/seller/contentInfo"); err != nil {
+		probes = append(probes, store.Probe{Name: "content-info", Status: "fail", Error: err.Error()})
+	} else if len(info) == 0 {
+		probes = append(probes, store.Probe{Name: "content-info", Status: "fail", Error: "contentId=" + s.contentID + " not found in seller account"})
+	} else {
+		status, _ := info[0]["contentStatus"].(string)
+		probes = append(probes, store.Probe{Name: "content-info", Status: "ok", Detail: fmt.Sprintf("contentId=%s status=%s", s.contentID, status)})
+	}
+
+	// Feature-specific read endpoints — informational, never a hard fail.
+	for _, ep := range []struct{ name, path string }{
+		{"staged-rollout-rate", "/seller/v2/content/stagedRolloutRate"},
+		{"staged-rollout-binary", "/seller/v2/content/stagedRolloutBinary"},
+		{"beta-test", "/seller/v2/content/betaTest"},
+	} {
+		if _, err := s.client.R().SetContext(ctx).SetQueryParam("contentId", s.contentID).Get(ep.path); err != nil {
+			probes = append(probes, store.Probe{Name: ep.name, Status: "skip", Detail: err.Error()})
+		} else {
+			probes = append(probes, store.Probe{Name: ep.name, Status: "ok", Detail: "readable"})
+		}
+	}
+
+	return probes
 }
 
 // audit is registered with `apkgo audit`. Galaxy Store has no
@@ -131,7 +182,12 @@ func New(cfg map[string]string) (*Store, error) {
 
 	client := resty.New().
 		SetBaseURL(samsungBaseURL).
-		SetHeader("Content-Type", "application/json")
+		SetHeader("Content-Type", "application/json").
+		// Galaxy Store's content APIs (contentList / contentInfo /
+		// createUploadSessionId / contentUpdate / contentSubmit) require the
+		// service account id as a header alongside the bearer token; without
+		// it the gateway answers 401/403.
+		SetHeader("service-account-id", saID)
 	// resty does not treat a non-2xx as an error, so without this every call
 	// would sail past a 4xx/5xx with an empty result — how the auth failure
 	// hid as "empty access token", and how a failed contentSubmit would
