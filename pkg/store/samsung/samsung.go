@@ -272,8 +272,11 @@ func (s *Store) getAccessToken() (string, error) {
 			AccessToken string `json:"accessToken"`
 		} `json:"createdItem"`
 	}
+	// The signed JWT goes in the Authorization header, NOT the request body —
+	// Samsung's gateway rejects a bodied JWT with 401 AUTH_REQUIRE ("Set
+	// authorization header like Bearer <jwt>").
 	httpResp, err := s.client.R().
-		SetBody(map[string]string{"accessToken": jwt}).
+		SetHeader("Authorization", "Bearer "+jwt).
 		SetResult(&resp).
 		Post("/auth/accessToken")
 	if err != nil {
