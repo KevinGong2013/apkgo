@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -182,6 +184,10 @@ type Store struct {
 	contentID        string
 	privateKey       *rsa.PrivateKey
 	accessToken      string // also set on resty client; kept here for the streaming upload path
+	// uploadClient carries the optional Samsung-only proxy to the streaming
+	// multipart upload path; resty's proxy doesn't cover httpx.DoMultipart.
+	// nil → httpx uses its default client.
+	uploadClient *http.Client
 }
 
 const samsungBaseURL = "https://devapi.samsungapps.com"
@@ -212,6 +218,26 @@ func New(cfg map[string]string) (*Store, error) {
 	client := resty.New().
 		SetBaseURL(samsungBaseURL).
 		SetHeader("Content-Type", "application/json")
+
+	// Galaxy Store's API often isn't reliably reachable from mainland China.
+	// APKGO_SAMSUNG_HTTPS_PROXY routes ONLY Samsung's traffic through a proxy
+	// (e.g. an overseas HTTPS proxy), leaving the China-based stores direct.
+	// resty already honours the standard HTTPS_PROXY env var, but that is
+	// global — it would proxy every store — hence a dedicated, Samsung-scoped
+	// variable that also covers the seller.samsungapps.com upload host below.
+	var uploadClient *http.Client
+	if proxy := strings.TrimSpace(os.Getenv("APKGO_SAMSUNG_HTTPS_PROXY")); proxy != "" {
+		pu, err := url.Parse(proxy)
+		if err != nil {
+			return nil, fmt.Errorf("invalid APKGO_SAMSUNG_HTTPS_PROXY %q: %w", proxy, err)
+		}
+		client.SetProxy(proxy)
+		uploadClient = &http.Client{
+			Transport: &http.Transport{Proxy: http.ProxyURL(pu)},
+			Timeout:   30 * time.Minute, // large APKs; match httpx's default
+		}
+	}
+
 	// resty does not treat a non-2xx as an error, so without this every call
 	// would sail past a 4xx/5xx with an empty result — how the auth failure
 	// hid as "empty access token", and how a failed contentSubmit would
@@ -252,6 +278,7 @@ func New(cfg map[string]string) (*Store, error) {
 		serviceAccountID: saID,
 		contentID:        contentID,
 		privateKey:       pk,
+		uploadClient:     uploadClient,
 	}
 
 	// Authenticate. Per the docs the token request carries only Content-Type +
@@ -316,6 +343,7 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		Headers: samsungAuthHeaders(s),
 		Fields:  map[string]string{"sessionId": session.SessionID},
 		Files:   []httpx.FileField{{Field: "file", FileName: filepath.Base(req.FilePath), Reader: rc, Size: fSize}},
+		Client:  s.uploadClient, // nil unless APKGO_SAMSUNG_HTTPS_PROXY is set
 	})
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
