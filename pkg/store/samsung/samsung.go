@@ -272,7 +272,7 @@ func (s *Store) getAccessToken() (string, error) {
 			AccessToken string `json:"accessToken"`
 		} `json:"createdItem"`
 	}
-	_, err = s.client.R().
+	httpResp, err := s.client.R().
 		SetBody(map[string]string{"accessToken": jwt}).
 		SetResult(&resp).
 		Post("/auth/accessToken")
@@ -280,7 +280,16 @@ func (s *Store) getAccessToken() (string, error) {
 		return "", err
 	}
 	if resp.CreatedItem.AccessToken == "" {
-		return "", fmt.Errorf("empty access token")
+		// Samsung answers a bad request (wrong service_account_id, or a
+		// private key that doesn't match the account → signature mismatch)
+		// with a 200/4xx error body, not a token. resty doesn't treat a
+		// non-2xx as an error, so without echoing the status+body this is an
+		// opaque "empty access token". Surface it.
+		body := strings.TrimSpace(httpResp.String())
+		if len(body) > 500 {
+			body = body[:500]
+		}
+		return "", fmt.Errorf("empty access token (http %d): %s", httpResp.StatusCode(), body)
 	}
 	return resp.CreatedItem.AccessToken, nil
 }
