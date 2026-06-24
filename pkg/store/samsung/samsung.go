@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,39 +93,65 @@ func diagnose(ctx context.Context, cfg map[string]string, _ store.DiagnoseHint) 
 	return probes
 }
 
-// audit is registered with `apkgo audit`. Galaxy Store has no
-// query-by-contentId status endpoint, so it lists the seller's apps and
-// picks out this content_id's contentStatus, mapping it to the unified
-// review state — independent of upload.
-func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
+// audit is registered with `apkgo audit`. It queries contentInfo for the
+// configured content_id, maps its contentStatus to the unified review state,
+// and reports the newest binary's version — independent of upload. (contentInfo
+// is a real query-by-contentId endpoint that returns both status and the
+// versioned binaryList, so there's no need to page the whole seller app list.)
+func audit(ctx context.Context, cfg map[string]string, _ store.AuditQuery) store.AuditResult {
 	res := store.AuditResult{Store: "samsung"}
 	s, err := New(cfg)
 	if err != nil {
 		res.Error = err.Error()
 		return res
 	}
-	var list []struct {
-		ContentID     string `json:"contentId"`
-		ContentName   string `json:"contentName"`
-		ContentStatus string `json:"contentStatus"`
-	}
-	httpResp, err := s.client.R().SetContext(ctx).SetResult(&list).Get("/seller/contentList")
+	info, err := s.fetchContentInfo(ctx)
 	if err != nil {
 		res.Error = err.Error()
 		return res
 	}
-	if httpResp.StatusCode() >= 400 {
-		res.Error = fmt.Sprintf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
-		return res
+	status, _ := info["contentStatus"].(string)
+	res.State, res.Detail = mapSamsungStatus(status)
+	if vn, vc, _ := latestBinary(info); vc > 0 {
+		res.VersionName = vn
+		res.VersionCode = int32(vc)
 	}
-	for _, c := range list {
-		if c.ContentID == s.contentID {
-			res.State, res.Detail = mapSamsungStatus(c.ContentStatus)
-			return res
+	return res
+}
+
+// fetchContentInfo returns the seller's contentInfo record for the configured
+// content_id. Galaxy Store wraps the single record in an array.
+func (s *Store) fetchContentInfo(ctx context.Context) (map[string]any, error) {
+	var info []map[string]any
+	if _, err := s.client.R().SetContext(ctx).SetQueryParam("contentId", s.contentID).SetResult(&info).Get("/seller/contentInfo"); err != nil {
+		return nil, err
+	}
+	if len(info) == 0 {
+		return nil, fmt.Errorf("content_id %s not found in seller account", s.contentID)
+	}
+	return info[0], nil
+}
+
+// latestBinary picks the newest entry from a contentInfo binaryList (highest
+// versionCode) and returns its versionName, numeric versionCode, and gms flag.
+// Zero/empty when the app has no binaries. versionCode arrives as a string.
+func latestBinary(info map[string]any) (versionName string, versionCode int, gms string) {
+	list, _ := info["binaryList"].([]any)
+	best := -1
+	for _, b := range list {
+		m, ok := b.(map[string]any)
+		if !ok {
+			continue
+		}
+		vc, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(m["versionCode"])))
+		if vc > best {
+			best = vc
+			versionCode = vc
+			versionName, _ = m["versionName"].(string)
+			gms, _ = m["gms"].(string)
 		}
 	}
-	res.Error = fmt.Sprintf("content_id %s not found in seller app list", s.contentID)
-	return res
+	return versionName, versionCode, gms
 }
 
 // mapSamsungStatus maps Galaxy Store contentStatus to the unified state.
@@ -200,6 +227,25 @@ func New(cfg map[string]string) (*Store, error) {
 		}
 		return nil
 	})
+	// The China→Samsung link is intermittently flaky (TLS handshake timeouts,
+	// EOF before any response). Retry genuine transport failures a few times
+	// with backoff. A 4xx/5xx carries a response and is surfaced by the hook
+	// above, so it is never retried; and only idempotent calls (GETs + the
+	// auth POST) are retried, so a retry can't double-add a binary or
+	// double-submit.
+	client.
+		SetRetryCount(3).
+		SetRetryWaitTime(800 * time.Millisecond).
+		SetRetryMaxWaitTime(4 * time.Second).
+		AddRetryCondition(func(r *resty.Response, err error) bool {
+			if err == nil || (r != nil && r.RawResponse != nil) {
+				return false
+			}
+			if r == nil || r.Request == nil {
+				return false
+			}
+			return r.Request.Method == http.MethodGet || strings.Contains(r.Request.URL, "/auth/accessToken")
+		})
 
 	s := &Store{
 		client:           client,
@@ -291,13 +337,26 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		return fmt.Errorf("upload failed: %s", uploadResp.ErrorMsg)
 	}
 
-	// 3. Attach the uploaded binary via Add New Binary. The docs steer new
+	// 3. Read the app's current state once: the newest binary's gms flag (so
+	//    the re-upload inherits it instead of hard-coding it wrong — many
+	//    apps are gms="N"), plus the defaultLanguageCode/paid we have to
+	//    echo back if a schedule is requested below.
+	rep.Phase("publishing")
+	cur, err := s.fetchContentInfo(context.Background())
+	if err != nil {
+		return fmt.Errorf("read content: %w", err)
+	}
+	_, _, gms := latestBinary(cur)
+	if gms == "" {
+		gms = "N"
+	}
+
+	// 4. Attach the uploaded binary via Add New Binary. The docs steer new
 	//    integrations here instead of the legacy contentUpdate binaryList,
 	//    which "may cause unexpected errors". Note the request field is
 	//    `filekey` (lower-case k) even though fileUpload returns `fileKey`.
 	//    Precondition per docs: the app must be in REGISTERING ("Updating")
 	//    state for this to succeed — verify against a real upload.
-	rep.Phase("publishing")
 	var binResp struct {
 		ResultCode    string `json:"resultCode"`
 		ResultMessage string `json:"resultMessage"`
@@ -306,7 +365,7 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		SetBody(map[string]string{
 			"contentId": s.contentID,
 			"filekey":   uploadResp.FileKey,
-			"gms":       "Y",
+			"gms":       gms,
 		}).
 		SetResult(&binResp).
 		Post("/seller/v2/content/binary"); err != nil {
@@ -316,33 +375,28 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		return fmt.Errorf("add binary failed: %s %s", binResp.ResultCode, strings.TrimSpace(binResp.ResultMessage))
 	}
 
-	// 4. Scheduled release only: contentUpdate carries the publication
+	// 5. Scheduled release only: contentUpdate carries the publication
 	//    schedule. Samsung requires contentId/defaultLanguageCode/paid/
 	//    publicationType together, so echo the current language+paid back
-	//    unchanged (read from contentInfo) rather than clobbering them.
+	//    unchanged rather than clobbering them.
 	if req.ReleaseTime != nil {
-		var info []struct {
-			DefaultLanguageCode string `json:"defaultLanguageCode"`
-			Paid                string `json:"paid"`
-		}
-		if _, err := s.client.R().SetQueryParam("contentId", s.contentID).SetResult(&info).Get("/seller/contentInfo"); err != nil {
-			return fmt.Errorf("read content for schedule: %w", err)
-		}
 		upd := map[string]any{
 			"contentId":            s.contentID,
 			"publicationType":      "02", // scheduled date (01 = auto after review, 03 = manual)
 			"startPublicationDate": store.BeijingLocalTime(*req.ReleaseTime),
 		}
-		if len(info) > 0 {
-			upd["defaultLanguageCode"] = info[0].DefaultLanguageCode
-			upd["paid"] = info[0].Paid
+		if v, ok := cur["defaultLanguageCode"].(string); ok {
+			upd["defaultLanguageCode"] = v
+		}
+		if v, ok := cur["paid"].(string); ok {
+			upd["paid"] = v
 		}
 		if _, err := s.client.R().SetBody(upd).Post("/seller/contentUpdate"); err != nil {
 			return fmt.Errorf("schedule: %w", err)
 		}
 	}
 
-	// 5. Submit for review.
+	// 6. Submit for review.
 	rep.Phase("submitting")
 	if _, err := s.client.R().SetBody(map[string]string{"contentId": s.contentID}).Post("/seller/contentSubmit"); err != nil {
 		return fmt.Errorf("submit: %w", err)
