@@ -251,22 +251,14 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	//     the version is in OPPO's review queue. apkgo's job is done;
 	//     return success.
 	rep.Phase("publishing")
-	pubErr := s.publish(req, app, apkInfos, false)
-	if isOppoSummaryTooLong(pubErr) {
-		// OPPO returned [800002] Summary 超长: the stored 一句话简介 exceeds its cap
-		// and can't be re-submitted verbatim. Retry once omitting the summary
-		// field so OPPO keeps the existing value (an APK-only update needn't
-		// touch it). If summary is in fact required, this fails the same way.
-		pubErr = s.publish(req, app, apkInfos, true)
-	}
-	if pubErr != nil {
+	if err := s.publish(req, app, apkInfos); err != nil {
 		switch {
-		case isOppoUnderReview(pubErr):
+		case isOppoUnderReview(err):
 			return &store.AlreadyDoneError{Reason: "version already in OPPO review queue"}
-		case isOppoTaskInFlight(pubErr):
+		case isOppoTaskInFlight(err):
 			// fall through to polling
 		default:
-			return fmt.Errorf("publish: %w", pubErr)
+			return fmt.Errorf("publish: %w", err)
 		}
 	}
 
@@ -290,19 +282,6 @@ func isOppoTaskInFlight(err error) bool {
 // up to OPPO's reviewers.
 func isOppoUnderReview(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "[911215]")
-}
-
-// isOppoSummaryTooLong reports whether the publish failure is OPPO rejecting the
-// re-submitted 一句话简介 for exceeding its length cap (errno 800002 with a
-// summary message, e.g. "Summary只能包含至多13个字符"). The recovery is to retry
-// the publish without the summary field so the stored value is left untouched.
-func isOppoSummaryTooLong(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "[800002]") &&
-		(strings.Contains(msg, "Summary") || strings.Contains(msg, "简介"))
 }
 
 // sumFileSizes returns the total size in bytes of the given file paths.
@@ -410,7 +389,7 @@ func (s *Store) uploadAPK(ctx context.Context, filePath string, rep progress.Rep
 	return &uploadResp.Data, nil
 }
 
-func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkInfo, omitSummary bool) error {
+func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkInfo) error {
 	apkJSON, _ := json.Marshal(apkInfos)
 
 	values := url.Values{}
@@ -420,12 +399,7 @@ func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkIn
 	values.Set("app_name", app.AppName)
 	values.Set("second_category_id", app.SecondCategoryID)
 	values.Set("third_category_id", app.ThirdCategoryID)
-	// OPPO rejects re-submitting a stored 一句话简介 that exceeds its length cap
-	// (≤13 字). When that happens the caller retries with omitSummary=true so the
-	// existing listing value is kept untouched instead of re-validated.
-	if !omitSummary {
-		values.Set("summary", app.Summary)
-	}
+	values.Set("summary", app.Summary)
 	values.Set("detail_desc", app.DetailDesc)
 	values.Set("update_desc", req.ReleaseNotes)
 	values.Set("privacy_source_url", app.PrivacySourceURL)
