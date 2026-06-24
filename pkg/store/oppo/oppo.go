@@ -422,13 +422,16 @@ func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkIn
 	}
 	values.Set("copyright_url", copyrightURL)
 	values.Set("electronic_cert_url", app.ElectronicCertURL)
-	values.Set("business_username", app.BusinessUsername)
-	values.Set("business_email", app.BusinessEmail)
-	values.Set("business_mobile", app.BusinessMobile)
+	// OPPO's /app/info returns the business contact fields with stray leading
+	// whitespace (observed " 2052576764@qq.com"), which /app/upd then rejects
+	// as [800002] 商务联系邮箱格式不正确. Trim before echoing them back.
+	values.Set("business_username", strings.TrimSpace(app.BusinessUsername))
+	values.Set("business_email", strings.TrimSpace(app.BusinessEmail))
+	values.Set("business_mobile", strings.TrimSpace(app.BusinessMobile))
 	values.Set("age_level", app.AgeLevel)
 	values.Set("adaptive_equipment", app.AdaptiveEquipment)
 	values.Set("adaptive_type", "2")
-	values.Set("customer_contact", app.CustomerContact)
+	values.Set("customer_contact", strings.TrimSpace(app.CustomerContact))
 
 	var resp struct {
 		errEnvelope
