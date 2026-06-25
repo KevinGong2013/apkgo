@@ -365,10 +365,10 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		return fmt.Errorf("upload failed: %s", uploadResp.ErrorMsg)
 	}
 
-	// 3. Read the app's current state once: the newest binary's gms flag (so
-	//    the re-upload inherits it instead of hard-coding it wrong — many
-	//    apps are gms="N"), plus the appTitle/defaultLanguageCode/paid we must
-	//    echo back into the contentUpdate below.
+	// 3. Read the app's current state once: the existing binaryList plus the
+	//    metadata (defaultLanguageCode/paid/usExportLaws/ageLimit/chinaAgeLimit)
+	//    we echo back into contentUpdate below, plus the newest binary's gms
+	//    flag for the new entry (many apps are gms="N").
 	rep.Phase("publishing")
 	cur, err := s.fetchContentInfo(context.Background())
 	if err != nil {
@@ -379,18 +379,31 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		gms = "N"
 	}
 
-	// 4. Move the app from FOR_SALE into REGISTERING. Add New Binary (step 5)
-	//    only works in REGISTERING ("Updating") state; contentUpdate is what
-	//    transitions a live app there. Echo the current required metadata
-	//    unchanged (contentId/appTitle/defaultLanguageCode/paid/publicationType
-	//    per the Modify App Data spec) so the call only flips the state — and
-	//    carry the publication schedule here when one is requested.
+	// 4. Register the new binary via contentUpdate's binaryList — this single
+	//    call both attaches the binary AND transitions a live (FOR_SALE) app
+	//    into REGISTERING. A metadata-only contentUpdate does NOT transition
+	//    (verified against a real app), and the standalone Add New Binary
+	//    endpoint only works once already in REGISTERING, so for an update this
+	//    is the documented path (Samsung's official Galaxy Store Python
+	//    example). The list must carry the EXISTING binaries (echoed from
+	//    contentInfo) plus the new {gms, filekey} — sending only the new one
+	//    drops the existing. The flag is `gms` (not `gmsYn`) and the field is
+	//    `filekey` (lower-case k). NB: binaryList in contentUpdate is deprecated
+	//    from July 2026 — migrate to the REGISTERING-transition + Add New Binary
+	//    flow once Samsung documents how to transition without binaryList.
+	binaryList := []any{}
+	if existing, ok := cur["binaryList"].([]any); ok {
+		binaryList = append(binaryList, existing...)
+	}
+	binaryList = append(binaryList, map[string]any{"gms": gms, "filekey": uploadResp.FileKey})
 	upd := map[string]any{
 		"contentId":       s.contentID,
+		"binaryList":      binaryList,
 		"publicationType": "01", // auto-publish once review passes
 	}
-	for _, k := range []string{"appTitle", "defaultLanguageCode", "paid"} {
-		if v, ok := cur[k].(string); ok && v != "" {
+	// Echo the metadata Samsung requires alongside binaryList, unchanged.
+	for _, k := range []string{"defaultLanguageCode", "paid", "usExportLaws", "ageLimit", "chinaAgeLimit"} {
+		if v, ok := cur[k]; ok && v != nil {
 			upd[k] = v
 		}
 	}
@@ -398,33 +411,20 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		upd["publicationType"] = "02" // scheduled date (01 = auto after review, 03 = manual)
 		upd["startPublicationDate"] = store.BeijingLocalTime(*req.ReleaseTime)
 	}
-	if _, err := s.client.R().SetBody(upd).Post("/seller/contentUpdate"); err != nil {
-		return fmt.Errorf("update content (enter REGISTERING): %w", err)
-	}
-
-	// 5. Attach the uploaded binary via Add New Binary, now that the app is in
-	//    REGISTERING. Request fields are exactly contentId/filekey/gms per the
-	//    Add New Binary spec (`filekey` is lower-case k even though fileUpload
-	//    returns `fileKey`).
-	var binResp struct {
+	// contentUpdate can answer 200 with a non-zero resultCode (logical error);
+	// the non-2xx hook won't catch that, so check it explicitly.
+	var updResp struct {
 		ResultCode    string `json:"resultCode"`
 		ResultMessage string `json:"resultMessage"`
 	}
-	if _, err := s.client.R().
-		SetBody(map[string]string{
-			"contentId": s.contentID,
-			"filekey":   uploadResp.FileKey,
-			"gms":       gms,
-		}).
-		SetResult(&binResp).
-		Post("/seller/v2/content/binary"); err != nil {
-		return fmt.Errorf("add binary: %w", err)
+	if _, err := s.client.R().SetBody(upd).SetResult(&updResp).Post("/seller/contentUpdate"); err != nil {
+		return fmt.Errorf("register binary (contentUpdate): %w", err)
 	}
-	if binResp.ResultCode != "" && binResp.ResultCode != "0000" {
-		return fmt.Errorf("add binary failed: %s %s", binResp.ResultCode, strings.TrimSpace(binResp.ResultMessage))
+	if updResp.ResultCode != "" && updResp.ResultCode != "0000" {
+		return fmt.Errorf("register binary failed: %s %s", updResp.ResultCode, strings.TrimSpace(updResp.ResultMessage))
 	}
 
-	// 6. Submit for review.
+	// 5. Submit for review.
 	rep.Phase("submitting")
 	if _, err := s.client.R().SetBody(map[string]string{"contentId": s.contentID}).Post("/seller/contentSubmit"); err != nil {
 		return fmt.Errorf("submit: %w", err)
