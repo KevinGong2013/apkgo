@@ -367,8 +367,8 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 
 	// 3. Read the app's current state once: the newest binary's gms flag (so
 	//    the re-upload inherits it instead of hard-coding it wrong — many
-	//    apps are gms="N"), plus the defaultLanguageCode/paid we have to
-	//    echo back if a schedule is requested below.
+	//    apps are gms="N"), plus the appTitle/defaultLanguageCode/paid we must
+	//    echo back into the contentUpdate below.
 	rep.Phase("publishing")
 	cur, err := s.fetchContentInfo(context.Background())
 	if err != nil {
@@ -379,12 +379,33 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		gms = "N"
 	}
 
-	// 4. Attach the uploaded binary via Add New Binary. The docs steer new
-	//    integrations here instead of the legacy contentUpdate binaryList,
-	//    which "may cause unexpected errors". Note the request field is
-	//    `filekey` (lower-case k) even though fileUpload returns `fileKey`.
-	//    Precondition per docs: the app must be in REGISTERING ("Updating")
-	//    state for this to succeed — verify against a real upload.
+	// 4. Move the app from FOR_SALE into REGISTERING. Add New Binary (step 5)
+	//    only works in REGISTERING ("Updating") state; contentUpdate is what
+	//    transitions a live app there. Echo the current required metadata
+	//    unchanged (contentId/appTitle/defaultLanguageCode/paid/publicationType
+	//    per the Modify App Data spec) so the call only flips the state — and
+	//    carry the publication schedule here when one is requested.
+	upd := map[string]any{
+		"contentId":       s.contentID,
+		"publicationType": "01", // auto-publish once review passes
+	}
+	for _, k := range []string{"appTitle", "defaultLanguageCode", "paid"} {
+		if v, ok := cur[k].(string); ok && v != "" {
+			upd[k] = v
+		}
+	}
+	if req.ReleaseTime != nil {
+		upd["publicationType"] = "02" // scheduled date (01 = auto after review, 03 = manual)
+		upd["startPublicationDate"] = store.BeijingLocalTime(*req.ReleaseTime)
+	}
+	if _, err := s.client.R().SetBody(upd).Post("/seller/contentUpdate"); err != nil {
+		return fmt.Errorf("update content (enter REGISTERING): %w", err)
+	}
+
+	// 5. Attach the uploaded binary via Add New Binary, now that the app is in
+	//    REGISTERING. Request fields are exactly contentId/filekey/gms per the
+	//    Add New Binary spec (`filekey` is lower-case k even though fileUpload
+	//    returns `fileKey`).
 	var binResp struct {
 		ResultCode    string `json:"resultCode"`
 		ResultMessage string `json:"resultMessage"`
@@ -401,27 +422,6 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	}
 	if binResp.ResultCode != "" && binResp.ResultCode != "0000" {
 		return fmt.Errorf("add binary failed: %s %s", binResp.ResultCode, strings.TrimSpace(binResp.ResultMessage))
-	}
-
-	// 5. Scheduled release only: contentUpdate carries the publication
-	//    schedule. Samsung requires contentId/defaultLanguageCode/paid/
-	//    publicationType together, so echo the current language+paid back
-	//    unchanged rather than clobbering them.
-	if req.ReleaseTime != nil {
-		upd := map[string]any{
-			"contentId":            s.contentID,
-			"publicationType":      "02", // scheduled date (01 = auto after review, 03 = manual)
-			"startPublicationDate": store.BeijingLocalTime(*req.ReleaseTime),
-		}
-		if v, ok := cur["defaultLanguageCode"].(string); ok {
-			upd["defaultLanguageCode"] = v
-		}
-		if v, ok := cur["paid"].(string); ok {
-			upd["paid"] = v
-		}
-		if _, err := s.client.R().SetBody(upd).Post("/seller/contentUpdate"); err != nil {
-			return fmt.Errorf("schedule: %w", err)
-		}
 	}
 
 	// 6. Submit for review.
