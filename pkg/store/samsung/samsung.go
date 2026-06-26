@@ -145,7 +145,11 @@ func latestBinary(info map[string]any) (versionName string, versionCode int, gms
 		if !ok {
 			continue
 		}
-		vc, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(m["versionCode"])))
+		parsedVC, err := strconv.ParseInt(strings.TrimSpace(fmt.Sprint(m["versionCode"])), 10, 32)
+		if err != nil {
+			continue
+		}
+		vc := int(parsedVC)
 		if vc > best {
 			best = vc
 			versionCode = vc
