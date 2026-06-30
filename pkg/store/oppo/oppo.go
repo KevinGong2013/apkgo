@@ -250,6 +250,11 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	//   911215 "应用审核中" — the previous task has already finished and
 	//     the version is in OPPO's review queue. apkgo's job is done;
 	//     return success.
+	// OPPO's /app/upd re-validates the icon_url it round-trips from /app/info
+	// (must be a 512×512 PNG <1MB). If the stored icon doesn't comply, swap in
+	// one extracted from the APK and re-uploaded; otherwise this is a no-op.
+	app.IconURL = s.compliantIconURL(ctx, app.IconURL, req.FilePath, rep)
+
 	rep.Phase("publishing")
 	if err := s.publish(req, app, apkInfos); err != nil {
 		switch {
@@ -326,6 +331,13 @@ func (s *Store) queryApp(ctx context.Context, pkgName string) (*appData, error) 
 }
 
 func (s *Store) uploadAPK(ctx context.Context, filePath string, rep progress.Reporter) (*uploadResultData, error) {
+	return s.uploadFile(ctx, filePath, "apk", rep)
+}
+
+// uploadFile runs OPPO's two-step upload (get-upload-url → multipart POST) for
+// any file type. fileType is OPPO's discriminator: "apk", "photo" (images), or
+// "resource". The one-time sign is per-file, so each call fetches a fresh one.
+func (s *Store) uploadFile(ctx context.Context, filePath, fileType string, rep progress.Reporter) (*uploadResultData, error) {
 	// Get upload URL
 	var urlResp struct {
 		errEnvelope
@@ -351,7 +363,7 @@ func (s *Store) uploadAPK(ctx context.Context, filePath string, rep progress.Rep
 	// Upload file (streamed, with progress reporting)
 	rc, fSize, err := progress.WrapFile(filePath, rep)
 	if err != nil {
-		return nil, fmt.Errorf("open apk: %w", err)
+		return nil, fmt.Errorf("open file: %w", err)
 	}
 	defer rc.Close()
 
@@ -364,7 +376,7 @@ func (s *Store) uploadAPK(ctx context.Context, filePath string, rep progress.Rep
 		URL:    urlResp.Data.UploadURL,
 		Fields: map[string]string{
 			"sign": urlResp.Data.Sign,
-			"type": "apk",
+			"type": fileType,
 		},
 		Files: []httpx.FileField{{Field: "file", FileName: filepath.Base(filePath), Reader: rc, Size: fSize}},
 	})
