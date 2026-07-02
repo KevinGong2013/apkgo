@@ -41,9 +41,22 @@ func init() {
 	store.RegisterAuditor("honor", audit)
 }
 
-// audit is registered with `apkgo audit`. It reads the package's current
-// release/review status via get-app-current-release (which keys off appId
-// alone — no releaseId needed), independent of the upload flow.
+// audit is registered with `apkgo audit`. get-app-current-release (the
+// original implementation here) is appId-only — it reports whatever Honor
+// considers the app's "current" release, with no way to pin it to a
+// specific submission. In practice that can report an unrelated task's
+// outcome: an app whose console showed a version already 审核通过 came back
+// 审核不通过 with detail "存在开发者同版本或高版本任务" because
+// get-app-current-release was reflecting a different, stale task.
+//
+// When q.ExternalID (honor's releaseId, captured from
+// UploadResult.ExternalID at submit-audit time) is available, we instead
+// call get-audit-result with that exact releaseId — it is scoped to one
+// submission and can't return another task's result. Without it (the
+// version wasn't submitted through apkgo, or predates ExternalID tracking)
+// there is no way to ask Honor "what happened to submission X", so rather
+// than risk the same current-release mismatch we only report the already-
+// live version (get-app-detail's releaseInfo), with no review-state claim.
 func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
 	res := store.AuditResult{Store: "honor"}
 	s, err := New(cfg)
@@ -59,38 +72,95 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 			return res
 		}
 	}
+	if q.ExternalID != "" {
+		auditByRelease(ctx, s, appID, q.ExternalID, &res)
+		return res
+	}
+	auditLiveVersionOnly(ctx, s, appID, &res)
+	return res
+}
+
+// auditByRelease queries get-audit-result for one specific submission
+// (appId + releaseId), so the result can't be conflated with another task.
+func auditByRelease(ctx context.Context, s *Store, appID, releaseID string, res *store.AuditResult) {
+	appIDNum, err := strconv.ParseInt(appID, 10, 64)
+	if err != nil {
+		res.Error = fmt.Sprintf("invalid appId %q: %v", appID, err)
+		return
+	}
+	var resp struct {
+		honorResp
+		Data []struct {
+			ReleaseID    string `json:"releaseId"`
+			AuditResult  int    `json:"auditResult"`
+			AuditMessage string `json:"auditMessage"`
+		} `json:"data"`
+	}
+	httpResp, err := s.client.R().
+		SetContext(ctx).
+		SetBody(map[string]any{
+			"appId": []map[string]any{{"appId": appIDNum, "releaseId": releaseID}},
+		}).
+		SetResult(&resp).
+		Post("/openapi/v1/publish/get-audit-result")
+	if err != nil {
+		res.Error = err.Error()
+		return
+	}
+	if httpResp.IsError() {
+		res.Error = fmt.Sprintf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+		return
+	}
+	if resp.Code != 0 {
+		res.Error = fmt.Sprintf("[%d] %s", resp.Code, resp.text())
+		return
+	}
+	if len(resp.Data) == 0 {
+		res.Error = "get-audit-result: empty data for releaseId " + releaseID
+		return
+	}
+	item := resp.Data[0]
+	res.State, res.Detail = mapHonorAudit(item.AuditResult, item.AuditMessage)
+}
+
+// auditLiveVersionOnly reports the already-on-shelf version via
+// get-app-detail's releaseInfo, without claiming a review state — used when
+// no releaseId is available to pin a get-audit-result query.
+func auditLiveVersionOnly(ctx context.Context, s *Store, appID string, res *store.AuditResult) {
 	var resp struct {
 		honorResp
 		Data struct {
-			AuditResult  int    `json:"auditResult"`
-			AuditMessage string `json:"auditMessage"`
-			VersionName  string `json:"versionName"`
+			ReleaseInfo struct {
+				VersionName string `json:"versionName"`
+				VersionCode int32  `json:"versionCode"`
+			} `json:"releaseInfo"`
 		} `json:"data"`
 	}
 	httpResp, err := s.client.R().
 		SetContext(ctx).
 		SetQueryParam("appId", appID).
 		SetResult(&resp).
-		Get("/openapi/v1/publish/get-app-current-release")
+		Get("/openapi/v1/publish/get-app-detail")
 	if err != nil {
 		res.Error = err.Error()
-		return res
+		return
 	}
 	if httpResp.IsError() {
 		res.Error = fmt.Sprintf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
-		return res
+		return
 	}
 	if resp.Code != 0 {
 		res.Error = fmt.Sprintf("[%d] %s", resp.Code, resp.text())
-		return res
+		return
 	}
-	res.State, res.Detail = mapHonorAudit(resp.Data.AuditResult, resp.Data.AuditMessage)
-	res.VersionName = resp.Data.VersionName
-	return res
+	res.LiveVersionName = resp.Data.ReleaseInfo.VersionName
+	res.LiveVersionCode = resp.Data.ReleaseInfo.VersionCode
 }
 
-// mapHonorAudit maps get-app-current-release auditResult to the unified
-// state. 0=审核中, 1=审核通过, 2=审核不通过, 3=其他非审核状态, 4=编辑中未提交.
+// mapHonorAudit maps an auditResult code to the unified state. Shared by
+// get-app-current-release (0=审核中, 1=审核通过, 2=审核不通过, 3=其他非审核状态,
+// 4=编辑中未提交) and get-audit-result (same 0-3 meanings, no case 4) — both
+// APIs use the same numbering for the codes they share.
 func mapHonorAudit(auditResult int, msg string) (store.AuditState, string) {
 	switch auditResult {
 	case 0:
@@ -193,13 +263,16 @@ func (s *Store) Name() string { return "honor" }
 
 func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.UploadResult {
 	start := time.Now()
-	if err := s.upload(ctx, req); err != nil {
+	releaseID, err := s.upload(ctx, req)
+	if err != nil {
 		return store.ErrResult(s.Name(), start, err)
 	}
-	return store.NewResult(s.Name(), start)
+	res := store.NewResult(s.Name(), start)
+	res.ExternalID = releaseID
+	return res
 }
 
-func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
+func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (string, error) {
 	rep := progress.Safe(req.Progress)
 
 	rep.Phase("auth")
@@ -208,7 +281,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		var err error
 		appID, err = s.getAppID(req.PackageName)
 		if err != nil {
-			return fmt.Errorf("get app id: %w", err)
+			return "", fmt.Errorf("get app id: %w", err)
 		}
 	}
 
@@ -217,7 +290,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// overwrite these fields with empty strings if we don't resend them.
 	lang, err := s.getAppLanguage(appID)
 	if err != nil {
-		return fmt.Errorf("get app detail: %w", err)
+		return "", fmt.Errorf("get app detail: %w", err)
 	}
 
 	// Get the APK to Honor. When -f is a public URL and the APK is large
@@ -226,16 +299,16 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// URL and let it pull the binary; otherwise upload the bytes.
 	if req.SourceURL != "" && s.shouldURLPush(req.FilePath) {
 		if err := s.uploadByURL(ctx, appID, req.SourceURL, req.FilePath, rep); err != nil {
-			return fmt.Errorf("upload apk by url: %w", err)
+			return "", fmt.Errorf("upload apk by url: %w", err)
 		}
 	} else if err := s.uploadAPK(ctx, appID, req.FilePath, rep); err != nil {
-		return fmt.Errorf("upload apk: %w", err)
+		return "", fmt.Errorf("upload apk: %w", err)
 	}
 
 	if req.ReleaseNotes != "" {
 		rep.Phase("release notes")
 		if err := s.updateLanguageInfo(appID, lang, req.ReleaseNotes); err != nil {
-			return fmt.Errorf("update release notes: %w", err)
+			return "", fmt.Errorf("update release notes: %w", err)
 		}
 	}
 
@@ -628,8 +701,17 @@ func (s *Store) updateLanguageInfo(appID string, existing *languageInfo, release
 
 // ---- submit ----
 
-func (s *Store) submitAudit(appID string, releaseTime *time.Time) error {
-	var resp honorResp
+// submitAudit submits the app for review and returns the releaseId Honor
+// assigns to this specific submission (submit-audit's `data` field is a bare
+// string). The releaseId is later fed back as AuditQuery.ExternalID so a
+// review-status check can be pinned to this exact submission via
+// get-audit-result instead of the ambiguous, appId-only
+// get-app-current-release.
+func (s *Store) submitAudit(appID string, releaseTime *time.Time) (string, error) {
+	var resp struct {
+		honorResp
+		Data string `json:"data"`
+	}
 	body := map[string]any{
 		"releaseType": 1, // 1 = 全网发布
 	}
@@ -645,16 +727,16 @@ func (s *Store) submitAudit(appID string, releaseTime *time.Time) error {
 		SetResult(&resp).
 		Post("/openapi/v1/publish/submit-audit")
 	if err != nil {
-		return err
+		return "", err
 	}
 	if httpResp.IsError() {
-		return fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+		return "", fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
 	}
 	if resp.Code != 0 {
-		return store.Categorize(classifyHonor(resp.Code),
+		return "", store.Categorize(classifyHonor(resp.Code),
 			fmt.Errorf("[%d] %s", resp.Code, resp.text()))
 	}
-	return nil
+	return resp.Data, nil
 }
 
 // classifyHonor maps known honor response codes to apkgo's

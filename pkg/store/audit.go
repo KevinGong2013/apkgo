@@ -28,6 +28,12 @@ type AuditQuery struct {
 	Package     string
 	VersionName string
 	VersionCode int32
+	// ExternalID, when set, pins the query to one specific submission (e.g.
+	// honor's releaseId, captured from UploadResult.ExternalID at upload
+	// time) instead of the store's own notion of "current" state. Stores
+	// that support a per-submission audit lookup (honor) use it when
+	// present; others ignore it.
+	ExternalID string
 }
 
 // AuditResult is one store's review status. Error is set when the query

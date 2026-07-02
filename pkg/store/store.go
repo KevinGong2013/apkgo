@@ -63,6 +63,12 @@ type UploadResult struct {
 	Error      string   `json:"error,omitempty"`
 	Category   Category `json:"category,omitempty"`
 	DurationMs int64    `json:"duration_ms"`
+	// ExternalID is an opaque per-store identifier for this specific
+	// submission (e.g. honor's releaseId from submit-audit), for stores that
+	// expose one. Callers that persist upload results can feed it back into
+	// a later AuditQuery.ExternalID to pin a review-status query to this
+	// exact submission instead of the store's ambiguous "current" state.
+	ExternalID string `json:"external_id,omitempty"`
 }
 
 // NewResult creates a success result with timing.
