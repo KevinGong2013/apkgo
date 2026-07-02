@@ -23,3 +23,37 @@ func TestMapHuaweiReleaseState(t *testing.T) {
 		}
 	}
 }
+
+// TestClassifyHuawei locks in the "app's packages exceeds the upper limit"
+// classification from https://github.com/KevinGong2013/apkgo/issues/31 —
+// an AGC-side draft-version package cap, not an apkgo bug, so it must map
+// to config_invalid (human fixes the console, not an auto-retry) rather
+// than the generic unknown bucket.
+func TestClassifyHuawei(t *testing.T) {
+	cases := []struct {
+		name string
+		ret  retInfo
+		want store.Category
+	}{
+		{
+			name: "package limit exceeded",
+			ret:  retInfo{Code: 204144662, Message: "[cds]add apk failed, additional msg is [the app's packages exceeds the upper limit.]"},
+			want: store.CategoryConfigInvalid,
+		},
+		{
+			name: "same code, unrelated message",
+			ret:  retInfo{Code: 204144662, Message: "registeredEntity can not be empty"},
+			want: store.CategoryUnknown,
+		},
+		{
+			name: "unrelated code",
+			ret:  retInfo{Code: 204144660, Message: "package is parsing"},
+			want: store.CategoryUnknown,
+		},
+	}
+	for _, tc := range cases {
+		if got := classifyHuawei(tc.ret); got != tc.want {
+			t.Errorf("%s: classifyHuawei(%+v) = %q, want %q", tc.name, tc.ret, got, tc.want)
+		}
+	}
+}

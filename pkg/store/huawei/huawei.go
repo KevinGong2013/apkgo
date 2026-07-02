@@ -424,9 +424,38 @@ func (s *Store) uploadAPK(appID, apkPath string, rep progress.Reporter) error {
 		return err
 	}
 	if updateResp.Ret.Code != 0 {
-		return fmt.Errorf("update file info: [%d] %s", updateResp.Ret.Code, updateResp.Ret.text())
+		return store.Categorize(classifyHuawei(updateResp.Ret),
+			fmt.Errorf("update file info: [%d] %s%s", updateResp.Ret.Code, updateResp.Ret.text(), packageLimitHint(updateResp.Ret)))
 	}
 	return nil
+}
+
+// packageLimitHint appends actionable guidance when Huawei rejects a file-info
+// update because the app already has too many package files attached to its
+// current (unreleased) draft version. Each upload attempt adds a new package
+// file rather than replacing the previous one, so this creeps up over repeated
+// retries on the same version — it is an AGC-side account limit, not an apkgo
+// bug, and the only fix is a human deleting old/unused packages from the AGC
+// console (版本发布 → 该版本 → 包管理) before retrying.
+func packageLimitHint(ret retInfo) string {
+	if classifyHuawei(ret) == store.CategoryConfigInvalid {
+		return " (AGC 限制单个版本可关联的安装包数量，非 apkgo 问题；请到 AppGallery Connect 控制台的版本发布页删除该版本下不再使用的旧安装包后重试)"
+	}
+	return ""
+}
+
+// classifyHuawei maps Huawei's numeric ret codes to the unified Category.
+// Codes are heavily reused across unrelated failures (see isParsingInProgress),
+// so classification must inspect the message text, not the code alone.
+func classifyHuawei(ret retInfo) store.Category {
+	msg := strings.ToLower(ret.text())
+	switch ret.Code {
+	case 204144662:
+		if strings.Contains(msg, "exceeds the upper limit") || strings.Contains(msg, "packages exceeds") {
+			return store.CategoryConfigInvalid
+		}
+	}
+	return store.CategoryUnknown
 }
 
 // submitPackageByURL hands Huawei a developer-hosted download URL
