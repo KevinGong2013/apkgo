@@ -6,7 +6,7 @@
 
 一行命令，将 APK 发布到所有主流安卓应用商店。为 CI/CD 和 AI Agent 设计。
 
-> **不想搭 CI、不想碰命令行？** 试试托管版 [**apkgo cloud**](https://apkgo.baici.tech) —— 浏览器打开就能发版，凭证云端托管、多人协作、发布历史可追溯，免装免运维，运营和产品同事也能独立上手。
+> **不想搭 CI、不想碰命令行？** 试试托管版 [**apkgo cloud**](https://apkgo.baici.tech) —— 浏览器打开就能发版，凭证云端托管、多人协作、发布历史可追溯，免装免运维，运营和产品同事也能独立上手。除命令行版覆盖的安卓各大商店外，云端还支持 **iOS（App Store）** 与 **鸿蒙（HarmonyOS）** 上架。
 >
 > **用 fastlane？** [**fastlane-plugin-apkgo**](https://github.com/KevinGong2013/fastlane-plugin-apkgo) 一个 lane 即可发布到所有商店（走 apkgo cloud，凭证云端托管）：`fastlane add_plugin apkgo`。
 >
