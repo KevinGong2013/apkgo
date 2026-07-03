@@ -6,7 +6,7 @@
 
 One command to publish an APK to every major Chinese Android app store. Built for CI/CD and AI agents.
 
-> **Don't want to run CI or touch a terminal?** Try the hosted [**apkgo cloud**](https://apkgo.baici.tech) — release from a browser, with credentials stored server-side, multi-user collaboration, and full release history. No install, no ops, friendly enough for ops and PM teammates. Beyond the Android stores the CLI covers, the cloud also publishes to **iOS (App Store)**, with **HarmonyOS support coming soon**.
+> **Don't want to run CI or touch a terminal?** Try the hosted [**apkgo cloud**](https://apkgo.baici.tech) — release from a browser, with credentials stored server-side, multi-user collaboration, and full release history. No install, no ops, friendly enough for ops and PM teammates. Beyond the Android stores the CLI covers, the cloud also publishes to **iOS (App Store)** and **HarmonyOS**.
 >
 > **Using fastlane?** [**fastlane-plugin-apkgo**](https://github.com/KevinGong2013/fastlane-plugin-apkgo) publishes to every store in a single lane (via apkgo cloud, credentials hosted server-side): `fastlane add_plugin apkgo`.
 >
