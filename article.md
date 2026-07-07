@@ -136,7 +136,7 @@ apkgo 用 Go 的 `init()` 自注册模式。新增一个商店只需要：
 
 ## 开源
 
-MIT... 不，Apache 2.0 协议。完全开源，欢迎 PR。
+MIT... 不，PolyForm Noncommercial 协议。源码公开，非商业使用免费，欢迎 PR。
 
 - GitHub: [github.com/KevinGong2013/apkgo](https://github.com/KevinGong2013/apkgo)
 - 官网: [apkgo.com.cn](https://apkgo.com.cn)

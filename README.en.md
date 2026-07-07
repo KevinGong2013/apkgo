@@ -752,4 +752,4 @@ Opt out: `--no-telemetry` or `APKGO_TELEMETRY=off`
 
 ## License
 
-[Apache License 2.0](./LICENSE)
+[PolyForm Noncommercial License 1.0.0](./LICENSE) — free for noncommercial use; contact the author for commercial licensing.
