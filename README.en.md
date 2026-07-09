@@ -733,22 +733,7 @@ apkgo version       [-o json|text]
 -o, --output        output format: json or text (default: json)
 -t, --timeout       global timeout (default: 10m)
 -v, --verbose       verbose logs to stderr
-    --no-telemetry  disable anonymous usage telemetry
 ```
-
-## Privacy
-
-apkgo collects anonymous usage stats to improve the product. **It never collects sensitive information**:
-
-| Collected | Not collected |
-|------|--------|
-| Anonymous install ID (random UUID) | Accounts, credentials |
-| Store names used | Package name, app name |
-| Upload success/failure | APK file content |
-| CLI usage | Release notes content |
-| apkgo version, OS/arch | IP address |
-
-Opt out: `--no-telemetry` or `APKGO_TELEMETRY=off`
 
 ## License
 

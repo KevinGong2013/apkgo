@@ -11,16 +11,15 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/KevinGong2013/apkgo/v3/pkg/config"
-	"github.com/KevinGong2013/apkgo/v3/pkg/telemetry"
 	"github.com/KevinGong2013/apkgo/v3/pkg/update"
 )
 
 var (
-	flagConfig     string
-	flagCredsFrom  string
-	flagOutput     string
-	flagVerbose    bool
-	flagTimeout    time.Duration
+	flagConfig    string
+	flagCredsFrom string
+	flagOutput    string
+	flagVerbose   bool
+	flagTimeout   time.Duration
 )
 
 var rootCmd = &cobra.Command{
@@ -54,7 +53,6 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagOutput, "output", "o", "json", "output format: json or text")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "verbose logging to stderr")
 	rootCmd.PersistentFlags().DurationVarP(&flagTimeout, "timeout", "t", 10*time.Minute, "global timeout for upload operations")
-	rootCmd.PersistentFlags().BoolVar(&telemetry.Disabled, "no-telemetry", false, "disable anonymous usage statistics")
 }
 
 // Execute runs the root command and returns an exit code.

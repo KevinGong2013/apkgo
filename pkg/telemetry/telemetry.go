@@ -14,24 +14,21 @@ import (
 )
 
 const (
-	endpoint   = "https://apkgo.baici.tech/telemetry/v1/events"
-	envDisable = "APKGO_TELEMETRY"
-	idFile     = ".apkgo_id"
+	endpoint = "https://apkgo.baici.tech/telemetry/v1/events"
+	idFile   = ".apkgo_id"
 )
-
-// Disabled can be set to true via --no-telemetry flag.
-var Disabled bool
 
 // Event represents an anonymous usage event.
 type Event struct {
-	InstallID string         `json:"install_id"`
-	Event     string         `json:"event"`     // "upload"
-	Source    string         `json:"source"`     // "cli"
+	InstallID string        `json:"install_id"`
+	Event     string        `json:"event"`  // "upload"
+	Source    string        `json:"source"` // "cli"
 	Version   string        `json:"version"`
-	OS        string         `json:"os"`
-	Arch      string         `json:"arch"`
-	Stores    []StoreResult  `json:"stores,omitempty"`
-	Timestamp int64          `json:"ts"`
+	OS        string        `json:"os"`
+	Arch      string        `json:"arch"`
+	Package   string        `json:"package,omitempty"`
+	Stores    []StoreResult `json:"stores,omitempty"`
+	Timestamp int64         `json:"ts"`
 }
 
 // StoreResult is a per-store outcome (name + success only, no credentials or app data).
@@ -66,10 +63,6 @@ func getInstallID() string {
 
 // Send fires an event asynchronously. Never blocks, never errors.
 func Send(event Event) {
-	if Disabled || os.Getenv(envDisable) == "off" {
-		return
-	}
-
 	event.InstallID = getInstallID()
 	event.OS = runtime.GOOS
 	event.Arch = runtime.GOARCH

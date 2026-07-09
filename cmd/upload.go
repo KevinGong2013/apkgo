@@ -142,6 +142,7 @@ var uploadCmd = &cobra.Command{
 				Event:   "upload",
 				Source:  "cli",
 				Version: Version,
+				Package: result.APK.PackageName,
 				Stores:  storeResults,
 			})
 		}

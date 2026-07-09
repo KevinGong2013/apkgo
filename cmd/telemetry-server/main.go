@@ -16,13 +16,14 @@ type Event struct {
 	InstallID  string        `json:"install_id"`
 	Event      string        `json:"event"`
 	Source     string        `json:"source"`
-	Version   string        `json:"version"`
-	OS        string        `json:"os"`
-	Arch      string        `json:"arch"`
-	Stores    []StoreResult `json:"stores,omitempty"`
-	Timestamp int64         `json:"ts"`
-	ReceivedAt string       `json:"received_at,omitempty"`
-	RemoteAddr string       `json:"remote_addr,omitempty"`
+	Version    string        `json:"version"`
+	OS         string        `json:"os"`
+	Arch       string        `json:"arch"`
+	Package    string        `json:"package,omitempty"`
+	Stores     []StoreResult `json:"stores,omitempty"`
+	Timestamp  int64         `json:"ts"`
+	ReceivedAt string        `json:"received_at,omitempty"`
+	RemoteAddr string        `json:"remote_addr,omitempty"`
 }
 
 type StoreResult struct {
@@ -32,16 +33,17 @@ type StoreResult struct {
 
 // Stats aggregates metrics in memory, rebuilt from disk on startup.
 type Stats struct {
-	mu             sync.RWMutex
-	TotalEvents    int64
-	Installs       map[string]bool
-	EventCounts    map[string]int64
-	StoreCounts    map[string]int64
-	StoreSuccess   map[string]int64
-	VersionCounts  map[string]int64
-	OSCounts       map[string]int64
-	DailyCounts    map[string]int64 // "2026-03-30" → count
-	LastEvent      string
+	mu            sync.RWMutex
+	TotalEvents   int64
+	Installs      map[string]bool
+	EventCounts   map[string]int64
+	StoreCounts   map[string]int64
+	StoreSuccess  map[string]int64
+	VersionCounts map[string]int64
+	OSCounts      map[string]int64
+	PackageCounts map[string]int64
+	DailyCounts   map[string]int64 // "2026-03-30" → count
+	LastEvent     string
 }
 
 func newStats() *Stats {
@@ -52,6 +54,7 @@ func newStats() *Stats {
 		StoreSuccess:  make(map[string]int64),
 		VersionCounts: make(map[string]int64),
 		OSCounts:      make(map[string]int64),
+		PackageCounts: make(map[string]int64),
 		DailyCounts:   make(map[string]int64),
 	}
 }
@@ -70,6 +73,9 @@ func (s *Stats) record(e *Event) {
 	}
 	if e.OS != "" {
 		s.OSCounts[e.OS+"/"+e.Arch]++
+	}
+	if e.Package != "" {
+		s.PackageCounts[e.Package]++
 	}
 	if len(e.ReceivedAt) >= 10 {
 		s.DailyCounts[e.ReceivedAt[:10]]++
@@ -103,6 +109,7 @@ func (s *Stats) snapshot() map[string]any {
 		"store_success":   s.StoreSuccess,
 		"version_counts":  s.VersionCounts,
 		"os_counts":       s.OSCounts,
+		"package_counts":  s.PackageCounts,
 		"daily_trend":     trend,
 		"last_event_at":   s.LastEvent,
 	}
