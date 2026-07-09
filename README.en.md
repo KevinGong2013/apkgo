@@ -1,10 +1,10 @@
 # apkgo
 
-![GitHub release](https://img.shields.io/github/v/release/KevinGong2013/apkgo) ![build](https://img.shields.io/github/actions/workflow/status/kevingong2013/apkgo/release.yml?style=flat-square) ![go](https://img.shields.io/github/go-mod/go-version/kevingong2013/apkgo?style=flat-square) ![license](https://img.shields.io/github/license/kevingong2013/apkgo?style=flat-square) [![skills.sh](https://skills.sh/b/KevinGong2013/apkgo)](https://skills.sh/KevinGong2013/apkgo)
+![GitHub release](https://img.shields.io/github/v/release/KevinGong2013/apkgo) ![build](https://img.shields.io/github/actions/workflow/status/kevingong2013/apkgo/release.yml?style=flat-square) ![go](https://img.shields.io/github/go-mod/go-version/kevingong2013/apkgo?style=flat-square) [![license](https://img.shields.io/badge/license-PolyForm--Noncommercial--1.0.0-blue?style=flat-square)](./LICENSE) [![skills.sh](https://skills.sh/b/KevinGong2013/apkgo)](https://skills.sh/KevinGong2013/apkgo)
 
 🌐 **Language / 语言**: **English** · [简体中文](./README.md)
 
-One command to publish an APK to every major Chinese Android app store. Built for CI/CD and AI agents.
+One command to publish an APK to every major Chinese Android app store.
 
 > **Don't want to run CI or touch a terminal?** Try the hosted [**apkgo cloud**](https://apkgo.baici.tech) — release from a browser, with credentials stored server-side, multi-user collaboration, and full release history. No install, no ops, friendly enough for ops and PM teammates. Beyond the Android stores the CLI covers, the cloud also publishes to **iOS (App Store)** and **HarmonyOS**.
 >
