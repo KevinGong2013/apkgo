@@ -168,6 +168,10 @@ stores:
     client_secret: "your-client-secret"
     app_id: "your-app-id"
 
+  meizu:
+    client_id: "your-client-id"       # 魅族开放平台「客户端凭证」
+    client_secret: "your-client-secret"
+
   tencent:
     user_id: "your-user-id"
     access_secret: "your-access-secret"
@@ -269,6 +273,8 @@ export APKGO_OPPO_CLIENT_ID="your-19-digit-id"
 export APKGO_OPPO_CLIENT_SECRET="your-secret"
 export APKGO_VIVO_ACCESS_KEY="your-key"
 export APKGO_VIVO_ACCESS_SECRET="your-secret"
+export APKGO_MEIZU_CLIENT_ID="your-client-id"
+export APKGO_MEIZU_CLIENT_SECRET="your-secret"
 export APKGO_TENCENT_USER_ID="your-user-id"
 export APKGO_TENCENT_ACCESS_SECRET="your-secret"
 export APKGO_TENCENT_APP_ID="your-app-id"

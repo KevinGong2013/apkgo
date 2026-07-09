@@ -168,6 +168,10 @@ stores:
     client_secret: "your-client-secret"
     app_id: "your-app-id"
 
+  meizu:
+    client_id: "your-client-id"       # Meizu open platform client credential
+    client_secret: "your-client-secret"
+
   tencent:
     user_id: "your-user-id"
     access_secret: "your-access-secret"
@@ -269,6 +273,8 @@ export APKGO_OPPO_CLIENT_ID="your-19-digit-id"
 export APKGO_OPPO_CLIENT_SECRET="your-secret"
 export APKGO_VIVO_ACCESS_KEY="your-key"
 export APKGO_VIVO_ACCESS_SECRET="your-secret"
+export APKGO_MEIZU_CLIENT_ID="your-client-id"
+export APKGO_MEIZU_CLIENT_SECRET="your-secret"
 export APKGO_TENCENT_USER_ID="your-user-id"
 export APKGO_TENCENT_ACCESS_SECRET="your-secret"
 export APKGO_TENCENT_APP_ID="your-app-id"
@@ -321,6 +327,7 @@ apkgo zeroes out the input bytes immediately after parsing so secrets don't ling
 | OPPO | [OPPO Open Platform](https://open.oppomobile.com) | Management > API key management ([details](#oppo-open-platform)) |
 | vivo | [vivo Open Platform](https://dev.vivo.com.cn) | Account > API access ([details](#vivo-open-platform)) |
 | Honor | [Honor Developer](https://developer.honor.com) | API management ([details](#honor-developer-platform)) |
+| Meizu | [Flyme Open Platform](https://open.flyme.cn) | Console > client credentials ([details](#meizu-flyme)) |
 | Tencent | [Tencent Open Platform](https://app.open.qq.com) | App > Account > API publish > Apply ([details](#tencent-app-store-yingyongbao)) |
 | Pgyer | [pgyer.com](https://www.pgyer.com/account/api) | Account > API key ([details](#pgyer)) |
 | fir.im | [betaqr.com.cn](https://www.betaqr.com.cn) | Account > API Token ([details](#firim)) |
@@ -420,6 +427,23 @@ apkgo doctor -s honor -p com.example.app
 ```
 
 The doctor `app-detail` probe pre-checks the *app introduction* (intro) field — Honor requires it to be filled in the console, otherwise `update-language-info` fails with `[20076] app introduction is empty`. Fill it in the console before releasing.
+
+#### Meizu (Flyme)
+
+📖 Official docs: [Open publish API](https://open.flyme.cn/docs?id=333)
+
+```yaml
+stores:
+  meizu:
+    client_id: "<client credential ID>"
+    client_secret: "<client credential secret>"
+```
+
+```bash
+apkgo doctor -s meizu -p com.example.app
+```
+
+Uploads submit a new version of an app that is already listed — the first release (qualifications, ICP filing, screenshots) must be done in the Flyme console. Meizu accepts 64-bit packages only; a split-arch upload (`--file64`) sends the 64-bit APK. If the latest version was rejected (审核不通过), apkgo automatically resubmits through the fail-app update endpoint instead of the regular publish one.
 
 #### Tencent App Store (YingYongBao)
 

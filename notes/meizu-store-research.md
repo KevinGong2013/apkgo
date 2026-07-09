@@ -1,42 +1,52 @@
 # 魅族（Flyme）应用商店渠道调研
 
 > 调研日期：2026-07-09（issue [#37](https://github.com/KevinGong2013/apkgo/issues/37)）
-> 结论：**魅族开放平台没有应用上传/更新的开放 API，无法做纯 API 接入，暂不支持**。
+> 结论：**魅族开放平台 2025-12 新上线了应用发布开放 API，已接入（`pkg/store/meizu`）**。
+>
+> ⚠️ 初版调研曾误判「无 API、不支持」——当时依据的生态旁证（多商店工具、
+> 旧 wiki 存档、fastlane/npm/PyPI 搜索）全部早于 2025-12，未覆盖新文档。
+> 教训：判断「平台没有某能力」时必须以官方文档站的实时抓取为准，
+> SPA 页面要打后端数据接口（`open.flyme.cn` 正文在
+> `apiopen.flyme.cn/api/web/v1/doc-wiki/detail?id=<id>`），不能只看渲染壳。
 
-## TL;DR
+## API 概览（open.flyme.cn/docs?id=333，2025-12-25 发布）
 
-- 魅族开放平台（open.flyme.cn，2023 年起由星纪魅族/DreamSmart 运营）的文档只覆盖：开发服务、流量分发、推送服务、商业变现、车机（Flyme Auto）。**不存在任何「应用上传 / 应用更新」API 文档**。
-- 应用商店提交只能走网页控制台：控制台 → 应用管理 → 发布新应用 → 浏览器上传 APK → 填资料 → 提审（1–3 个工作日）。
-- 带参数签名的魅族官方 HTTP API 只有 **推送**（github.com/MEIZUPUSH/PushAPI，`api-push.meizu.com`，MD5 签名）、账号 OAuth、支付，均与商店发布无关，容易被误认为有商店 API。
-- 旧版开发者 wiki（open-wiki.flyme.cn）已下线，存档页面（「应用发布」「审核规范」等）也全部是控制台操作指引，从未有过发布 API。
+- 域名：`developer.meizu.com`，响应统一 `{code, msg/message, value}` 信封，`code==200` 为成功。
+  实测错误信封用的是 `message` 字段且 code 为整数（`{"code":113002,"message":"invalid param-..."}`）。
+- **鉴权**：开发者中心创建「客户端凭证」得 clientId/clientSecret。
+  - `GET /open/api/v1/token`，clientId/clientSecret 放**请求头**，返回 `value.accessToken`（带过期时间 `exprireTime`）。
+- **签名请求头**（除 token 外所有接口）：`traceId`(UUID)、`clientId`、`timestamp`(毫秒，15 分钟内有效)、`accessToken`、`sign`。
+  - `sign` = SHA-256 hex of（`traceId/clientId/timestamp/uri` 四项按 key 排序的 `k=v` 用 `&` 连接 + `":"+clientSecret`）。uri 参与签名但 query 参数不参与。
+- **接口**：
+  - `GET /open/api/v1/app/cats`、`/app/cat_tags` — 分类/标签
+  - `POST /open/api/v1/app/image/upload`、`/app/apk/upload` — multipart 上传，返回 `value.destFileName`
+  - `POST /open/api/v1/app/publish` — 新版本发布（JSON），返回 `value.verId`
+  - `POST /open/api/v1/app/failapp/update` — 审核不通过版本重新提交（publish 全参数 + `verId`）
+  - `POST /open/api/v1/app/saleapp/update` — 上架应用原地修改（同上）
+  - `GET /open/api/v1/app/list`（start/limit≤10 分页）、`/app/versions?appId`、`/app/detail?verId`
+- **应用状态**（3.12.6）：20 待审核 / 30 审核不通过 / 50 上架 / 70 下架 / 100 审核中。
+- publish 参数为全量元数据（应用名/描述/分类/截图/资质/ICP 备案主体信息 dwmc、zjlx 等），全部必填 →
+  实现上从 `app/detail` 读现有资料原样回填，只换 `packageUrl` 和 `verDesc`（发布说明）。
+  注意 detail 返回的 `certificates` 是逗号分隔字符串，publish 要求 List；`qualifcation` 是官方拼写（少个 i）。
 
-## 逆向可行性（为什么不做模拟登录方案）
+## 实现要点（pkg/store/meizu）
 
-- 控制台是 Nuxt SPA，后端 `apiopen.flyme.cn`，cookie session 会话制的 `/api/dev/v1/...` 内部接口，未登录一律返回 `{"code":"100001","message":"用户未登陆"}`；商店发包接口未在公开 JS bundle 中暴露、无文档。
-- 登录是 Flyme SSO（login.flyme.cn `/sso/unionlogin`）：密码走 JS/RSA 加密 + **极验滑块验证码** + 陌生环境**短信验证码**（有公开逆向实现：TRHX/Python3-Spider-Practice `JSReverse/login_flyme_cn/`）。验证码 + 短信意味着无人值守（CI/云端）根本跑不通。
-- 没有任何 access_key/secret、token 端点之类的凭证模型可依托；接口随时可变，且违反平台条款。**结论：不做。**
+- 流程：`app/list` 按包名找应用 → `app/detail` 回填元数据 → `apk/upload` → 最新版本状态为 30（审核不通过）走 `failapp/update`，否则 `publish`。返回的 `verId` 存入 `UploadResult.ExternalID`。
+- 首次上架（资质、备案、截图）仍需控制台人工完成；API 只做版本更新。找不到包名时报错提示。
+- 仅支持 64 位包（32 位报 113029/113030），split-arch 上传取 `--file64`。
+- 无定时发布、无 URL 拉包、不支持 AAB。
+- audit：`app/list` 状态映射 20/100→reviewing、30→rejected、50→approved、70→withdrawn。
+- doctor：token 探针 + app-list 包名探针。
+- `developer.meizu.com` 从境外握手可超过 Go 默认 10s TLS 超时，client 已放宽到 60s。
 
-## 生态旁证
+## 待验证（需要真实凭证）
 
-- 多商店发布工具均未实现魅族：
-  - BioforestChain/android-auto-distribute：`platforms/meizu/meizu.ts` 是**空壳 stub**，只用公开详情页做只读版本查询。
-  - NicoleLab-io/app-store-publisher（华为/小米/OPPO/vivo/荣耀/App Store 六大市场）：无魅族。
-  - fastlane / npm / PyPI：搜 meizu/flyme 均无发布插件。
-- 上架攻略类文档一致确认魅族为人工控制台提交；个人开发者只能发工具类应用，其他分类需企业账号。
-
-## 对 apkgo 的建议
-
-1. **不实现 meizu store**（本次结论）。
-2. 需要自动化的用户可用现有 **`script` 渠道**挂自己的浏览器自动化（Playwright 等），apkgo 会把 APK 路径、版本、发布说明以 JSON 从 stdin 传给脚本。
-3. 可选的只读能力：公开详情页 `https://app.meizu.com/apps/public/detail?package_name=<pkg>` 可查当前线上版本（android-auto-distribute 的做法）。如果以后要给 `audit`/`doctor` 加个「线上版本对照」探针可以用它，但它不含审核状态，价值有限。
-4. 若魅族日后开放发布 API（关注 open.flyme.cn 文档更新），按 `pkg/store/CLAUDE.md` 流程接入即可。
+- 全流程实测：目前只用假凭证打通了 token 端点（`[113002] invalid param-...`），
+  upload/publish/failapp 分支未经真实账号验证。
+- token 过期（113036）后是否需要自动刷新——当前实现每次 `New()` 取新 token，单次上传内不刷新。
+- 「审核中」状态下重复提交的确切报错（推测 113040）。
 
 ## 来源
 
-- https://open.flyme.cn/ 及 `/docs`、`/service?type=application`
-- https://github.com/MEIZUPUSH/PushAPI
-- https://github.com/BioforestChain/android-auto-distribute（`routes/api/platforms/meizu/`）
-- https://github.com/NicoleLab-io/app-store-publisher
-- https://github.com/TRHX/Python3-Spider-Practice（`JSReverse/login_flyme_cn/`）
-- https://www.yimenapp.com/kb-yimen/3334/（提交流程）
-- web.archive.org 2022-11-15 的 open-wiki.flyme.cn 快照
+- 官方文档：https://open.flyme.cn/docs?id=333（正文数据接口：https://apiopen.flyme.cn/api/web/v1/doc-wiki/detail?id=333）
+- 实测：`GET https://developer.meizu.com/open/api/v1/token` → `{"code":113002,"message":"invalid param-clientId or clientSecret"}`

@@ -30,6 +30,9 @@ stores:
     client_id: ""      # required
     client_secret: ""  # required
     app_id: ""         # required
+  meizu:
+    client_id: ""      # required, 魅族开放平台客户端凭证
+    client_secret: ""  # required
   tencent:
     user_id: ""        # required, from open.qq.com
     access_secret: ""  # required, API access secret

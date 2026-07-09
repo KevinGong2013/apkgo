@@ -13,6 +13,7 @@ import (
 	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/googleplay"
 	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/honor"
 	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/huawei"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/meizu"
 	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/oppo"
 	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/pgyer"
 	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/samsung"

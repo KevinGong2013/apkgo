@@ -29,8 +29,8 @@ on its own context like `doctor`. `--watch [--interval 30s]` loops until every
 store reaches a terminal state (approved / rejected / withdrawn) or the global
 `-t` timeout. Each store's status is normalised to a unified `state`
 (reviewing / approved / rejected / withdrawn / unknown) with the raw label in
-`detail`. Supported: **tencent, huawei, honor, vivo, oppo, samsung** (stores
-with a review-status API; others report "audit not supported").
+`detail`. Supported: **tencent, huawei, honor, vivo, oppo, samsung, meizu**
+(stores with a review-status API; others report "audit not supported").
 
 ## Upload flags
 
@@ -79,7 +79,7 @@ others always upload. apkgo still fetches the APK once locally for metadata.
 
 ## Supported stores
 
-huawei, xiaomi, oppo, vivo, honor, tencent, googleplay, samsung, pgyer, fir, script
+huawei, xiaomi, oppo, vivo, honor, meizu, tencent, googleplay, samsung, pgyer, fir, script
 
 ## Output format
 
