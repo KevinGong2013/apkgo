@@ -8,7 +8,7 @@ require (
 	github.com/shogo82148/androidbinary v1.0.5
 	github.com/spf13/cobra v1.10.2
 	github.com/vbauerster/mpb/v8 v8.12.0
-	golang.org/x/crypto v0.51.0
+	golang.org/x/crypto v0.52.0
 	golang.org/x/image v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
 )
