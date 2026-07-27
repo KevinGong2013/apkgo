@@ -7,8 +7,9 @@ import (
 )
 
 type entry struct {
-	factory Factory
-	schema  ConfigSchema
+	factory            Factory
+	environmentFactory EnvironmentFactory
+	schema             ConfigSchema
 }
 
 var registry = map[string]entry{}
@@ -22,23 +23,43 @@ func Register(name string, schema ConfigSchema, f Factory) {
 	registry[name] = entry{factory: f, schema: schema}
 }
 
+// RegisterWithEnvironment registers a store whose credentials or endpoint
+// depend on the selected remote environment.
+func RegisterWithEnvironment(name string, schema ConfigSchema, f EnvironmentFactory) {
+	if _, exists := registry[name]; exists {
+		panic(fmt.Sprintf("store %q already registered", name))
+	}
+	registry[name] = entry{environmentFactory: f, schema: schema}
+}
+
 // Create instantiates a store by name with the given config.
 // Supports "type.instance" naming: e.g. "script.cdn-upload" resolves to
 // the "script" store type with instance name "cdn-upload".
 func Create(name string, cfg map[string]string) (Store, error) {
-	e, ok := registry[name]
-	if !ok {
-		if dot := strings.Index(name, "."); dot > 0 {
-			e, ok = registry[name[:dot]]
-			if ok {
-				cfg["_name"] = name[dot+1:]
-			}
-		}
-	}
+	return CreateForEnvironment(name, cfg, EnvironmentProduction)
+}
+
+// CreateForEnvironment instantiates a store for the requested environment.
+// Regular factories remain production-configured; the caller is responsible
+// for not executing them in sandbox mode.
+func CreateForEnvironment(name string, cfg map[string]string, environment Environment) (Store, error) {
+	e, instance, ok := lookup(name)
 	if !ok {
 		return nil, fmt.Errorf("unknown store: %q", name)
 	}
-	return e.factory(cfg)
+
+	storeCfg := make(map[string]string, len(cfg)+1)
+	for key, value := range cfg {
+		storeCfg[key] = value
+	}
+	if instance != "" {
+		storeCfg["_name"] = instance
+	}
+
+	if e.environmentFactory != nil {
+		return e.environmentFactory(storeCfg, environment)
+	}
+	return e.factory(storeCfg)
 }
 
 // Schemas returns the config schemas for all registered stores, sorted by name.
@@ -101,4 +122,23 @@ func SupportsURLPush(name string) bool {
 		}
 	}
 	return ok && e.schema.SupportsURLPush
+}
+
+// SupportsSandbox reports whether the named store has an isolated sandbox
+// API. Unknown stores and regular production-only stores return false.
+func SupportsSandbox(name string) bool {
+	e, _, ok := lookup(name)
+	return ok && e.schema.SupportsSandbox
+}
+
+func lookup(name string) (entry, string, bool) {
+	if e, ok := registry[name]; ok {
+		return e, "", true
+	}
+	if dot := strings.Index(name, "."); dot > 0 {
+		if e, ok := registry[name[:dot]]; ok {
+			return e, name[dot+1:], true
+		}
+	}
+	return entry{}, "", false
 }

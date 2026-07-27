@@ -60,6 +60,8 @@ type UploadRequest struct {
 type UploadResult struct {
 	Store      string   `json:"store"`
 	Success    bool     `json:"success"`
+	Sandbox    bool     `json:"sandbox,omitempty"`
+	DryRun     bool     `json:"dry_run,omitempty"`
 	Error      string   `json:"error,omitempty"`
 	Category   Category `json:"category,omitempty"`
 	DurationMs int64    `json:"duration_ms"`
@@ -123,6 +125,10 @@ type ConfigSchema struct {
 	// upload. apkgo uses it to skip re-uploading when -f is a public URL.
 	// Surfaced by `apkgo stores`.
 	SupportsURLPush bool `json:"supports_url_push,omitempty"`
+	// SupportsSandbox is true if the store can perform real API calls
+	// against an isolated sandbox environment. In sandbox runs, stores
+	// without this capability are validated as dry-runs instead.
+	SupportsSandbox bool `json:"supports_sandbox,omitempty"`
 }
 
 type FieldSchema struct {
@@ -133,6 +139,19 @@ type FieldSchema struct {
 
 // Factory creates a Store from a flat config map.
 type Factory func(cfg map[string]string) (Store, error)
+
+// Environment selects the remote environment used by a store instance.
+type Environment string
+
+const (
+	EnvironmentProduction Environment = "production"
+	EnvironmentSandbox    Environment = "sandbox"
+)
+
+// EnvironmentFactory creates a Store for a specific remote environment.
+// Stores without a sandbox register a regular Factory and remain production
+// configured when a sandbox job validates them as dry-runs.
+type EnvironmentFactory func(cfg map[string]string, environment Environment) (Store, error)
 
 // beijing is China Standard Time (UTC+8, no DST). Built as a fixed zone
 // so scheduled-release formatting never depends on the host having the

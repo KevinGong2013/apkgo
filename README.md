@@ -92,7 +92,14 @@ apkgo upload -f app-arm32.apk --file64 app-arm64.apk
 
 # 只验证不上传
 apkgo upload -f app.apk --dry-run
+
+# vivo 走沙箱，其他渠道只验证不上传
+apkgo upload -f app.apk --sandbox
 ```
+
+`--sandbox` 与 `--dry-run` 互斥。目前只有 vivo 支持沙箱：vivo 会真实调用沙箱 API，其他目标渠道执行与 `--dry-run` 相同的本地校验。沙箱运行不执行 hooks、不写上传历史、不触发生命周期事件回调，也不上报上传遥测。结果顶层包含 `"sandbox": true`，vivo 结果包含 `"sandbox": true`，其他渠道包含 `"dry_run": true`。
+
+vivo 的[沙箱环境](https://dev.vivo.com.cn/documentCenter/doc/327#s-l67kfh1m)与正式环境的应用数据、`access_key` 和密钥完全隔离；请按[在线测试环境说明](https://dev.vivo.com.cn/documentCenter/doc/327#s-b9qi52f4)先在沙箱创建应用并申请独立凭据。测试环境限制每个接口 100 次/天。
 
 ### 初始化配置
 
@@ -162,6 +169,8 @@ stores:
   vivo:
     access_key: "your-access-key"
     access_secret: "your-access-secret"
+    sandbox_access_key: "your-sandbox-access-key"        # --sandbox 时使用
+    sandbox_access_secret: "your-sandbox-access-secret"  # --sandbox 时使用
 
   honor:
     client_id: "your-client-id"
@@ -405,7 +414,7 @@ cmd.Wait()
 
 ```
 apkgo init          [-s store1,store2] [-c config.yaml]
-apkgo upload        -f <apk> [--file64 <apk>] [-s stores] [-n notes] [--notes-file path] [--dry-run] [-t timeout]
+apkgo upload        -f <apk> [--file64 <apk>] [-s stores] [-n notes] [--notes-file path] [--dry-run | --sandbox] [-t timeout]
 apkgo doctor        [-s stores] [-f <apk> | -p <package>]
 apkgo config export --out <file>
 apkgo config import <file>

@@ -27,6 +27,7 @@ var (
 	flagNotesFile      string
 	flagReleaseTime    string
 	flagDryRun         bool
+	flagSandbox        bool
 	flagFetchHeaders   []string
 	flagProgressStream bool
 )
@@ -39,15 +40,18 @@ func init() {
 	uploadCmd.Flags().StringVar(&flagNotesFile, "notes-file", "", "read release notes from file (overrides --notes)")
 	uploadCmd.Flags().StringVar(&flagReleaseTime, "release-time", "", "schedule a timed release (定时发布) at an RFC3339 time, e.g. 2026-06-20T10:00:00+08:00 (supported: huawei,honor,xiaomi,oppo,vivo,samsung,tencent; others release immediately)")
 	uploadCmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "validate config and APK without uploading")
+	uploadCmd.Flags().BoolVar(&flagSandbox, "sandbox", false, "upload to supported store sandboxes; dry-run all other stores")
 	uploadCmd.Flags().StringArrayVar(&flagFetchHeaders, "fetch-header", nil, `extra HTTP header for URL fetches (repeatable; "Name: value")`)
 	uploadCmd.Flags().BoolVar(&flagProgressStream, "progress-stream", false, "emit NDJSON progress events on stdout (one JSON object per line) for parent-process consumption")
 	uploadCmd.MarkFlagRequired("file")
+	uploadCmd.MarkFlagsMutuallyExclusive("dry-run", "sandbox")
 	rootCmd.AddCommand(uploadCmd)
 }
 
 type uploadOutput struct {
 	APK     *apk.Info             `json:"apk"`
 	DryRun  bool                  `json:"dry_run,omitempty"`
+	Sandbox bool                  `json:"sandbox,omitempty"`
 	Results []*store.UploadResult `json:"results,omitempty"`
 }
 
@@ -68,6 +72,7 @@ var uploadCmd = &cobra.Command{
 	Example: `  apkgo upload -f app.apk
   apkgo upload -f app.apk --store huawei,xiaomi
   apkgo upload -f app.apk --dry-run
+  apkgo upload -f app.apk --sandbox
   apkgo upload -f app.apk --notes "Bug fixes"
   apkgo upload -f app.apk --notes-file CHANGELOG.md
   apkgo upload -f https://artifacts.example.com/app-v1.apk --store huawei
@@ -95,6 +100,9 @@ var uploadCmd = &cobra.Command{
 		// concern (TTY detection, slog redirection); the library doesn't
 		// know or care about it.
 		pm, nd := pickProgressManager()
+		if nd != nil {
+			nd.SetRunMode(flagDryRun, flagSandbox)
+		}
 
 		var stores []string
 		if flagStore != "" {
@@ -113,6 +121,7 @@ var uploadCmd = &cobra.Command{
 			Progress:     pm,
 			Timeout:      flagTimeout,
 			DryRun:       flagDryRun,
+			Sandbox:      flagSandbox,
 		})
 		if err != nil {
 			return err
@@ -124,13 +133,14 @@ var uploadCmd = &cobra.Command{
 			writeOutput(uploadOutput{
 				APK:     result.APK,
 				DryRun:  result.DryRun,
+				Sandbox: result.Sandbox,
 				Results: result.Results,
 			})
 		}
 
 		// Persist locally and report anonymous telemetry — both are CLI
 		// behaviours; library callers do their own equivalents.
-		if !result.DryRun {
+		if !result.DryRun && !result.Sandbox {
 			if err := history.Append(history.DefaultPath(), result.APK, result.Results); err != nil {
 				slog.Warn("failed to save history", "error", err)
 			}

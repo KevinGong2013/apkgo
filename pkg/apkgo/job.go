@@ -92,6 +92,12 @@ type Job struct {
 	// Result whose per-store entries are all Success: true.
 	DryRun bool
 
+	// Sandbox performs real uploads only for stores that declare sandbox
+	// support. Other target stores receive the same validation as a dry-run
+	// and return successful results marked DryRun. Sandbox and DryRun are
+	// mutually exclusive.
+	Sandbox bool
+
 	// Logger receives per-store lifecycle log lines (uploading,
 	// upload succeeded, hook ran, etc.) tagged with `store=<name>`.
 	// When nil, slog.Default() is used. Cloud workers typically pass
@@ -116,6 +122,9 @@ type Result struct {
 	// DryRun is true if the run was a dry-run (Job.DryRun was set).
 	DryRun bool
 
+	// Sandbox is true if the run selected isolated store environments.
+	Sandbox bool `json:"sandbox,omitempty"`
+
 	// Results is one entry per target store, in the order Config
 	// declared them. Each entry has Success / Error / DurationMs.
 	Results []*store.UploadResult
@@ -132,6 +141,9 @@ type Result struct {
 func Run(ctx context.Context, job Job) (*Result, error) {
 	if job.Config == nil {
 		return nil, fmt.Errorf("apkgo.Job.Config is required")
+	}
+	if job.DryRun && job.Sandbox {
+		return nil, fmt.Errorf("DryRun and Sandbox are mutually exclusive")
 	}
 
 	// Attach the per-job logger to ctx so the uploader and store code
@@ -188,21 +200,36 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		notes = strings.TrimSpace(string(data))
 	}
 
-	storesWithHooks, err := job.Config.CreateStores(job.Stores)
+	environment := store.EnvironmentProduction
+	if job.Sandbox {
+		environment = store.EnvironmentSandbox
+	}
+	storesWithHooks, err := job.Config.CreateStoresForEnvironment(job.Stores, environment)
 	if err != nil {
 		return nil, err
 	}
 
 	storeNames := make([]string, len(storesWithHooks))
-	entries := make([]uploader.StoreEntry, len(storesWithHooks))
+	sandboxCapable := make([]bool, len(storesWithHooks))
+	entries := make([]uploader.StoreEntry, 0, len(storesWithHooks))
 	for i, swh := range storesWithHooks {
-		storeNames[i] = swh.Store.Name()
-		entries[i] = uploader.StoreEntry{
+		name := swh.Store.Name()
+		storeNames[i] = name
+		sandboxCapable[i] = store.SupportsSandbox(swh.ConfigName)
+		if job.Sandbox && !sandboxCapable[i] {
+			continue
+		}
+		entry := uploader.StoreEntry{
 			Store:   swh.Store,
 			Before:  swh.Before,
 			After:   swh.After,
 			Timeout: swh.Timeout,
 		}
+		if job.Sandbox {
+			entry.Before = ""
+			entry.After = ""
+		}
+		entries = append(entries, entry)
 	}
 
 	// Scheduled release (定时发布): ReleaseTime carries its own timezone;
@@ -247,8 +274,12 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 	if job.DryRun {
 		results := make([]*store.UploadResult, len(storeNames))
 		for i, name := range storeNames {
-			results[i] = &store.UploadResult{Store: name, Success: true}
+			results[i] = &store.UploadResult{Store: name, Success: true, DryRun: true}
 		}
+		pm := progressManager(job.Progress)
+		pm.Start(info, storeNames)
+		pm.Done(info, results)
+		pm.Wait()
 		return &Result{APK: info, DryRun: true, Results: results}, nil
 	}
 
@@ -259,10 +290,7 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	pm := job.Progress
-	if pm == nil {
-		pm = uploader.NopManager
-	}
+	pm := progressManager(job.Progress)
 	pm.Start(info, storeNames)
 
 	// URL pass-through (download mode): when the input was a public
@@ -300,25 +328,58 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		"APKGO_VERSION": info.VersionName,
 	}
 
-	if job.Config.Hooks.Before != "" {
+	if !job.Sandbox && job.Config.Hooks.Before != "" {
 		payload := hooks.BeforeAllPayload{FilePath: apkPath, APK: info, Stores: storeNames}
 		if err := hooks.RunHook(runCtx, job.Config.Hooks.Before, payload, hookEnv); err != nil {
 			return nil, fmt.Errorf("global before hook: %w", err)
 		}
 	}
 
-	u := &uploader.Uploader{Stores: entries, Progress: pm, Events: job.Events}
-	results := u.Run(runCtx, req, info)
+	events := job.Events
+	if job.Sandbox {
+		events = nil
+	}
+	u := &uploader.Uploader{Stores: entries, Progress: pm, Events: events}
+	uploadResults := u.Run(runCtx, req, info)
+	results := uploadResults
+	if job.Sandbox {
+		results = sandboxResults(storeNames, sandboxCapable, uploadResults)
+	}
 	pm.Wait()
 
 	// After-hook failures don't abort the run — the upload itself has
 	// already completed by the time this fires. The CLI logs a warning;
 	// library callers can introspect job.Config.Hooks.After themselves.
-	if job.Config.Hooks.After != "" {
+	if !job.Sandbox && job.Config.Hooks.After != "" {
 		payload := hooks.AfterAllPayload{FilePath: apkPath, APK: info, Results: results}
 		_ = hooks.RunHook(runCtx, job.Config.Hooks.After, payload, hookEnv)
 	}
 
 	pm.Done(info, results)
-	return &Result{APK: info, Results: results}, nil
+	return &Result{APK: info, Sandbox: job.Sandbox, Results: results}, nil
+}
+
+func progressManager(pm uploader.ProgressManager) uploader.ProgressManager {
+	if pm == nil {
+		return uploader.NopManager
+	}
+	return pm
+}
+
+func sandboxResults(storeNames []string, sandboxCapable []bool, uploadResults []*store.UploadResult) []*store.UploadResult {
+	uploaded := make(map[string]*store.UploadResult, len(uploadResults))
+	for _, result := range uploadResults {
+		result.Sandbox = true
+		uploaded[result.Store] = result
+	}
+
+	results := make([]*store.UploadResult, len(storeNames))
+	for i, name := range storeNames {
+		if result, ok := uploaded[name]; sandboxCapable[i] && ok {
+			results[i] = result
+			continue
+		}
+		results[i] = &store.UploadResult{Store: name, Success: true, DryRun: true}
+	}
+	return results
 }

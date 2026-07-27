@@ -25,20 +25,26 @@ import (
 	"github.com/KevinGong2013/apkgo/v3/pkg/store"
 )
 
-const vivoBaseURL = "https://developer-api.vivo.com.cn/router/rest"
+const (
+	vivoBaseURL        = "https://developer-api.vivo.com.cn/router/rest"
+	vivoSandboxBaseURL = "https://sandbox-developer-api.vivo.com.cn/router/rest"
+)
 
 func init() {
-	store.Register("vivo", store.ConfigSchema{
+	store.RegisterWithEnvironment("vivo", store.ConfigSchema{
 		Name:                     "vivo",
 		ConsoleURL:               "https://dev.vivo.com.cn/documentCenter/doc/326",
 		SupportsScheduledRelease: true,
 		SupportsURLPush:          true,
+		SupportsSandbox:          true,
 		Fields: []store.FieldSchema{
 			{Key: "access_key", Required: true, Desc: "vivo open platform access key"},
 			{Key: "access_secret", Required: true, Desc: "vivo open platform access secret"},
+			{Key: "sandbox_access_key", Desc: "vivo sandbox access key (required with --sandbox)"},
+			{Key: "sandbox_access_secret", Desc: "vivo sandbox access secret (required with --sandbox)"},
 		},
-	}, func(cfg map[string]string) (store.Store, error) {
-		return New(cfg)
+	}, func(cfg map[string]string, environment store.Environment) (store.Store, error) {
+		return NewForEnvironment(cfg, environment)
 	})
 	store.RegisterDiagnoser("vivo", diagnose)
 	store.RegisterAuditor("vivo", audit)
@@ -91,22 +97,41 @@ func mapVivoAuditState(status int) (store.AuditState, string) {
 
 type Store struct {
 	client       *resty.Client
+	baseURL      string
 	accessKey    string
 	accessSecret []byte
 }
 
 func New(cfg map[string]string) (*Store, error) {
-	accessKey := cfg["access_key"]
-	accessSecret := cfg["access_secret"]
+	return NewForEnvironment(cfg, store.EnvironmentProduction)
+}
+
+// NewForEnvironment constructs a vivo store with the credentials and gateway
+// belonging to the selected environment.
+func NewForEnvironment(cfg map[string]string, environment store.Environment) (*Store, error) {
+	baseURL := vivoBaseURL
+	keyField := "access_key"
+	secretField := "access_secret"
+	if environment == store.EnvironmentSandbox {
+		baseURL = vivoSandboxBaseURL
+		keyField = "sandbox_access_key"
+		secretField = "sandbox_access_secret"
+	} else if environment != store.EnvironmentProduction {
+		return nil, fmt.Errorf("unsupported environment %q", environment)
+	}
+
+	accessKey := cfg[keyField]
+	accessSecret := cfg[secretField]
 	if accessKey == "" || accessSecret == "" {
-		return nil, fmt.Errorf("access_key and access_secret are required")
+		return nil, fmt.Errorf("%s and %s are required", keyField, secretField)
 	}
 
 	client := resty.New().
-		SetBaseURL(vivoBaseURL)
+		SetBaseURL(baseURL)
 
 	return &Store{
 		client:       client,
+		baseURL:      baseURL,
 		accessKey:    accessKey,
 		accessSecret: []byte(accessSecret),
 	}, nil
@@ -333,7 +358,7 @@ func (s *Store) uploadAPK(method, packageName, filePath string, rep progress.Rep
 	}
 	httpResp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
 		Method: http.MethodPost,
-		URL:    vivoBaseURL,
+		URL:    s.baseURL,
 		Query:  queryVals,
 		Files:  []httpx.FileField{{Field: "file", FileName: filepath.Base(filePath), Reader: rc, Size: fSize}},
 	})

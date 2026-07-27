@@ -26,6 +26,8 @@ stores:
   vivo:
     access_key: ""     # required
     access_secret: ""  # required
+    sandbox_access_key: ""     # required only for --sandbox
+    sandbox_access_secret: ""  # required only for --sandbox
   honor:
     client_id: ""      # required
     client_secret: ""  # required
@@ -50,6 +52,11 @@ stores:
 ```
 
 Env var example: `APKGO_HUAWEI_SERVICE_ACCOUNT=$(base64 -w0 huawei-sa.json) apkgo upload -f app.apk --store huawei`
+
+For vivo sandbox uploads, run `apkgo upload -f app.apk --sandbox`. vivo uses
+its separate sandbox credentials and endpoint; all other selected stores are
+dry-runs. `--sandbox` skips all hooks, history, telemetry, and lifecycle event
+callbacks, and it cannot be combined with `--dry-run`.
 
 ## Hooks
 
@@ -138,6 +145,9 @@ apkgo stores
 
 # 4. Dry-run to validate
 apkgo upload -f app.apk --dry-run
+
+# Optional: real vivo sandbox upload; dry-run all other configured stores
+apkgo upload -f app.apk --sandbox
 
 # 5. Upload
 apkgo upload -f app.apk --notes "v1.0.0 release" --timeout 15m
