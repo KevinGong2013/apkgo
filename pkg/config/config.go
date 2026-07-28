@@ -27,14 +27,16 @@ type Config struct {
 	UpdateCheck string                       `yaml:"update_check,omitempty" json:"update_check,omitempty"` // e.g. "30d", "7d", "0" to disable
 }
 
-// StoreWithHooks pairs a store instance with its per-store hook
-// commands and an optional per-store timeout. Timeout zero inherits
-// the parent context.
+// StoreWithHooks pairs a store instance with its configured registry name,
+// per-store hook commands, and an optional timeout. ConfigName remains the
+// source of truth for capability checks because a store's display Name may
+// differ for named instances. Timeout zero inherits the parent context.
 type StoreWithHooks struct {
-	Store   store.Store
-	Before  string
-	After   string
-	Timeout time.Duration
+	Store      store.Store
+	ConfigName string
+	Before     string
+	After      string
+	Timeout    time.Duration
 }
 
 // Load reads a YAML config file and merges environment variable overrides.
@@ -196,6 +198,14 @@ func (c *Config) UpdateCheckInterval(defaultInterval time.Duration) time.Duratio
 // Per-store "before" and "after" keys are extracted as hook commands
 // and stripped from the config before passing to the store factory.
 func (c *Config) CreateStores(filter []string) ([]StoreWithHooks, error) {
+	return c.CreateStoresForEnvironment(filter, store.EnvironmentProduction)
+}
+
+// CreateStoresForEnvironment is CreateStores with an explicit remote
+// environment. Environment-aware stores select matching credentials and
+// endpoints; regular stores retain production configuration so callers can
+// still perform the same validation as a dry-run.
+func (c *Config) CreateStoresForEnvironment(filter []string, environment store.Environment) ([]StoreWithHooks, error) {
 	wanted := make(map[string]bool)
 	for _, name := range filter {
 		wanted[name] = true
@@ -220,15 +230,22 @@ func (c *Config) CreateStores(filter []string) ([]StoreWithHooks, error) {
 			}
 			timeout = d
 		}
-		delete(cfg, "before")
-		delete(cfg, "after")
-		delete(cfg, "timeout")
+		storeCfg := make(map[string]string, len(cfg))
+		for key, value := range cfg {
+			if key != "before" && key != "after" && key != "timeout" {
+				storeCfg[key] = value
+			}
+		}
 
-		s, err := store.Create(name, cfg)
+		storeEnvironment := environment
+		if environment == store.EnvironmentSandbox && !store.SupportsSandbox(name) {
+			storeEnvironment = store.EnvironmentProduction
+		}
+		s, err := store.CreateForEnvironment(name, storeCfg, storeEnvironment)
 		if err != nil {
 			return nil, fmt.Errorf("store %q: %w", name, err)
 		}
-		stores = append(stores, StoreWithHooks{Store: s, Before: before, After: after, Timeout: timeout})
+		stores = append(stores, StoreWithHooks{Store: s, ConfigName: name, Before: before, After: after, Timeout: timeout})
 	}
 
 	if len(stores) == 0 {

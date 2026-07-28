@@ -42,10 +42,20 @@ store reaches a terminal state (approved / rejected / withdrawn) or the global
     --notes-file   Read release notes from file (overrides --notes)
     --release-time Schedule a timed release (定时发布) at an RFC3339 time, e.g. 2026-06-20T10:00:00+08:00
     --dry-run      Validate without uploading
+    --sandbox      Upload sandbox-capable stores; dry-run all others (mutually exclusive with --dry-run)
 -t, --timeout      Global timeout (default: 10m)
 -c, --config       Config file path (default: apkgo.yaml)
 -o, --output       Output format: json or text (default: json)
 ```
+
+### Sandbox upload (`--sandbox`)
+
+Only vivo currently declares `supports_sandbox`. It uses
+`sandbox_access_key` / `sandbox_access_secret` and vivo's isolated sandbox
+gateway; every other target is validated as a dry-run. Sandbox runs skip all
+global/per-store hooks, history, telemetry, and lifecycle event callbacks.
+Results explicitly mark vivo with `sandbox: true` and other stores with
+`dry_run: true`.
 
 ### Scheduled release (`--release-time`)
 

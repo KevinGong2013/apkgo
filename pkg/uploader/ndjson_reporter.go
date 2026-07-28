@@ -31,6 +31,8 @@ type NDJSONManager struct {
 	enc       *json.Encoder
 	mu        sync.Mutex
 	reporters map[string]*ndjsonReporter
+	dryRun    bool
+	sandbox   bool
 }
 
 // NewNDJSONManager wraps w. Concurrency-safe.
@@ -39,6 +41,15 @@ func NewNDJSONManager(w io.Writer) *NDJSONManager {
 		enc:       json.NewEncoder(w),
 		reporters: map[string]*ndjsonReporter{},
 	}
+}
+
+// SetRunMode configures mode fields included in the terminal event. It should
+// be called before the run starts.
+func (m *NDJSONManager) SetRunMode(dryRun, sandbox bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dryRun = dryRun
+	m.sandbox = sandbox
 }
 
 // Emit publishes an arbitrary event verbatim. Callers use this for
@@ -92,11 +103,22 @@ func (m *NDJSONManager) Start(info *apk.Info, stores []string) {
 // post-completion JSON dump would have. Consumers tracking for the
 // terminal event look for type=="done".
 func (m *NDJSONManager) Done(info *apk.Info, results []*store.UploadResult) {
-	m.Emit(map[string]any{
+	m.mu.Lock()
+	dryRun, sandbox := m.dryRun, m.sandbox
+	m.mu.Unlock()
+
+	event := map[string]any{
 		"type":    "done",
 		"apk":     info,
 		"results": results,
-	})
+	}
+	if dryRun {
+		event["dry_run"] = true
+	}
+	if sandbox {
+		event["sandbox"] = true
+	}
+	m.Emit(event)
 }
 
 // ndjsonReporter is a progress.Reporter that publishes events through

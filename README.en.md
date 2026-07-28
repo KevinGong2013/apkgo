@@ -92,7 +92,14 @@ apkgo upload -f app-arm32.apk --file64 app-arm64.apk
 
 # Validate without uploading
 apkgo upload -f app.apk --dry-run
+
+# Upload vivo to its sandbox; dry-run every other store
+apkgo upload -f app.apk --sandbox
 ```
+
+`--sandbox` and `--dry-run` are mutually exclusive. vivo is currently the only sandbox-capable store: it makes real sandbox API calls, while every other target receives the same local validation as `--dry-run`. Sandbox runs skip all hooks, upload history, lifecycle event callbacks, and upload telemetry. The top-level result contains `"sandbox": true`; the vivo result contains `"sandbox": true`; other stores contain `"dry_run": true`.
+
+The vivo [sandbox environment](https://dev.vivo.com.cn/documentCenter/doc/327#s-l67kfh1m) has separate application data, `access_key`, and secrets from production. Follow the [online test environment instructions](https://dev.vivo.com.cn/documentCenter/doc/327#s-b9qi52f4) to create the application and request separate sandbox credentials first. Each sandbox API is limited to 100 calls per day.
 
 ### Initialize config
 
@@ -162,6 +169,8 @@ stores:
   vivo:
     access_key: "your-access-key"
     access_secret: "your-access-secret"
+    sandbox_access_key: "your-sandbox-access-key"        # used by --sandbox
+    sandbox_access_secret: "your-sandbox-access-secret"  # used by --sandbox
 
   honor:
     client_id: "your-client-id"
@@ -402,6 +411,8 @@ stores:
   vivo:
     access_key: "<...>"
     access_secret: "<...>"
+    sandbox_access_key: "<...>"
+    sandbox_access_secret: "<...>"
 ```
 
 ```bash
@@ -409,6 +420,8 @@ apkgo doctor -s vivo -p com.example.app
 ```
 
 vivo's error codes come in two layers: gateway `code` plus business `subCode`. apkgo recognizes both layers and surfaces the original message verbatim (e.g. `[15042] please upload an APK signed with the same signature as before...`).
+
+For a sandbox upload, create the app in vivo's isolated sandbox first, configure the separate sandbox credentials above, then run `apkgo upload -f app.apk --sandbox`. Production credentials are not used by that command.
 
 #### Honor Developer Platform
 
@@ -740,7 +753,7 @@ Encryption: AES-256-GCM with scrypt key derivation; a wrong password produces a 
 
 ```
 apkgo init          [-s store1,store2] [-c config.yaml]
-apkgo upload        -f <apk> [--file64 <apk>] [-s stores] [-n notes] [--notes-file path] [--dry-run] [-t timeout]
+apkgo upload        -f <apk> [--file64 <apk>] [-s stores] [-n notes] [--notes-file path] [--dry-run | --sandbox] [-t timeout]
 apkgo doctor        [-s stores] [-f <apk> | -p <package>]
 apkgo config export --out <file>
 apkgo config import <file>

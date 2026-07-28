@@ -93,3 +93,42 @@ func TestSupportsURLPush(t *testing.T) {
 		}
 	}
 }
+
+func TestEnvironmentFactoryAndSupportsSandbox(t *testing.T) {
+	var gotEnvironment store.Environment
+	var gotInstance string
+	store.RegisterWithEnvironment("test-sandbox-yes", store.ConfigSchema{
+		Name:            "test-sandbox-yes",
+		SupportsSandbox: true,
+	}, func(cfg map[string]string, environment store.Environment) (store.Store, error) {
+		gotEnvironment = environment
+		gotInstance = cfg["_name"]
+		return nil, nil
+	})
+
+	cfg := map[string]string{"token": "secret"}
+	if _, err := store.Create("test-sandbox-yes", cfg); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if gotEnvironment != store.EnvironmentProduction {
+		t.Errorf("default environment = %q, want %q", gotEnvironment, store.EnvironmentProduction)
+	}
+	if _, err := store.CreateForEnvironment("test-sandbox-yes.instance", cfg, store.EnvironmentSandbox); err != nil {
+		t.Fatalf("CreateForEnvironment: %v", err)
+	}
+	if gotEnvironment != store.EnvironmentSandbox {
+		t.Errorf("environment = %q, want %q", gotEnvironment, store.EnvironmentSandbox)
+	}
+	if gotInstance != "instance" {
+		t.Errorf("instance = %q, want instance", gotInstance)
+	}
+	if _, mutated := cfg["_name"]; mutated {
+		t.Error("CreateForEnvironment mutated caller config")
+	}
+	if !store.SupportsSandbox("test-sandbox-yes.instance") {
+		t.Error("sandbox capability was not resolved for store instance")
+	}
+	if store.SupportsSandbox("test-sched-no") {
+		t.Error("production-only store reported sandbox support")
+	}
+}
