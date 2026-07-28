@@ -114,7 +114,7 @@ func audit(ctx context.Context, cfg map[string]string, _ store.AuditQuery) store
 	}
 	status, _ := info["contentStatus"].(string)
 	res.State, res.Detail = mapSamsungStatus(status)
-	if vn, vc, _ := latestBinary(info); vc > 0 {
+	if vn, vc, _, _ := latestBinary(info); vc > 0 {
 		res.VersionName = vn
 		res.VersionCode = int32(vc)
 	}
@@ -135,9 +135,10 @@ func (s *Store) fetchContentInfo(ctx context.Context) (map[string]any, error) {
 }
 
 // latestBinary picks the newest entry from a contentInfo binaryList (highest
-// versionCode) and returns its versionName, numeric versionCode, and gms flag.
-// Zero/empty when the app has no binaries. versionCode arrives as a string.
-func latestBinary(info map[string]any) (versionName string, versionCode int, gms string) {
+// versionCode) and returns its versionName, numeric versionCode, gms flag,
+// and binarySeq. Zero/empty when the app has no binaries. versionCode and
+// binarySeq arrive as strings.
+func latestBinary(info map[string]any) (versionName string, versionCode int, gms, binarySeq string) {
 	list, _ := info["binaryList"].([]any)
 	best := -1
 	for _, b := range list {
@@ -155,9 +156,13 @@ func latestBinary(info map[string]any) (versionName string, versionCode int, gms
 			versionCode = vc
 			versionName, _ = m["versionName"].(string)
 			gms, _ = m["gms"].(string)
+			binarySeq = ""
+			if v, ok := m["binarySeq"]; ok && v != nil {
+				binarySeq = strings.TrimSpace(fmt.Sprint(v))
+			}
 		}
 	}
-	return versionName, versionCode, gms
+	return versionName, versionCode, gms, binarySeq
 }
 
 // mapSamsungStatus maps Galaxy Store contentStatus to the unified state.
@@ -369,43 +374,31 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		return fmt.Errorf("upload failed: %s", uploadResp.ErrorMsg)
 	}
 
-	// 3. Read the app's current state once: the existing binaryList plus the
-	//    metadata (defaultLanguageCode/paid/usExportLaws/ageLimit/chinaAgeLimit)
-	//    we echo back into contentUpdate below, plus the newest binary's gms
-	//    flag for the new entry (many apps are gms="N").
+	// 3. Read the app's current state once: the metadata (defaultLanguageCode/
+	//    paid/usExportLaws/ageLimit/chinaAgeLimit) we echo back into
+	//    contentUpdate below, plus the newest binary's gms flag (many apps are
+	//    gms="N") and its binarySeq for device-group mapping.
 	rep.Phase("publishing")
 	cur, err := s.fetchContentInfo(context.Background())
 	if err != nil {
 		return fmt.Errorf("read content: %w", err)
 	}
-	_, _, gms := latestBinary(cur)
+	_, _, gms, binarySeq := latestBinary(cur)
 	if gms == "" {
 		gms = "N"
 	}
 
-	// 4. Register the new binary via contentUpdate's binaryList — this single
-	//    call both attaches the binary AND transitions a live (FOR_SALE) app
-	//    into REGISTERING. A metadata-only contentUpdate does NOT transition
-	//    (verified against a real app), and the standalone Add New Binary
-	//    endpoint only works once already in REGISTERING, so for an update this
-	//    is the documented path (Samsung's official Galaxy Store Python
-	//    example). The list must carry the EXISTING binaries (echoed from
-	//    contentInfo) plus the new {gms, filekey} — sending only the new one
-	//    drops the existing. The flag is `gms` (not `gmsYn`) and the field is
-	//    `filekey` (lower-case k). NB: binaryList in contentUpdate is deprecated
-	//    from July 2026 — migrate to the REGISTERING-transition + Add New Binary
-	//    flow once Samsung documents how to transition without binaryList.
-	binaryList := []any{}
-	if existing, ok := cur["binaryList"].([]any); ok {
-		binaryList = append(binaryList, existing...)
-	}
-	binaryList = append(binaryList, map[string]any{"gms": gms, "filekey": uploadResp.FileKey})
+	// 4. Create the update version: a metadata-only contentUpdate transitions
+	//    a live (FOR_SALE) app into REGISTERING (the app then carries both a
+	//    SALE and a REGISTRATION status). Since July 2026 the gateway rejects
+	//    binaryList in contentUpdate (error 8014); the binary is attached with
+	//    the dedicated Add Binary call below, per the official "submit an
+	//    update" guide.
 	upd := map[string]any{
 		"contentId":       s.contentID,
-		"binaryList":      binaryList,
 		"publicationType": "01", // auto-publish once review passes
 	}
-	// Echo the metadata Samsung requires alongside binaryList, unchanged.
+	// Echo the metadata Samsung requires on every contentUpdate, unchanged.
 	for _, k := range []string{"defaultLanguageCode", "paid", "usExportLaws", "ageLimit", "chinaAgeLimit"} {
 		if v, ok := cur[k]; ok && v != nil {
 			upd[k] = v
@@ -422,13 +415,36 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		ResultMessage string `json:"resultMessage"`
 	}
 	if _, err := s.client.R().SetBody(upd).SetResult(&updResp).Post("/seller/contentUpdate"); err != nil {
-		return fmt.Errorf("register binary (contentUpdate): %w", err)
+		return fmt.Errorf("create update version (contentUpdate): %w", err)
 	}
 	if updResp.ResultCode != "" && updResp.ResultCode != "0000" {
-		return fmt.Errorf("register binary failed: %s %s", updResp.ResultCode, strings.TrimSpace(updResp.ResultMessage))
+		return fmt.Errorf("create update version failed: %s %s", updResp.ResultCode, strings.TrimSpace(updResp.ResultMessage))
 	}
 
-	// 5. Submit for review.
+	// 5. Attach the uploaded binary to the REGISTERING version. The flag is
+	//    `gms` (not `gmsYn`) and the field is `filekey` (lower-case k).
+	//    binarySeqForDeviceInfo copies the device-group configuration from the
+	//    newest existing binary so the update keeps its device coverage.
+	add := map[string]any{
+		"contentId": s.contentID,
+		"gms":       gms,
+		"filekey":   uploadResp.FileKey,
+	}
+	if binarySeq != "" {
+		add["binarySeqForDeviceInfo"] = binarySeq
+	}
+	var addResp struct {
+		ResultCode    string `json:"resultCode"`
+		ResultMessage string `json:"resultMessage"`
+	}
+	if _, err := s.client.R().SetBody(add).SetResult(&addResp).Post("/seller/v2/content/binary"); err != nil {
+		return fmt.Errorf("add binary: %w", err)
+	}
+	if addResp.ResultCode != "" && addResp.ResultCode != "0000" {
+		return fmt.Errorf("add binary failed: %s %s", addResp.ResultCode, strings.TrimSpace(addResp.ResultMessage))
+	}
+
+	// 6. Submit for review.
 	rep.Phase("submitting")
 	if _, err := s.client.R().SetBody(map[string]string{"contentId": s.contentID}).Post("/seller/contentSubmit"); err != nil {
 		return fmt.Errorf("submit: %w", err)
