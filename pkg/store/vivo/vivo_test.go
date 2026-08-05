@@ -1,12 +1,15 @@
 package vivo
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/go-resty/resty/v2"
 
 	"github.com/KevinGong2013/apkgo/v3/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v3/pkg/store"
@@ -110,5 +113,54 @@ func TestUploadAPKUsesStoreBaseURLAndCredentials(t *testing.T) {
 	}
 	if gotAccessKey != "sandbox-key" {
 		t.Errorf("access_key = %q, want sandbox-key", gotAccessKey)
+	}
+}
+
+func TestAuthProbe(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       map[string]any
+		wantStatus string
+	}{
+		// Valid credentials: the gateway accepts the signature and the
+		// lookup for the sentinel package comes back empty.
+		{"empty success envelope", map[string]any{"code": 0, "data": nil}, "ok"},
+		// A business-layer error still proves the signature was
+		// accepted — the gateway runs before the business method.
+		{"business error", map[string]any{"code": 0, "subCode": "15000", "msg": "内部错误"}, "ok"},
+		// Gateway rejection: what vivo actually returns for a bad
+		// access_key / signature.
+		{"gateway rejection", map[string]any{"code": 10018, "msg": "禁止访问，请核对接入信息"}, "fail"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotPackage, gotMethod string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPackage = r.URL.Query().Get("packageName")
+				gotMethod = r.URL.Query().Get("method")
+				// vivo really serves JSON with a text/plain content
+				// type; the probe must not depend on the header.
+				w.Header().Set("Content-Type", "text/plain;charset=utf-8")
+				_ = json.NewEncoder(w).Encode(tt.body)
+			}))
+			defer server.Close()
+
+			s := &Store{
+				client:       resty.New().SetBaseURL(server.URL),
+				baseURL:      server.URL,
+				accessKey:    "key",
+				accessSecret: []byte("secret"),
+			}
+			probe := s.authProbe(context.Background())
+			if probe.Name != "auth" || probe.Status != tt.wantStatus {
+				t.Errorf("probe = %s/%s (%s), want auth/%s", probe.Name, probe.Status, probe.Error, tt.wantStatus)
+			}
+			if gotMethod != "app.query.details" {
+				t.Errorf("method = %q, want app.query.details", gotMethod)
+			}
+			if gotPackage != sentinelPackage {
+				t.Errorf("packageName = %q, want %q", gotPackage, sentinelPackage)
+			}
+		})
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -468,6 +469,31 @@ func (e envelope) failed() bool {
 	return e.Code != 0 || (e.SubCode != "" && e.SubCode != "0")
 }
 
+// apiError is a failed envelope, keeping the gateway/business split:
+// gateway rejections (Code != 0) fire before the business method runs —
+// signature validation included — while business errors (Code == 0 with
+// a SubCode) prove the request authenticated. The auth doctor probe
+// keys off this distinction.
+type apiError struct {
+	gateway    bool
+	code       string
+	msg        string
+	httpStatus int
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("[%s] %s (HTTP %d)", e.code, e.msg, e.httpStatus)
+}
+
+func (e envelope) toError(httpStatus int) *apiError {
+	return &apiError{
+		gateway:    e.Code != 0,
+		code:       e.errorCode(),
+		msg:        e.text(),
+		httpStatus: httpStatus,
+	}
+}
+
 func (e envelope) text() string {
 	if e.Msg != "" {
 		return e.Msg
@@ -596,20 +622,46 @@ func (s *Store) queryApp(ctx context.Context, packageName string) (*appDetails, 
 			httpResp.StatusCode(), jerr, truncateBody(string(body)))
 	}
 	if resp.failed() {
-		return nil, fmt.Errorf("[%s] %s (HTTP %d)",
-			resp.errorCode(), resp.text(), httpResp.StatusCode())
+		return nil, resp.envelope.toError(httpResp.StatusCode())
 	}
 	return resp.Data, nil
 }
 
-// diagnose is registered with `apkgo doctor`. Single probe:
+// sentinelPackage is a package name that exists under no developer
+// account. Querying it is the closest thing vivo has to an auth-only
+// endpoint: the gateway validates the HMAC-SHA256 signature before the
+// lookup runs, so bad credentials fail at the gateway (e.g. code 10018
+// 禁止访问) while good ones get an empty success envelope.
+const sentinelPackage = "com.apkgo.doctor.probe"
+
+// authProbe validates credentials without a package hint by querying
+// sentinelPackage. Any answer from the business layer — an empty
+// success envelope or a SubCode error — means the gateway accepted the
+// signature; only a gateway rejection fails the probe.
+func (s *Store) authProbe(ctx context.Context) store.Probe {
+	const noAppChecks = "app-level checks need --package or --file"
+	_, err := s.queryApp(ctx, sentinelPackage)
+	var ae *apiError
+	switch {
+	case err == nil:
+		return store.Probe{Name: "auth", Status: "ok", Detail: "signature accepted by gateway (" + noAppChecks + ")"}
+	case errors.As(err, &ae) && !ae.gateway:
+		return store.Probe{Name: "auth", Status: "ok", Detail: fmt.Sprintf("signature accepted by gateway; business layer replied %s (%s)", ae.Error(), noAppChecks)}
+	default:
+		return store.Probe{Name: "auth", Status: "fail", Error: err.Error()}
+	}
+}
+
+// diagnose is registered with `apkgo doctor`. Single probe, picked by
+// whether a package-name hint is available:
 //
-//	app-info — calls /router/rest with method=app.query.details, which
-//	           both validates the HMAC-SHA256 signature server-side and
-//	           checks that the package exists under this developer
-//	           account. A package-name hint is required since vivo has
-//	           no separate "verify credentials" endpoint to probe with
-//	           an empty body.
+//	app-info — calls app.query.details for the hinted package, which
+//	           both validates the signature server-side and checks that
+//	           the package exists under this developer account.
+//	auth     — no hint: same call against sentinelPackage, validating
+//	           only the credentials. Any answer from the business layer
+//	           (empty data or a SubCode error) means the signature
+//	           checked out; only a gateway rejection fails the probe.
 func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
 	probes := make([]store.Probe, 0, 1)
 
@@ -620,7 +672,7 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 	}
 
 	if hint.Package == "" {
-		probes = append(probes, store.Probe{Name: "app-info", Status: "skip", Detail: "needs --package or --file (vivo has no auth-only endpoint)"})
+		probes = append(probes, s.authProbe(ctx))
 		return probes
 	}
 
