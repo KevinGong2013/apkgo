@@ -70,7 +70,7 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 		res.Error = err.Error()
 		return res
 	}
-	info, err := s.query(q.Package)
+	info, err := s.query(ctx, q.Package)
 	if err != nil {
 		res.Error = err.Error()
 		return res
@@ -107,6 +107,7 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 
 type Store struct {
 	client     *resty.Client
+	baseURL    string
 	email      string
 	privateKey string
 	pubKey     *rsa.PublicKey
@@ -139,6 +140,7 @@ func New(cfg map[string]string) (*Store, error) {
 
 	return &Store{
 		client:     client,
+		baseURL:    xiaomiBaseURL,
 		email:      email,
 		privateKey: privateKey,
 		pubKey:     pubKey,
@@ -160,7 +162,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	// Query existing version
 	rep.Phase("query")
-	info, err := s.query(req.PackageName)
+	info, err := s.query(ctx, req.PackageName)
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
@@ -181,10 +183,10 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	defer os.Remove(iconPath)
 
 	// Push
-	return s.push(synchroType, req, iconPath, rep)
+	return s.push(ctx, synchroType, req, iconPath, rep)
 }
 
-func (s *Store) query(packageName string) (*packageInfo, error) {
+func (s *Store) query(ctx context.Context, packageName string) (*packageInfo, error) {
 	body := s.encode(map[string]any{
 		"packageName": packageName,
 		"userName":    s.email,
@@ -197,6 +199,7 @@ func (s *Store) query(packageName string) (*packageInfo, error) {
 		PackageInfo *packageInfo `json:"packageInfo"`
 	}
 	httpResp, err := s.client.R().
+		SetContext(ctx).
 		SetHeader("Content-Type", "application/x-www-form-urlencoded").
 		SetBody(body.Encode()).
 		SetResult(&resp).
@@ -220,7 +223,7 @@ func (s *Store) query(packageName string) (*packageInfo, error) {
 	return resp.PackageInfo, nil
 }
 
-func (s *Store) push(synchroType int, req *store.UploadRequest, iconPath string, rep progress.Reporter) error {
+func (s *Store) push(ctx context.Context, synchroType int, req *store.UploadRequest, iconPath string, rep progress.Reporter) error {
 	appInfo := map[string]any{
 		"appName":     req.AppName,
 		"packageName": req.PackageName,
@@ -232,13 +235,14 @@ func (s *Store) push(synchroType int, req *store.UploadRequest, iconPath string,
 		appInfo["onlineTime"] = req.ReleaseTime.UnixMilli()
 	}
 
-	files := map[string]string{
-		"apk":  req.FilePath,
-		"icon": iconPath,
-	}
+	// Order matters only for reproducibility, not for xiaomi: keep the sig
+	// list in the order the /dev/push docs list the parts (apk, secondApk,
+	// icon) rather than letting map iteration shuffle it per run.
+	files := []sigFile{{name: "apk", path: req.FilePath}}
 	if req.File64Path != "" {
-		files["secondApkPath"] = req.File64Path
+		files = append(files, sigFile{name: "secondApk", path: req.File64Path})
 	}
+	files = append(files, sigFile{name: "icon", path: iconPath})
 
 	body := s.encode(map[string]any{
 		"synchroType": synchroType,
@@ -283,12 +287,12 @@ func (s *Store) push(synchroType int, req *store.UploadRequest, iconPath string,
 		{Field: "icon", FileName: filepath.Base(iconPath), Reader: iconRC, Size: iconSize},
 	}
 	if apk64RC != nil {
-		parts = append(parts, httpx.FileField{Field: "secondApkPath", FileName: filepath.Base(req.File64Path), Reader: apk64RC, Size: apk64Size})
+		parts = append(parts, httpx.FileField{Field: "secondApk", FileName: filepath.Base(req.File64Path), Reader: apk64RC, Size: apk64Size})
 	}
 
-	pushResp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
+	pushResp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
 		Method: http.MethodPost,
-		URL:    xiaomiBaseURL + "/dev/push",
+		URL:    s.baseURL + "/dev/push",
 		Fields: fields,
 		Files:  parts,
 	})
@@ -328,8 +332,16 @@ func classifyXiaomi(result int, msg string) store.Category {
 	return store.CategoryUnknown
 }
 
-// encode builds form values with RSA-encrypted SIG.
-func (s *Store) encode(params map[string]any, files map[string]string) url.Values {
+// sigFile is one uploaded part as it appears in the SIG hash list: the
+// multipart field name plus the local file whose md5 is signed.
+type sigFile struct {
+	name string
+	path string
+}
+
+// encode builds form values with RSA-encrypted SIG. files is signed in the
+// given order.
+func (s *Store) encode(params map[string]any, files []sigFile) url.Values {
 	requestData, _ := json.Marshal(params)
 	form := url.Values{}
 	form.Set("RequestData", string(requestData))
@@ -339,14 +351,15 @@ func (s *Store) encode(params map[string]any, files map[string]string) url.Value
 		"hash": md5hex(requestData),
 	}}
 
-	for key, path := range files {
-		if path != "" {
-			hash, err := fileMD5(path)
-			if err != nil {
-				continue
-			}
-			sigs = append(sigs, map[string]string{"name": key, "hash": hash})
+	for _, f := range files {
+		if f.path == "" {
+			continue
 		}
+		hash, err := fileMD5(f.path)
+		if err != nil {
+			continue
+		}
+		sigs = append(sigs, map[string]string{"name": f.name, "hash": hash})
 	}
 
 	sigPayload, _ := json.Marshal(map[string]any{
@@ -505,7 +518,7 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 		return probes
 	}
 
-	info, err := s.query(hint.Package)
+	info, err := s.query(ctx, hint.Package)
 	if err != nil {
 		probes = append(probes, store.Probe{Name: "query", Status: "fail", Error: err.Error()})
 		return probes
