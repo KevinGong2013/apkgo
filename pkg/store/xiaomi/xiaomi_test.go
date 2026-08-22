@@ -1,6 +1,7 @@
 package xiaomi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -8,11 +9,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -129,7 +132,7 @@ func TestPushDualAPKFieldNames(t *testing.T) {
 		FilePath:    apk32,
 		File64Path:  apk64,
 	}
-	if err := s.push(1, req, icon, progress.Safe(nil)); err != nil {
+	if err := s.push(context.Background(), 1, req, icon, progress.Safe(nil)); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 
@@ -147,15 +150,48 @@ func TestPushDualAPKFieldNames(t *testing.T) {
 		t.Errorf("unexpected multipart file fields: %v", gotFiles)
 	}
 
+	// The sig list is built from a fixed slice, so the order is stable run to
+	// run (it used to come from map iteration).
 	names := decryptSIG(t, key, gotSIG)
-	found := map[string]bool{}
-	for _, n := range names {
-		found[n] = true
+	wantSig := []string{"RequestData", "apk", "secondApk", "icon"}
+	if !slices.Equal(names, wantSig) {
+		t.Errorf("SIG sig list = %v, want %v", names, wantSig)
 	}
-	for _, n := range []string{"RequestData", "apk", "secondApk", "icon"} {
-		if !found[n] {
-			t.Errorf("SIG sig list %v is missing %q", names, n)
+}
+
+// TestPushHonoursContext checks push aborts on a cancelled context — it used
+// to hand context.Background() to the multipart upload, so the global --timeout
+// never reached the part that actually takes the time.
+func TestPushHonoursContext(t *testing.T) {
+	dir := t.TempDir()
+	apk32 := filepath.Join(dir, "app.apk")
+	icon := filepath.Join(dir, "icon.png")
+	for _, f := range []string{apk32, icon} {
+		if err := os.WriteFile(f, []byte("content of "+filepath.Base(f)), 0o644); err != nil {
+			t.Fatal(err)
 		}
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release // hang until the test cancels
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	s, _ := newTestStore(t, srv.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	req := &store.UploadRequest{AppName: "Demo", PackageName: "com.example.demo", FilePath: apk32}
+	err := s.push(ctx, 1, req, icon, progress.Safe(nil))
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("push error = %v, want context.Canceled", err)
 	}
 }
 
@@ -192,7 +228,7 @@ func TestPushSingleAPKOmitsSecondApk(t *testing.T) {
 		PackageName: "com.example.demo",
 		FilePath:    apk32,
 	}
-	if err := s.push(0, req, icon, progress.Safe(nil)); err != nil {
+	if err := s.push(context.Background(), 0, req, icon, progress.Safe(nil)); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 
