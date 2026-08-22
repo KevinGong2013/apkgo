@@ -107,6 +107,7 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 
 type Store struct {
 	client     *resty.Client
+	baseURL    string
 	email      string
 	privateKey string
 	pubKey     *rsa.PublicKey
@@ -139,6 +140,7 @@ func New(cfg map[string]string) (*Store, error) {
 
 	return &Store{
 		client:     client,
+		baseURL:    xiaomiBaseURL,
 		email:      email,
 		privateKey: privateKey,
 		pubKey:     pubKey,
@@ -237,7 +239,7 @@ func (s *Store) push(synchroType int, req *store.UploadRequest, iconPath string,
 		"icon": iconPath,
 	}
 	if req.File64Path != "" {
-		files["secondApkPath"] = req.File64Path
+		files["secondApk"] = req.File64Path
 	}
 
 	body := s.encode(map[string]any{
@@ -283,12 +285,12 @@ func (s *Store) push(synchroType int, req *store.UploadRequest, iconPath string,
 		{Field: "icon", FileName: filepath.Base(iconPath), Reader: iconRC, Size: iconSize},
 	}
 	if apk64RC != nil {
-		parts = append(parts, httpx.FileField{Field: "secondApkPath", FileName: filepath.Base(req.File64Path), Reader: apk64RC, Size: apk64Size})
+		parts = append(parts, httpx.FileField{Field: "secondApk", FileName: filepath.Base(req.File64Path), Reader: apk64RC, Size: apk64Size})
 	}
 
 	pushResp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
 		Method: http.MethodPost,
-		URL:    xiaomiBaseURL + "/dev/push",
+		URL:    s.baseURL + "/dev/push",
 		Fields: fields,
 		Files:  parts,
 	})
