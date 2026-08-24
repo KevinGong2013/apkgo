@@ -17,6 +17,7 @@ apkgo upload -f <apk> [flags]                     # Upload APK to stores
 apkgo doctor [-s stores] [-f apk | -p package]    # Diagnose store credentials/permissions
 apkgo audit [-f apk | -p package] [-s stores] [--watch]  # Query review (审核) status
 apkgo stores                                      # List stores and config schema (JSON)
+apkgo stores --configured                         # List configured store names (JSON)
 apkgo version                                     # Version info (JSON)
 ```
 

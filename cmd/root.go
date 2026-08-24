@@ -33,6 +33,11 @@ var rootCmd = &cobra.Command{
 		}
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 
+		// Config introspection must remain local and side-effect free.
+		if cmd.Name() == "stores" && flagStoresConfigured {
+			return
+		}
+
 		// Non-blocking update check (skipped for upgrade command itself)
 		if cmd.Name() != "upgrade" {
 			cfg := config.LoadOrEmpty(flagConfig)

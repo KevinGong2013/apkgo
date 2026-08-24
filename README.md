@@ -118,6 +118,9 @@ apkgo init -c production.yaml
 
 ```bash
 apkgo stores
+
+# 使用内置 YAML 解析器，只输出当前配置中的商店名，不输出凭据
+apkgo -c apkgo.yaml stores --configured
 ```
 
 ### 体检（验证商店配置）
@@ -418,7 +421,7 @@ apkgo upload        -f <apk> [--file64 <apk>] [-s stores] [-n notes] [--notes-fi
 apkgo doctor        [-s stores] [-f <apk> | -p <package>]
 apkgo config export --out <file>
 apkgo config import <file>
-apkgo stores        [-o json|text]
+apkgo stores        [--configured] [-o json|text]
 apkgo history       [-n limit]
 apkgo upgrade
 apkgo version       [-o json|text]
