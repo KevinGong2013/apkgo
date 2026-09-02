@@ -243,3 +243,61 @@ func TestPushSingleAPKOmitsSecondApk(t *testing.T) {
 		}
 	}
 }
+
+// TestUploadKeepsStoreAppName pins that an update (synchroType=1) pushes the
+// app name already registered on the console (/dev/query result), not the APK
+// label — uploading must never rename the store listing (#48). The fixture
+// testdata/helloworld.apk comes from shogo82148/androidbinary's MIT-licensed
+// testdata; its label is "HelloWorld".
+func TestUploadKeepsStoreAppName(t *testing.T) {
+	dir := t.TempDir()
+	apkPath := filepath.Join(dir, "helloworld.apk")
+	raw, err := os.ReadFile(filepath.Join("testdata", "helloworld.apk"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(apkPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var pushedAppName string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/dev/query":
+			_, _ = w.Write([]byte(`{"result":0,"packageInfo":{"appName":"控制台注册名","packageName":"com.example.helloworld","versionCode":1,"versionName":"1.0"}}`))
+		case "/dev/push":
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				t.Errorf("parse multipart: %v", err)
+			}
+			var reqData struct {
+				AppInfo struct {
+					AppName string `json:"appName"`
+				} `json:"appInfo"`
+			}
+			if err := json.Unmarshal([]byte(r.FormValue("RequestData")), &reqData); err != nil {
+				t.Errorf("decode RequestData: %v", err)
+			}
+			pushedAppName = reqData.AppInfo.AppName
+			_, _ = w.Write([]byte(`{"result":0}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	s, _ := newTestStore(t, srv.URL)
+	s.client.SetBaseURL(srv.URL)
+	req := &store.UploadRequest{
+		AppName:     "HelloWorld", // APK label — must not reach the store on update
+		PackageName: "com.example.helloworld",
+		VersionCode: 2,
+		FilePath:    apkPath,
+	}
+	if err := s.upload(context.Background(), req); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if pushedAppName != "控制台注册名" {
+		t.Errorf("pushed appName = %q, want existing store name %q", pushedAppName, "控制台注册名")
+	}
+}
