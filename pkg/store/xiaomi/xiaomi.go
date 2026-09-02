@@ -174,6 +174,16 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		return fmt.Errorf("store version (%d) >= local version (%d)", info.VersionCode, req.VersionCode)
 	}
 
+	// Updates must never rename the store listing: reuse the name already
+	// registered on the console (from /dev/query) instead of the APK
+	// label — an i18n APK's base values/ label is often English, and
+	// renaming is a console decision, not an upload side effect (#48).
+	// req is per-store (both the CLI uploader and apkgo-cloud build one
+	// per store), so mutating it here is safe.
+	if info != nil && info.AppName != "" {
+		req.AppName = info.AppName
+	}
+
 	// Extract icon from APK
 	rep.Phase("icon")
 	iconPath, err := extractIcon(req.FilePath)

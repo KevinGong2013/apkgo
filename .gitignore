@@ -9,7 +9,7 @@ secrets.json
 
 # APK files (except checked-in test fixtures)
 *.apk
-!pkg/apk/testdata/*.apk
+!pkg/**/testdata/*.apk
 
 # IDE
 .vscode/
