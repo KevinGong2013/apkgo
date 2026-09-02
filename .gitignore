@@ -7,8 +7,9 @@ dist/
 apkgo.yaml
 secrets.json
 
-# APK files
+# APK files (except checked-in test fixtures)
 *.apk
+!pkg/apk/testdata/*.apk
 
 # IDE
 .vscode/
