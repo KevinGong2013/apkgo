@@ -49,6 +49,23 @@ func TestABIs(t *testing.T) {
 	}
 }
 
+// multilocale.apk is assembled from shogo82148/androidbinary's MIT-licensed
+// testdata (AndroidManifest.xml + resources.arsc): its label has a default
+// entry "FireworksMeasure" plus a more specific ja variant "花火距離計算".
+// Parse must return the default entry, not the most specific locale (#48).
+func TestParseDefaultLabel(t *testing.T) {
+	info, err := Parse(filepath.Join("testdata", "multilocale.apk"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if info.AppName != "FireworksMeasure" {
+		t.Errorf("AppName = %q, want default-locale label %q", info.AppName, "FireworksMeasure")
+	}
+	if info.PackageName != "net.sorablue.shogo.FWMeasure" {
+		t.Errorf("PackageName = %q", info.PackageName)
+	}
+}
+
 func TestIsAAB(t *testing.T) {
 	cases := []struct {
 		path string

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/shogo82148/androidbinary"
 	"github.com/shogo82148/androidbinary/apk"
 )
 
@@ -38,7 +39,7 @@ func Parse(path string) (*Info, error) {
 	}
 	defer pkg.Close()
 
-	appName, _ := pkg.Label(nil)
+	appName := defaultLabel(pkg)
 
 	return &Info{
 		PackageName: pkg.PackageName(),
@@ -46,6 +47,23 @@ func Parse(path string) (*Info, error) {
 		VersionCode: pkg.Manifest().VersionCode.MustInt32(),
 		AppName:     appName,
 	}, nil
+}
+
+// defaultLabel returns the application label from the APK's default
+// (base values/) resources. Label(nil) must not be used here: a nil
+// config matches every locale variant and androidbinary then prefers
+// the most specific one, so an APK shipping e.g. values-zh-rTW/
+// translations resolves to the Traditional Chinese name instead of the
+// default label — which stores that accept appName (e.g. xiaomi) then
+// write over the store listing. The zero-value config matches only
+// locale-less entries, i.e. the base values/ label; if the base has no
+// label at all, fall back to whatever variant matches.
+func defaultLabel(pkg *apk.Apk) string {
+	if s, err := pkg.Label(&androidbinary.ResTableConfig{}); err == nil && s != "" {
+		return s
+	}
+	s, _ := pkg.Label(nil)
+	return s
 }
 
 // ABIs returns the sorted, de-duplicated set of native ABIs declared by
