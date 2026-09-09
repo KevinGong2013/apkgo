@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"image/png"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -299,5 +300,45 @@ func TestUploadKeepsStoreAppName(t *testing.T) {
 	}
 	if pushedAppName != "控制台注册名" {
 		t.Errorf("pushed appName = %q, want existing store name %q", pushedAppName, "控制台注册名")
+	}
+}
+
+// copyFixtureAPK copies testdata/helloworld.apk into dir (extractIcon writes
+// its temp png next to the APK, so tests must not point it at testdata/).
+func copyFixtureAPK(t *testing.T, dir string) string {
+	t.Helper()
+	apkPath := filepath.Join(dir, "helloworld.apk")
+	raw, err := os.ReadFile(filepath.Join("testdata", "helloworld.apk"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(apkPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return apkPath
+}
+
+// TestExtractIconPicksDensestLauncherIcon pins the fix for #51: the fixture
+// ships mdpi..xxxhdpi launcher icons (48..192px) and extraction must take
+// the densest one. The old code requested density 0 (= mdpi) and pushed the
+// 48px variant, which replaced the console's HD icon with a blurry one.
+func TestExtractIconPicksDensestLauncherIcon(t *testing.T) {
+	apkPath := copyFixtureAPK(t, t.TempDir())
+	iconPath, err := extractIcon(apkPath)
+	if err != nil {
+		t.Fatalf("extractIcon: %v", err)
+	}
+	defer os.Remove(iconPath)
+	f, err := os.Open(iconPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	cfg, err := png.DecodeConfig(f)
+	if err != nil {
+		t.Fatalf("decode extracted icon: %v", err)
+	}
+	if cfg.Width != 192 || cfg.Height != 192 {
+		t.Errorf("extracted icon is %dx%d, want 192x192 (xxxhdpi)", cfg.Width, cfg.Height)
 	}
 }
