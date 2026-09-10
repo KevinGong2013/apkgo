@@ -10,7 +10,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"image"
 	_ "image/jpeg" // register jpeg decoder for icon extraction
 	"image/png"
 	"io"
@@ -184,7 +186,10 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		req.AppName = info.AppName
 	}
 
-	// Extract icon from APK
+	// Extract icon from APK. /dev/push marks `icon` as required for every
+	// synchroType (new app and update alike — only screenshots are
+	// new-app-only), and whatever we send replaces the icon on the
+	// console, so it must be the densest launcher icon available (#51).
 	rep.Phase("icon")
 	iconPath, err := extractIcon(req.FilePath)
 	if err != nil {
@@ -475,6 +480,15 @@ func fileMD5(path string) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
+// iconDensities lists the launcher-icon densities to request, densest
+// first. androidbinary resolves the icon resource for the requested
+// config: a zero density means mdpi and yields the 48px variant, which is
+// what used to overwrite the console's HD icon with a blurry one (#51).
+// 0xFFFE (anydpi) is deliberately not in the list — it resolves to the
+// adaptive-icon XML, which image.Decode can't read. Lower densities are
+// fallbacks for APKs that only ship an adaptive XML at the top end.
+var iconDensities = []uint16{640, 480, 320, 240, 160}
+
 func extractIcon(apkPath string) (string, error) {
 	pkg, err := apk.OpenFile(apkPath)
 	if err != nil {
@@ -482,9 +496,20 @@ func extractIcon(apkPath string) (string, error) {
 	}
 	defer pkg.Close()
 
-	icon, err := pkg.Icon(&androidbinary.ResTableConfig{Size: 512})
-	if err != nil {
-		return "", err
+	var (
+		icon image.Image
+		errs []error
+	)
+	for _, d := range iconDensities {
+		img, err := pkg.Icon(&androidbinary.ResTableConfig{Density: d})
+		if err == nil {
+			icon = img
+			break
+		}
+		errs = append(errs, fmt.Errorf("density %d: %w", d, err))
+	}
+	if icon == nil {
+		return "", errors.Join(errs...)
 	}
 
 	iconPath := filepath.Join(filepath.Dir(apkPath), "apkgo_icon_tmp.png")
