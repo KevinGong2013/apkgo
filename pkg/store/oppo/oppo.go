@@ -116,17 +116,27 @@ type errEnvelope struct {
 // so the caller still has something to print.
 func parseError(body []byte) string {
 	var probe struct {
-		Message string `json:"message,omitempty"`
-		Msg     string `json:"msg,omitempty"`
-		Data    struct {
-			Message string `json:"message,omitempty"`
-			Msg     string `json:"msg,omitempty"`
-		} `json:"data"`
+		Message string          `json:"message,omitempty"`
+		Msg     string          `json:"msg,omitempty"`
+		Data    json.RawMessage `json:"data,omitempty"`
 	}
 	_ = json.Unmarshal(body, &probe)
-	for _, candidate := range []string{probe.Message, probe.Msg, probe.Data.Message, probe.Data.Msg} {
+	for _, candidate := range []string{probe.Message, probe.Msg} {
 		if candidate != "" {
 			return candidate
+		}
+	}
+	if len(probe.Data) > 0 {
+		var dataProbe struct {
+			Message string `json:"message,omitempty"`
+			Msg     string `json:"msg,omitempty"`
+		}
+		if err := json.Unmarshal(probe.Data, &dataProbe); err == nil {
+			for _, candidate := range []string{dataProbe.Message, dataProbe.Msg} {
+				if candidate != "" {
+					return candidate
+				}
+			}
 		}
 	}
 	return strings.TrimSpace(string(body))
@@ -213,6 +223,9 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	app, err := s.queryApp(ctx, req.PackageName)
 	if err != nil {
 		return fmt.Errorf("query app: %w", err)
+	}
+	if app == nil {
+		return fmt.Errorf("query app: 未在 OPPO 开放平台该开发者账号下找到应用 %q（OPPO 开放接口仅支持版本更新，请先在 OPPO 开发者后台创建该应用并首发通过，或检查凭证是否匹配）", req.PackageName)
 	}
 
 	// Pre-declare the combined upload size so the bar is stable across
@@ -311,7 +324,7 @@ func (s *Store) queryApp(ctx context.Context, pkgName string) (*appData, error) 
 	data.Set("pkg_name", pkgName)
 	var resp struct {
 		errEnvelope
-		Data *appData `json:"data"`
+		Data json.RawMessage `json:"data"`
 	}
 	httpResp, err := s.client.R().
 		SetContext(ctx).
@@ -327,7 +340,16 @@ func (s *Store) queryApp(ctx context.Context, pkgName string) (*appData, error) 
 	if resp.Errno != 0 {
 		return nil, fmt.Errorf("[%d] %s", resp.Errno, parseError(httpResp.Body()))
 	}
-	return resp.Data, nil
+	// OPPO returns data: [] when no app is found under this developer account
+	trimmed := strings.TrimSpace(string(resp.Data))
+	if trimmed == "" || trimmed == "null" || trimmed == "[]" {
+		return nil, nil
+	}
+	var app appData
+	if err := json.Unmarshal(resp.Data, &app); err != nil {
+		return nil, fmt.Errorf("parse app data: %w", err)
+	}
+	return &app, nil
 }
 
 func (s *Store) uploadAPK(ctx context.Context, filePath string, rep progress.Reporter) (*uploadResultData, error) {
