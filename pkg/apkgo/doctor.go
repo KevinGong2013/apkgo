@@ -102,9 +102,9 @@ func Diagnose(ctx context.Context, job DiagnoseJob) (*DiagnoseResult, error) {
 		// pass --package explicitly. Probes that need it will report
 		// skip with a clear reason.
 		if !apk.IsAAB(apkPath) {
-			info, err := apk.Parse(apkPath)
+			info, err := parsePackage(apkPath)
 			if err != nil {
-				return nil, fmt.Errorf("parse apk: %w", err)
+				return nil, err
 			}
 			pkg = info.PackageName
 		}

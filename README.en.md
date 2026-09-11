@@ -101,6 +101,25 @@ apkgo upload -f app.apk --sandbox
 
 The vivo [sandbox environment](https://dev.vivo.com.cn/documentCenter/doc/327#s-l67kfh1m) has separate application data, `access_key`, and secrets from production. Follow the [online test environment instructions](https://dev.vivo.com.cn/documentCenter/doc/327#s-b9qi52f4) to create the application and request separate sandbox credentials first. Each sandbox API is limited to 100 calls per day.
 
+#### HarmonyOS (鸿蒙) release
+
+```bash
+# Upload the signed .app pack built by DevEco Studio to AppGallery (HarmonyOS)
+apkgo upload -f demo-default-signed.app -s harmony --notes "HarmonyOS 5 support"
+apkgo audit -f demo-default-signed.app -s harmony     # review status
+apkgo doctor -f demo-default-signed.app -s harmony    # credentials / app ID / release permission
+```
+
+The `harmony` store uses the AppGallery Connect HarmonyOS Publishing API and
+**reuses the huawei Service Account credentials** (one AGC account covers both
+Android and HarmonyOS apps): resolve the appId by bundleName
+(`packageTypes=7`) → `upload-url/for-obs` → PUT the `.app` → bind the package
+→ wait for AGC to parse it → submit for review. Only **`.app` packs** are
+accepted (AGC rejects bare `.hap` modules). When `-f` is a HarmonyOS package
+and no `-s` is given, Android stores are skipped automatically; naming one
+explicitly is an error. `--release-time` is supported; `--file64` and URL
+pass-through are not.
+
 ### Initialize config
 
 ```bash

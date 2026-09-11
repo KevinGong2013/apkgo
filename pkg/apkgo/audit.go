@@ -92,9 +92,9 @@ func QueryAudit(ctx context.Context, job AuditJob) (*AuditReport, error) {
 		// AABs can't be parsed for a package name; the operator must pass
 		// --package explicitly.
 		if !apk.IsAAB(apkPath) {
-			info, err := apk.Parse(apkPath)
+			info, err := parsePackage(apkPath)
 			if err != nil {
-				return nil, fmt.Errorf("parse apk: %w", err)
+				return nil, err
 			}
 			q.Package = info.PackageName
 			q.VersionName = info.VersionName

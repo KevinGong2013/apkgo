@@ -97,6 +97,17 @@ apkgo upload -f app.apk --dry-run
 apkgo upload -f app.apk --sandbox
 ```
 
+#### 鸿蒙（HarmonyOS）上架
+
+```bash
+# 上传 DevEco Studio 打出的签名 .app 整包到华为应用市场（鸿蒙）
+apkgo upload -f demo-default-signed.app -s harmony --notes "适配 HarmonyOS 5"
+apkgo audit -f demo-default-signed.app -s harmony     # 查询鸿蒙审核状态
+apkgo doctor -f demo-default-signed.app -s harmony    # 体检凭证 / 应用 ID / 上架权限
+```
+
+`harmony` 商店走 AppGallery Connect 的 HarmonyOS Publishing API，**复用 huawei 的 Service Account 凭证**（同一个 AGC 账号同时覆盖安卓与鸿蒙应用），流程为：按 bundleName 查 appId（`packageTypes=7`）→ `upload-url/for-obs` 取签名上传地址 → PUT 上传 `.app` → 绑定软件包 → 等待编译解析 → 提交审核。只接受 **`.app` 整包**（AGC 不接受单个 `.hap` 模块）；`-f` 为鸿蒙包时会自动跳过安卓商店（不传 `-s` 时），显式指定安卓商店则直接报错。支持 `--release-time` 定时发布，不支持 `--file64` 与 URL 直传。
+
 `--sandbox` 与 `--dry-run` 互斥。目前只有 vivo 支持沙箱：vivo 会真实调用沙箱 API，其他目标渠道执行与 `--dry-run` 相同的本地校验。沙箱运行不执行 hooks、不写上传历史、不触发生命周期事件回调，也不上报上传遥测。结果顶层包含 `"sandbox": true`，vivo 结果包含 `"sandbox": true`，其他渠道包含 `"dry_run": true`。
 
 vivo 的[沙箱环境](https://dev.vivo.com.cn/documentCenter/doc/327#s-l67kfh1m)与正式环境的应用数据、`access_key` 和密钥完全隔离；请按[在线测试环境说明](https://dev.vivo.com.cn/documentCenter/doc/327#s-b9qi52f4)先在沙箱创建应用并申请独立凭据。测试环境限制每个接口 100 次/天。
@@ -159,6 +170,13 @@ stores:
     # app_id: ""  # 可选，不填则自动通过包名查询
     before: "./scripts/before-huawei.sh"   # 可选，该商店上传前执行
     after: "./scripts/after-huawei.sh"     # 可选，该商店上传后执行
+
+  harmony:
+    # 鸿蒙（HarmonyOS）应用：凭证与 huawei 相同，可直接复用同一份 Service Account
+    service_account_file: "/secure/path/huawei-sa.json"
+    # app_id: ""                 # 可选，不填则按 bundleName 自动查询（仅匹配鸿蒙应用）
+    # lang: "zh-CN"              # 可选，更新日志写入的语言，默认取 AGC 里应用的默认语言
+    # chinese_mainland_flag: "1" # 可选，开发者注册地非中国大陆时 AGC 要求填写
 
   xiaomi:
     email: "your@email.com"

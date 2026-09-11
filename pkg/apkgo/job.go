@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -179,10 +180,25 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		return nil, fmt.Errorf("--file64 is for split-arch APKs only; AAB files are universal and cannot be split")
 	}
 
+	// HarmonyOS packages (.app / .hap) are zip archives with pack.info
+	// rather than an Android manifest; they get their own parser and can
+	// only go to HarmonyOS stores (see the platform check below).
+	isHarmony := apk.IsHarmony(apkPath)
+	if isHarmony && apk64Path != "" {
+		return nil, fmt.Errorf("--file64 is for split-arch APKs only; HarmonyOS packages cannot be split")
+	}
+
 	var info *apk.Info
-	if isAAB {
+	switch {
+	case isAAB:
 		info = &apk.Info{}
-	} else {
+	case isHarmony:
+		var err error
+		info, err = apk.ParseHarmony(apkPath)
+		if err != nil {
+			return nil, fmt.Errorf("parse harmony package: %w", err)
+		}
+	default:
 		var err error
 		info, err = apk.Parse(apkPath)
 		if err != nil {
@@ -204,7 +220,35 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 	if job.Sandbox {
 		environment = store.EnvironmentSandbox
 	}
-	storesWithHooks, err := job.Config.CreateStoresForEnvironment(job.Stores, environment)
+
+	// A HarmonyOS .app can only go to HarmonyOS stores and an APK/AAB only
+	// to Android stores. With no explicit -s the default "all configured
+	// stores" is narrowed to the file's platform (so one apkgo.yaml can
+	// hold both huawei and harmony); an explicit mismatch fails below.
+	filePlatform := store.PlatformAndroid
+	if isHarmony {
+		filePlatform = store.PlatformHarmony
+	}
+	requested := job.Stores
+	if len(requested) == 0 {
+		var skipped []string
+		for name := range job.Config.Stores {
+			if store.Platform(name) == filePlatform {
+				requested = append(requested, name)
+			} else {
+				skipped = append(skipped, name)
+			}
+		}
+		sort.Strings(requested)
+		if len(skipped) > 0 && len(requested) > 0 {
+			sort.Strings(skipped)
+			ctxlog.FromContext(ctx).Info("skipping stores of another platform", "platform", filePlatform, "skipped", skipped)
+		}
+		if len(requested) == 0 {
+			return nil, fmt.Errorf("no configured store accepts %s packages (configured: %v)", filePlatform, skipped)
+		}
+	}
+	storesWithHooks, err := job.Config.CreateStoresForEnvironment(requested, environment)
 	if err != nil {
 		return nil, err
 	}
@@ -254,6 +298,22 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 			ctxlog.FromContext(ctx).Warn("scheduled release not supported by some stores; they will publish immediately",
 				"release_time", job.ReleaseTime.Format(time.RFC3339), "stores", unsupported)
 		}
+	}
+
+	// Reject explicit platform mismatches up-front: letting the upload
+	// reach the wrong store produces inscrutable server-side errors
+	// mid-run, so fail fast with the offending names.
+	var wrongPlatform []string
+	for _, name := range storeNames {
+		if store.Platform(name) != filePlatform {
+			wrongPlatform = append(wrongPlatform, name)
+		}
+	}
+	if len(wrongPlatform) > 0 {
+		if isHarmony {
+			return nil, fmt.Errorf("HarmonyOS package upload targets %v which only accept Android APKs (use -s harmony)", wrongPlatform)
+		}
+		return nil, fmt.Errorf("APK upload targets %v which only accept HarmonyOS .app packages (use -s to pick Android stores)", wrongPlatform)
 	}
 
 	// Reject AAB up-front for stores that don't accept it — Chinese
@@ -382,4 +442,22 @@ func sandboxResults(storeNames []string, sandboxCapable []bool, uploadResults []
 		results[i] = &store.UploadResult{Store: name, Success: true, DryRun: true}
 	}
 	return results
+}
+
+// parsePackage reads package metadata from an APK or a HarmonyOS
+// .app/.hap, picking the parser by extension. AABs can't be parsed
+// locally; callers handle them separately.
+func parsePackage(path string) (*apk.Info, error) {
+	if apk.IsHarmony(path) {
+		info, err := apk.ParseHarmony(path)
+		if err != nil {
+			return nil, fmt.Errorf("parse harmony package: %w", err)
+		}
+		return info, nil
+	}
+	info, err := apk.Parse(path)
+	if err != nil {
+		return nil, fmt.Errorf("parse apk: %w", err)
+	}
+	return info, nil
 }
