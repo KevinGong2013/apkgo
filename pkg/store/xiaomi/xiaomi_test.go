@@ -342,3 +342,19 @@ func TestExtractIconPicksDensestLauncherIcon(t *testing.T) {
 		t.Errorf("extracted icon is %dx%d, want 192x192 (xxxhdpi)", cfg.Width, cfg.Height)
 	}
 }
+
+func TestNewWithDefaultCert(t *testing.T) {
+	s, err := New(map[string]string{
+		"email":       "dev@example.com",
+		"private_key": "secret",
+	})
+	if err != nil {
+		t.Fatalf("New with default cert failed: %v", err)
+	}
+	if s.pubKey == nil {
+		t.Fatal("expected pubKey to be loaded from defaultCertPEM")
+	}
+	if s.pubKey.N.BitLen() != 1024 {
+		t.Errorf("got key size %d, want 1024", s.pubKey.N.BitLen())
+	}
+}

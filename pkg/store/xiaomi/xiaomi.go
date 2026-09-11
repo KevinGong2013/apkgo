@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
@@ -36,6 +37,9 @@ import (
 	"github.com/KevinGong2013/apkgo/v3/pkg/store"
 )
 
+//go:embed dev.api.public.cer
+var defaultCertPEM []byte
+
 const xiaomiBaseURL = "https://api.developer.xiaomi.com/devupload"
 
 func init() {
@@ -46,8 +50,8 @@ func init() {
 		Fields: []store.FieldSchema{
 			{Key: "email", Required: true, Desc: "Xiaomi developer account email (mapped to userName)"},
 			{Key: "private_key", Required: true, Desc: "Xiaomi API private key (the value the upload SDK calls 'password')"},
-			{Key: "cert", Required: false, Desc: "Xiaomi public key certificate (raw PEM or base64); required unless cert_file is set"},
-			{Key: "cert_file", Required: false, Desc: "Path to Xiaomi public key certificate file (.cer/.pem)"},
+			{Key: "cert", Required: false, Desc: "Xiaomi public key certificate (raw PEM or base64); optional, defaults to built-in dev.api.public.cer"},
+			{Key: "cert_file", Required: false, Desc: "Path to Xiaomi public key certificate file (.cer/.pem); optional, defaults to built-in dev.api.public.cer"},
 		},
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
@@ -124,14 +128,14 @@ func New(cfg map[string]string) (*Store, error) {
 
 	certInline := strings.TrimSpace(cfg["cert"])
 	certFile := strings.TrimSpace(cfg["cert_file"])
-	if certInline == "" && certFile == "" {
-		return nil, fmt.Errorf("xiaomi: configure cert or cert_file (download the public-key certificate from dev.mi.com)")
-	}
 	pubKey, err := func() (*rsa.PublicKey, error) {
 		if certInline != "" {
 			return loadCert(certInline)
 		}
-		return loadCertFromFile(certFile)
+		if certFile != "" {
+			return loadCertFromFile(certFile)
+		}
+		return loadCert(string(defaultCertPEM))
 	}()
 	if err != nil {
 		return nil, fmt.Errorf("load xiaomi public key: %w", err)
@@ -394,8 +398,8 @@ func (s *Store) encode(params map[string]any, files []sigFile) url.Values {
 //   - the raw PEM-encoded X.509 certificate (string contains "-----BEGIN"), or
 //   - inline base64-encoded PEM (handy for env vars / CI secrets)
 //
-// and returns the embedded RSA public key. The Xiaomi developer console
-// distributes this cert per-account; there is no global default any more.
+// and returns the embedded RSA public key. If neither cert nor cert_file is
+// configured, the embedded dev.api.public.cer is used by default.
 func loadCert(raw string) (*rsa.PublicKey, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

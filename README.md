@@ -180,8 +180,8 @@ stores:
 
   xiaomi:
     email: "your@email.com"
-    private_key: "your-private-key"             # 小米后台的「接口密钥」（被 SDK 当作 password 使用）
-    cert_file: "/secure/path/xiaomi-pubkey.cer" # 公钥证书（也支持 cert: <PEM 内容> 或 cert: <base64>）
+    private_key: "your-private-key"               # 小米后台的「接口密钥」（被 SDK 当作 password 使用）
+    # cert_file: "/secure/path/xiaomi-pubkey.cer" # 可选，默认使用内置公钥证书（也支持 cert: <PEM 内容> 或 cert: <base64>）
 
   oppo:
     client_id: "your-client-id"        # 19 位数字

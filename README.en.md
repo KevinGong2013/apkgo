@@ -178,8 +178,8 @@ stores:
 
   xiaomi:
     email: "your@email.com"
-    private_key: "your-private-key"             # the value Xiaomi's console calls "interface key" (used as `password` by their SDK)
-    cert_file: "/secure/path/xiaomi-pubkey.cer" # public-key certificate (also accepts cert: <PEM> or cert: <base64>)
+    private_key: "your-private-key"                 # the value Xiaomi's console calls "interface key" (used as `password` by their SDK)
+    # cert_file: "/secure/path/xiaomi-pubkey.cer"   # optional, defaults to built-in dev.api.public.cer (also accepts cert: <PEM> or cert: <base64>)
 
   oppo:
     client_id: "your-client-id"        # 19-digit number
@@ -387,22 +387,21 @@ Three probes: `token` / `appid-list` (package name → appId) / `release-permiss
 
 📖 Official docs: [API upload](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1134)
 
-From the Xiaomi console's "interface key" page you need two things: the **interface key** (called `password` inside the SDK) and the **public-key certificate** (`.cer` file). Both are bound to the developer account.
+From the Xiaomi console's "interface key" page you need the **interface key** (called `password` inside the SDK). The **public-key certificate** defaults to the built-in official Xiaomi certificate (`dev.api.public.cer`, valid through 2123), but can be customized via `cert_file` or `cert`.
 
 ```yaml
 stores:
   xiaomi:
     email: "<developer account email>"
     private_key: "<interface key>"
-    cert_file: "/secure/path/xiaomi-pubkey.cer"
+    # optional: defaults to built-in dev.api.public.cer
+    # cert_file: "/secure/path/xiaomi-pubkey.cer"
     # also accepted: cert: "-----BEGIN CERTIFICATE-----..." or base64(.cer)
 ```
 
 ```bash
 apkgo doctor -s xiaomi -p com.example.app
 ```
-
-> ⚠️ Pre-v3.0 versions shipped a built-in public-key certificate, but it **expired in 2023-05** (and its origin was unclear). From v3.0 onward you must provide your own.
 
 #### OPPO Open Platform
 
