@@ -13,6 +13,7 @@ import (
 	// Import all store packages to trigger init() registration.
 	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/fir"
 	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/googleplay"
+	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/harmony"
 	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/honor"
 	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/huawei"
 	_ "github.com/KevinGong2013/apkgo/v3/pkg/store/meizu"

@@ -129,7 +129,19 @@ type ConfigSchema struct {
 	// against an isolated sandbox environment. In sandbox runs, stores
 	// without this capability are validated as dry-runs instead.
 	SupportsSandbox bool `json:"supports_sandbox,omitempty"`
+	// Platform names the package platform the store accepts. Empty (the
+	// default) means Android (.apk, plus .aab where AcceptsAAB is set);
+	// PlatformHarmony means the store takes HarmonyOS .app packs only.
+	// apkgo refuses up-front to send a package to a store of the wrong
+	// platform, and orchestrators use it to group stores per app platform.
+	Platform string `json:"platform,omitempty"`
 }
+
+// Platform values for ConfigSchema.Platform.
+const (
+	PlatformAndroid = "android"
+	PlatformHarmony = "harmony"
+)
 
 type FieldSchema struct {
 	Key      string `json:"key"`

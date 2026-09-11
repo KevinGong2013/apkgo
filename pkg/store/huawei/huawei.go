@@ -24,13 +24,9 @@ func init() {
 		ConsoleURL:               "https://developer.huawei.com/consumer/cn/doc/AppGallery-connect-Guides/agcapi-getstarted-0000001111845114#section1785535363715",
 		SupportsScheduledRelease: true,
 		SupportsURLPush:          true,
-		Fields: []store.FieldSchema{
-			{Key: "service_account", Required: false, Desc: "Service Account credential JSON (raw or base64); recommended"},
-			{Key: "service_account_file", Required: false, Desc: "Path to Service Account credential JSON file"},
-			{Key: "client_id", Required: false, Desc: "[deprecated] API client ID — Huawei is migrating to Service Account"},
-			{Key: "client_secret", Required: false, Desc: "[deprecated] API client secret"},
-			{Key: "app_id", Required: false, Desc: "Huawei app ID (auto-detected from package name if omitted)"},
-		},
+		Fields: append(append([]store.FieldSchema{}, CredentialFields...),
+			store.FieldSchema{Key: "app_id", Required: false, Desc: "Huawei app ID (auto-detected from package name if omitted)"},
+		),
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
@@ -129,33 +125,55 @@ func mapHuaweiReleaseState(state int) (store.AuditState, string) {
 	}
 }
 
-// authMode reflects which credential type is in effect; used by diagnostics.
-type authMode int
+// AuthMode reflects which AGC credential type is in effect; used by
+// diagnostics (and by the harmony store, which shares this auth).
+type AuthMode int
 
 const (
-	authNone authMode = iota
-	authServiceAccount
-	authClientCredentials
+	AuthNone AuthMode = iota
+	AuthServiceAccount
+	AuthClientCredentials
 )
 
-type Store struct {
-	client      *resty.Client
-	clientID    string // for client_credentials mode; empty under service_account
-	configAppID string
-	mode        authMode
+// String renders the mode for `apkgo doctor` output.
+func (m AuthMode) String() string {
+	switch m {
+	case AuthServiceAccount:
+		return "service_account (PS256 JWT)"
+	case AuthClientCredentials:
+		return "client_credentials (deprecated by Huawei)"
+	}
+	return "unknown"
 }
 
-func New(cfg map[string]string) (*Store, error) {
+// APIBase is the AppGallery Connect API host shared by the Android
+// (huawei) and HarmonyOS (harmony) stores.
+const APIBase = "https://connect-api.cloud.huawei.com"
+
+// CredentialFields is the AGC credential schema shared by the huawei and
+// harmony stores: one AGC Service Account (or legacy API client) covers
+// both Android and HarmonyOS apps in the same developer account.
+var CredentialFields = []store.FieldSchema{
+	{Key: "service_account", Required: false, Desc: "Service Account credential JSON (raw or base64); recommended"},
+	{Key: "service_account_file", Required: false, Desc: "Path to Service Account credential JSON file"},
+	{Key: "client_id", Required: false, Desc: "[deprecated] API client ID — Huawei is migrating to Service Account"},
+	{Key: "client_secret", Required: false, Desc: "[deprecated] API client secret"},
+}
+
+// NewClient builds an authenticated AGC API client from the shared
+// credential keys (service_account / service_account_file, or the
+// deprecated client_id + client_secret pair). The returned client carries
+// the bearer token (and client_id header where applicable) and targets
+// APIBase, so callers only need the /api/... path.
+func NewClient(cfg map[string]string) (*resty.Client, AuthMode, error) {
 	saInline := strings.TrimSpace(cfg["service_account"])
 	saFile := strings.TrimSpace(cfg["service_account_file"])
 	clientID := strings.TrimSpace(cfg["client_id"])
 	clientSecret := strings.TrimSpace(cfg["client_secret"])
 
 	client := resty.New().
-		SetBaseURL("https://connect-api.cloud.huawei.com").
+		SetBaseURL(APIBase).
 		SetHeader("Content-Type", "application/json")
-
-	s := &Store{client: client, configAppID: cfg["app_id"]}
 
 	switch {
 	case saInline != "" || saFile != "":
@@ -166,30 +184,47 @@ func New(cfg map[string]string) (*Store, error) {
 			return loadServiceAccountFromFile(saFile)
 		}()
 		if err != nil {
-			return nil, fmt.Errorf("auth: %w", err)
+			return nil, AuthNone, fmt.Errorf("auth: %w", err)
 		}
 		jwt, err := signJWT(sa, key, time.Now())
 		if err != nil {
-			return nil, fmt.Errorf("auth: sign jwt: %w", err)
+			return nil, AuthNone, fmt.Errorf("auth: sign jwt: %w", err)
 		}
 		// Per Huawei docs the signed JWT IS the access token. No client_id
 		// header needed.
 		client.SetAuthToken(jwt)
-		s.mode = authServiceAccount
+		return client, AuthServiceAccount, nil
 	case clientID != "" && clientSecret != "":
-		token, err := s.getToken(clientID, clientSecret)
+		token, err := getToken(client, clientID, clientSecret)
 		if err != nil {
-			return nil, fmt.Errorf("auth: %w", err)
+			return nil, AuthNone, fmt.Errorf("auth: %w", err)
 		}
 		client.SetAuthToken(token)
 		client.SetHeader("client_id", clientID)
-		s.clientID = clientID
-		s.mode = authClientCredentials
+		return client, AuthClientCredentials, nil
 	default:
-		return nil, fmt.Errorf("huawei: configure service_account (recommended) or client_id+client_secret")
+		return nil, AuthNone, fmt.Errorf("configure service_account (recommended) or client_id+client_secret")
 	}
+}
 
-	return s, nil
+type Store struct {
+	client      *resty.Client
+	clientID    string // for client_credentials mode; empty under service_account
+	configAppID string
+	mode        AuthMode
+}
+
+func New(cfg map[string]string) (*Store, error) {
+	client, mode, err := NewClient(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("huawei: %w", err)
+	}
+	return &Store{
+		client:      client,
+		clientID:    strings.TrimSpace(cfg["client_id"]),
+		configAppID: cfg["app_id"],
+		mode:        mode,
+	}, nil
 }
 
 func (s *Store) Name() string { return "huawei" }
@@ -277,7 +312,7 @@ func (s *Store) updateAppInfo(appID, releaseNotes string) error {
 // it returns `{"ret":{"code":<int>,"msg":"<string>"}}` with HTTP 200.
 // The struct field for ret must therefore be the object form, not a
 // string — otherwise unmarshaling masks the real error message.
-func (s *Store) getToken(clientID, clientSecret string) (string, error) {
+func getToken(client *resty.Client, clientID, clientSecret string) (string, error) {
 	var resp struct {
 		AccessToken string `json:"access_token"`
 		Ret         struct {
@@ -285,7 +320,7 @@ func (s *Store) getToken(clientID, clientSecret string) (string, error) {
 			Msg  string `json:"msg"`
 		} `json:"ret"`
 	}
-	httpResp, err := s.client.R().
+	httpResp, err := client.R().
 		SetBody(map[string]string{
 			"client_id":     clientID,
 			"client_secret": clientSecret,
@@ -670,14 +705,7 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 		probes = append(probes, store.Probe{Name: "token", Status: "fail", Error: err.Error()})
 		return probes
 	}
-	mode := "unknown"
-	switch s.mode {
-	case authServiceAccount:
-		mode = "service_account (PS256 JWT)"
-	case authClientCredentials:
-		mode = "client_credentials (deprecated by Huawei)"
-	}
-	probes = append(probes, store.Probe{Name: "token", Status: "ok", Detail: "auth mode: " + mode})
+	probes = append(probes, store.Probe{Name: "token", Status: "ok", Detail: "auth mode: " + s.mode.String()})
 
 	if hint.Package == "" {
 		probes = append(probes,

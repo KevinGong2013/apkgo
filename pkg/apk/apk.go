@@ -14,6 +14,10 @@ import (
 
 // Info holds metadata extracted from an APK file.
 type Info struct {
+	// Platform is "android" for APK/AAB input and "harmony" for HarmonyOS
+	// .app/.hap packages (see ParseHarmony). Empty on AAB input, whose
+	// metadata isn't parsed locally.
+	Platform    string `json:"platform,omitempty"`
 	PackageName string `json:"package"`
 	VersionName string `json:"version_name"`
 	VersionCode int32  `json:"version_code"`
@@ -42,6 +46,7 @@ func Parse(path string) (*Info, error) {
 	appName := defaultLabel(pkg)
 
 	return &Info{
+		Platform:    PlatformAndroid,
 		PackageName: pkg.PackageName(),
 		VersionName: pkg.Manifest().VersionName.MustString(),
 		VersionCode: pkg.Manifest().VersionCode.MustInt32(),

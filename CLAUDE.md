@@ -30,13 +30,13 @@ on its own context like `doctor`. `--watch [--interval 30s]` loops until every
 store reaches a terminal state (approved / rejected / withdrawn) or the global
 `-t` timeout. Each store's status is normalised to a unified `state`
 (reviewing / approved / rejected / withdrawn / unknown) with the raw label in
-`detail`. Supported: **tencent, huawei, honor, vivo, oppo, samsung, meizu**
+`detail`. Supported: **tencent, huawei, harmony, honor, vivo, oppo, samsung, meizu**
 (stores with a review-status API; others report "audit not supported").
 
 ## Upload flags
 
 ```
--f, --file         APK or AAB file path (required; .aab is googleplay-only)
+-f, --file         APK, AAB or HarmonyOS .app file path (required; .aab is googleplay-only, .app is harmony-only)
     --file64       64-bit APK for split-arch uploads
 -s, --store        Comma-separated store names (default: all configured)
 -n, --notes        Release notes text
@@ -62,7 +62,7 @@ Results explicitly mark vivo with `sandbox: true` and other stores with
 
 Schedules a timed release instead of going live immediately after review.
 Value is RFC3339 **with a timezone offset** and must be in the future.
-Supported stores: **huawei, honor, xiaomi, oppo, vivo, samsung, tencent**
+Supported stores: **huawei, harmony, honor, xiaomi, oppo, vivo, samsung, tencent**
 (see `supports_scheduled_release` in `apkgo stores`). Stores that can't
 schedule (googleplay, pgyer, fir, script) log a warning and release
 immediately. Each store maps the instant to its own field/format
@@ -88,9 +88,25 @@ others always upload. apkgo still fetches the APK once locally for metadata.
   when the APK is at least `url_push_min_mb` MB (default 100); smaller APKs
   upload directly. huawei and vivo URL-push whenever the source is a URL.
 
+### HarmonyOS packages (`harmony` store)
+
+`-f` also accepts a HarmonyOS `.app` App Pack (or `.hap` module for
+`audit`/`doctor` metadata). `pkg/apk.ParseHarmony` reads bundleName /
+versionCode / versionName from `pack.info` and resolves the label
+best-effort from the entry HAP's `module.json` + `resources.index`;
+`Info.Platform` is `"harmony"` (vs `"android"`). Every `ConfigSchema` carries
+a `Platform` (`store.Platform(name)`); the `harmony` store is the only
+`harmony`-platform one and shares `huawei.CredentialFields` /
+`huawei.NewClient` (same AGC Service Account). Upload flow: appid-list
+(`packageTypes=7`) → `upload-url/for-obs` + signed PUT → `v3/app-package-info`
+→ `v3/app-language-info` (notes) → poll `v3/package/compile/status` →
+`v3/app-submit`. AGC only accepts `.app` packs, so the store rejects `.hap`
+with `config_invalid`. Without `-s`, the default store set is narrowed to the
+file's platform; an explicit cross-platform target fails before any upload.
+
 ## Supported stores
 
-huawei, xiaomi, oppo, vivo, honor, meizu, tencent, googleplay, samsung, pgyer, fir, script
+huawei, harmony (HarmonyOS), xiaomi, oppo, vivo, honor, meizu, tencent, googleplay, samsung, pgyer, fir, script
 
 ## Output format
 

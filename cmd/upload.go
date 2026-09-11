@@ -33,12 +33,12 @@ var (
 )
 
 func init() {
-	uploadCmd.Flags().StringVarP(&flagFile, "file", "f", "", "APK or AAB file path or http(s) URL (required; .aab is googleplay-only)")
+	uploadCmd.Flags().StringVarP(&flagFile, "file", "f", "", "APK, AAB or HarmonyOS .app file path or http(s) URL (required; .aab is googleplay-only, .app is harmony-only)")
 	uploadCmd.Flags().StringVar(&flagFile64, "file64", "", "64-bit APK file path or http(s) URL (for split-arch uploads)")
 	uploadCmd.Flags().StringVarP(&flagStore, "store", "s", "", "comma-separated store names (default: all configured)")
 	uploadCmd.Flags().StringVarP(&flagNotes, "notes", "n", "", "release notes (text)")
 	uploadCmd.Flags().StringVar(&flagNotesFile, "notes-file", "", "read release notes from file (overrides --notes)")
-	uploadCmd.Flags().StringVar(&flagReleaseTime, "release-time", "", "schedule a timed release (定时发布) at an RFC3339 time, e.g. 2026-06-20T10:00:00+08:00 (supported: huawei,honor,xiaomi,oppo,vivo,samsung,tencent; others release immediately)")
+	uploadCmd.Flags().StringVar(&flagReleaseTime, "release-time", "", "schedule a timed release (定时发布) at an RFC3339 time, e.g. 2026-06-20T10:00:00+08:00 (supported: huawei,harmony,honor,xiaomi,oppo,vivo,samsung,tencent; others release immediately)")
 	uploadCmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "validate config and APK without uploading")
 	uploadCmd.Flags().BoolVar(&flagSandbox, "sandbox", false, "upload to supported store sandboxes; dry-run all other stores")
 	uploadCmd.Flags().StringArrayVar(&flagFetchHeaders, "fetch-header", nil, `extra HTTP header for URL fetches (repeatable; "Name: value")`)

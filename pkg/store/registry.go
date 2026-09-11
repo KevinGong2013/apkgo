@@ -124,6 +124,18 @@ func SupportsURLPush(name string) bool {
 	return ok && e.schema.SupportsURLPush
 }
 
+// Platform reports the package platform the named store accepts —
+// PlatformHarmony for HarmonyOS-only stores, PlatformAndroid otherwise
+// (including for unknown names, so callers can treat the answer as a
+// plain string compare). Same "type.instance" resolution as AcceptsAAB.
+func Platform(name string) string {
+	e, _, ok := lookup(name)
+	if ok && e.schema.Platform != "" {
+		return e.schema.Platform
+	}
+	return PlatformAndroid
+}
+
 // SupportsSandbox reports whether the named store has an isolated sandbox
 // API. Unknown stores and regular production-only stores return false.
 func SupportsSandbox(name string) bool {
