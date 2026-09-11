@@ -54,16 +54,27 @@ func Parse(path string) (*Info, error) {
 	}, nil
 }
 
-// defaultLabel returns the application label from the APK's default
-// (base values/) resources. Label(nil) must not be used here: a nil
-// config matches every locale variant and androidbinary then prefers
-// the most specific one, so an APK shipping e.g. values-zh-rTW/
-// translations resolves to the Traditional Chinese name instead of the
-// default label — which stores that accept appName (e.g. xiaomi) then
-// write over the store listing. The zero-value config matches only
-// locale-less entries, i.e. the base values/ label; if the base has no
-// label at all, fall back to whatever variant matches.
+// zhCNConfig specifies Simplified Chinese (zh-CN) locale.
+var zhCNConfig = &androidbinary.ResTableConfig{
+	Language: [2]uint8{'z', 'h'},
+	Country:  [2]uint8{'C', 'N'},
+}
+
+// defaultLabel returns the application label extracted from the APK.
+// Because apkgo targets Chinese app stores, it first queries with a
+// Simplified Chinese locale (zh-CN). If the APK defines a zh-CN or zh
+// resource (like an i18n app whose base values/ is English), that is
+// preferred. If there is no Chinese resource, it falls back to the base
+// values/ label (zero-value config), and finally to whatever variant matches.
+//
+// Label(nil) must not be used as first choice: a nil config matches every
+// locale variant and androidbinary then prefers the most specific one,
+// so an APK shipping e.g. values-zh-rTW/ translations resolves to the
+// Traditional Chinese name (#48).
 func defaultLabel(pkg *apk.Apk) string {
+	if s, err := pkg.Label(zhCNConfig); err == nil && s != "" {
+		return s
+	}
 	if s, err := pkg.Label(&androidbinary.ResTableConfig{}); err == nil && s != "" {
 		return s
 	}
