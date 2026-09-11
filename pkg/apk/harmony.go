@@ -84,7 +84,10 @@ func ParseHarmony(path string) (*Info, error) {
 	if pi.Summary.App.BundleName == "" {
 		return nil, fmt.Errorf("parse harmony package: pack.info has no summary.app.bundleName")
 	}
-	code, _ := strconv.ParseInt(pi.Summary.App.Version.Code.String(), 10, 64)
+	code, err := strconv.ParseInt(pi.Summary.App.Version.Code.String(), 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("parse harmony package: invalid summary.app.version.code: %w", err)
+	}
 
 	info := &Info{
 		Platform:    PlatformHarmony,
