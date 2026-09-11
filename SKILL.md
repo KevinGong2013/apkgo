@@ -1,7 +1,7 @@
 ---
 name: apkgo
 version: "2026.07.27"
-description: The apkgo-cloud CLI and distribution skill. Install the apkgo-cloud CLI (one-line installer, browser login, no local store secrets), then `preview` an APK to get a public 内测 download link (share it, anyone can install), `release` to distribute to Android app stores (Huawei, Xiaomi, OPPO, vivo, Honor, Meizu, Tencent, Google Play, Samsung, Pgyer, fir.im), or `submit-copyright` to hand off 软著 (software copyright) materials for filing. Use this when the user already knows what they want to do and just needs the tool. If a developer publishing for the first time says 「开始上架」 or doesn't know where to start, use the `apkgo-start-publishing` skill instead — it assesses their situation and routes them. A REST Open API (X-API-Key, curl) is available as a fallback for CI/CD.
+description: The apkgo-cloud CLI and distribution skill. Install the apkgo-cloud CLI (one-line installer, browser login, no local store secrets), then `preview` an APK to get a public 内测 download link (share it, anyone can install), `release` to distribute to Android app stores (Huawei, Xiaomi, OPPO, vivo, Honor, Meizu, Tencent, Google Play, Samsung, Pgyer, fir.im), the Apple App Store (.ipa) and HarmonyOS 鸿蒙 AppGallery (.app), or `submit-copyright` to hand off 软著 (software copyright) materials for filing. Use this when the user already knows what they want to do and just needs the tool. If a developer publishing for the first time says 「开始上架」 or doesn't know where to start, use the `apkgo-start-publishing` skill instead — it assesses their situation and routes them. A REST Open API (X-API-Key, curl) is available as a fallback for CI/CD.
 ---
 
 <!-- Canonical source: apkgo-cloud repo, web/public/skill.md — served at
@@ -22,7 +22,7 @@ Hosted at **`https://apkgo.baici.tech`**. Store credentials are encrypted server
 Use this skill when the user wants to:
 
 - Get a **public 内测 (beta) download link** for an APK they can send to testers → `preview`
-- **Distribute/publish/release** an APK to Android app stores (Huawei, Xiaomi, OPPO, vivo, Honor, Meizu, Tencent, Google Play, Samsung, Pgyer, fir.im) → `release`
+- **Distribute/publish/release** an APK to Android app stores (Huawei, Xiaomi, OPPO, vivo, Honor, Meizu, Tencent, Google Play, Samsung, Pgyer, fir.im), an .ipa to the App Store, or a HarmonyOS 鸿蒙 `.app` pack to AppGallery → `release`
 - Just finished building an app and says **「开始上架」 / "help me publish my first app"** → use the `apkgo-start-publishing` skill instead — it assesses the user's situation (账号/软著/备案) and routes them
 - File a **软著 (software copyright)** application → `submit-copyright`
 - Automate distribution in **CI/CD** without shipping store secrets → [Open API](#open-api--cicd-fallback)
@@ -102,7 +102,9 @@ Come back here once they reach the actual distribution step — that's what `rel
 
 ## Supported stores
 
-huawei, xiaomi, oppo, vivo, honor, meizu, tencent, googleplay, samsung, pgyer, fir
+huawei, xiaomi, oppo, vivo, honor, meizu, tencent, googleplay, samsung, pgyer, fir, appstore (iOS .ipa), harmony (HarmonyOS 鸿蒙 .app)
+
+HarmonyOS notes: `harmony` reuses the huawei AGC Service Account (add a「鸿蒙」store account with the same JSON); it only accepts the signed **`.app` App Pack** from DevEco Studio (Build → Build APP(s)), not a bare `.hap`. The app must exist in AppGallery Connect as a HarmonyOS app (same bundleName) with category / privacy policy / content rating filled in; the platform picks the HarmonyOS app automatically from the file extension. `preview` (内测分发) is Android APK only.
 
 ## CLI command reference
 
