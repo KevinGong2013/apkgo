@@ -91,7 +91,21 @@ apkgo upload -f app.apk --dry-run
 
 # Upload vivo to its sandbox; dry-run every other store
 apkgo upload -f app.apk --sandbox
+
+# Upload straight from an http(s) URL (fetched to a temp file; add headers for private URLs, repeatable)
+apkgo upload -f https://artifacts.example.com/app-v1.apk --store huawei
+apkgo upload -f https://private.example.com/app.apk --fetch-header "Authorization: Bearer xxx"
+
+# Scheduled release (RFC3339 time)
+apkgo upload -f app.apk --release-time 2026-06-20T10:00:00+08:00
+
+# Google Play AAB (.aab only goes to googleplay)
+apkgo upload -f app-release.aab -s googleplay
 ```
+
+- When `-f` is a URL, huawei / honor / vivo have the store pull the package from that URL directly (honor only for files ≥ `url_push_min_mb`, default 100 MB); other stores get it downloaded and uploaded by apkgo.
+- `--release-time` is supported by huawei, harmony, honor, xiaomi, oppo, vivo, samsung and tencent; other stores release immediately.
+- File types: `.apk` goes to every Android store; `.aab` is googleplay-only; a HarmonyOS `.app` is harmony-only.
 
 `--sandbox` and `--dry-run` are mutually exclusive. vivo is currently the only sandbox-capable store: it makes real sandbox API calls, while every other target receives the same local validation as `--dry-run`. Sandbox runs skip all hooks, upload history, lifecycle event callbacks, and upload telemetry. The top-level result contains `"sandbox": true`; the vivo result contains `"sandbox": true`; other stores contain `"dry_run": true`.
 
@@ -116,6 +130,19 @@ and no `-s` is given, Android stores are skipped automatically; naming one
 explicitly is an error. `--release-time` is supported; `--file64` and URL
 pass-through are not.
 
+### Review status
+
+A successful upload only means "submitted (in review)". Query the review outcome separately with `audit`:
+
+```bash
+apkgo audit -p com.example.app
+apkgo audit -f app.apk -s tencent,huawei
+# Poll until every store resolves (approved / rejected / withdrawn) or -t elapses
+apkgo audit -p com.example.app --watch --interval 1m -t 1h
+```
+
+Supported today: huawei, harmony, honor, xiaomi, oppo, vivo, meizu, tencent, samsung.
+
 ### Initialize config
 
 ```bash
@@ -133,6 +160,9 @@ apkgo init -c production.yaml
 
 ```bash
 apkgo stores
+
+# Print only the store names in the current config (no credentials) using the built-in YAML parser
+apkgo -c apkgo.yaml stores --configured
 ```
 
 ### Doctor (validate store credentials)
@@ -151,13 +181,16 @@ apkgo doctor -s huawei -p com.example.app
 apkgo doctor -s huawei -f app.apk         # auto-extract package from APK
 ```
 
-Exit code is 1 if any probe fails. Huawei is fully supported today; the other stores currently report `doctor not implemented`.
+Exit code is 1 if any probe fails. Every store except googleplay and script is supported; unimplemented ones report `doctor not implemented`.
 
 ## Configuration file
 
 `apkgo.yaml`:
 
 ```yaml
+# Optional: how often to check for a new apkgo release, e.g. "30d", "7d"; "0" disables
+# update_check: "7d"
+
 # hooks are optional; omit if you don't need them
 hooks:
   before: "./scripts/validate.sh"          # runs before any upload
@@ -171,6 +204,14 @@ stores:
     # app_id: ""  # optional, auto-detected from package name when omitted
     before: "./scripts/before-huawei.sh"   # optional, runs before this store's upload
     after: "./scripts/after-huawei.sh"     # optional, runs after this store's upload
+    timeout: 8m                            # optional, per-store timeout (overrides the global --timeout)
+
+  harmony:
+    # HarmonyOS apps: same credentials as huawei — reuse the same Service Account
+    service_account_file: "/secure/path/huawei-sa.json"
+    # app_id: ""                 # optional, resolved by bundleName (HarmonyOS apps only)
+    # lang: "zh-CN"              # optional, release-notes language; defaults to the app's default language in AGC
+    # chinese_mainland_flag: "1" # optional, required by AGC when the developer is registered outside mainland China
 
   xiaomi:
     email: "your@email.com"
@@ -190,7 +231,8 @@ stores:
   honor:
     client_id: "your-client-id"
     client_secret: "your-client-secret"
-    app_id: "your-app-id"
+    # app_id: ""             # optional, resolved by package name when omitted
+    # url_push_min_mb: "100" # optional, with -f <URL> only files ≥ this size (MB) are pulled by honor from the URL
 
   meizu:
     client_id: "your-client-id"       # Meizu open platform client credential
@@ -201,6 +243,16 @@ stores:
     access_secret: "your-access-secret"
     app_id: "your-app-id"
     # Multi-app: app_id_map: '{"com.foo":"111","com.bar":"222"}'
+
+  samsung:
+    service_account_id: "your-service-account-id"  # Seller Portal service account ID
+    private_key: "-----BEGIN PRIVATE KEY-----..."   # RSA private key (PEM) from Seller Portal
+    content_id: "your-content-id"                  # the app's content ID in Galaxy Store
+
+  googleplay:
+    json_key_file: "/secure/path/play-sa.json"     # service account JSON key
+    package_name: "com.example.app"
+    # track: "production"  # optional: production (default) / beta / alpha / internal
 
   pgyer:
     api_key: "your-pgyer-api-key"
@@ -227,13 +279,15 @@ Hooks are optional; if not configured they don't run. Hook scripts receive a JSO
 - `after` hook fails → logged as a warning, result is unaffected
 - Auto-injected env vars: `APKGO_STORE`, `APKGO_PACKAGE`, `APKGO_VERSION`
 - stderr output is captured as the error message
+- Run via `sh -c` (`cmd /C` on Windows)
+- `apk.platform` is `android` (APK/AAB) or `harmony` (HarmonyOS `.app`)
 
 **Global before hook** (`hooks.before`) stdin:
 
 ```json
 {
   "file_path": "/path/to/app.apk",
-  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "apk": {"platform": "android", "package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
   "stores": ["huawei", "xiaomi"]
 }
 ```
@@ -243,10 +297,10 @@ Hooks are optional; if not configured they don't run. Hook scripts receive a JSO
 ```json
 {
   "file_path": "/path/to/app.apk",
-  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "apk": {"platform": "android", "package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
   "results": [
-    {"store": "huawei", "success": true, "duration_ms": 12300},
-    {"store": "xiaomi", "success": false, "error": "auth failed", "duration_ms": 400}
+    {"store": "huawei", "success": true, "category": "success", "duration_ms": 12300},
+    {"store": "xiaomi", "success": false, "error": "auth failed", "category": "auth_failed", "duration_ms": 400}
   ]
 }
 ```
@@ -256,7 +310,7 @@ Hooks are optional; if not configured they don't run. Hook scripts receive a JSO
 ```json
 {
   "file_path": "/path/to/app.apk",
-  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "apk": {"platform": "android", "package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
   "store": "huawei"
 }
 ```
@@ -266,9 +320,9 @@ Hooks are optional; if not configured they don't run. Hook scripts receive a JSO
 ```json
 {
   "file_path": "/path/to/app.apk",
-  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "apk": {"platform": "android", "package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
   "store": "huawei",
-  "result": {"store": "huawei", "success": true, "duration_ms": 12300}
+  "result": {"store": "huawei", "success": true, "category": "success", "duration_ms": 12300}
 }
 ```
 
@@ -303,6 +357,11 @@ export APKGO_TENCENT_USER_ID="your-user-id"
 export APKGO_TENCENT_ACCESS_SECRET="your-secret"
 export APKGO_TENCENT_APP_ID="your-app-id"
 # Multi-app: APKGO_TENCENT_APP_ID_MAP='{"com.foo":"111","com.bar":"222"}'
+export APKGO_SAMSUNG_SERVICE_ACCOUNT_ID="your-sa-id"
+export APKGO_SAMSUNG_PRIVATE_KEY="$(cat samsung-private-key.pem)"
+export APKGO_SAMSUNG_CONTENT_ID="your-content-id"
+export APKGO_GOOGLEPLAY_JSON_KEY_FILE="/secure/path/play-sa.json"
+export APKGO_GOOGLEPLAY_PACKAGE_NAME="com.example.app"
 export APKGO_PGYER_API_KEY="your-pgyer-key"
 export APKGO_FIR_API_TOKEN="your-fir-token"
 
@@ -347,12 +406,15 @@ apkgo zeroes out the input bytes immediately after parsing so secrets don't ling
 | Store | Console | Notes |
 |------|-----------|------|
 | Huawei | [AppGallery Connect](https://developer.huawei.com/consumer/cn/console) | Users & permissions > Service account ([details](#huawei-appgallery-connect)) |
+| HarmonyOS | [AppGallery Connect](https://developer.huawei.com/consumer/cn/console) | Same Service Account as Huawei |
 | Xiaomi | [Xiaomi Open Platform](https://dev.mi.com) | Account > Interface key ([details](#xiaomi-open-platform)) |
 | OPPO | [OPPO Open Platform](https://open.oppomobile.com) | Management > API key management ([details](#oppo-open-platform)) |
 | vivo | [vivo Open Platform](https://dev.vivo.com.cn) | Account > API access ([details](#vivo-open-platform)) |
 | Honor | [Honor Developer](https://developer.honor.com) | API management ([details](#honor-developer-platform)) |
 | Meizu | [Flyme Open Platform](https://open.flyme.cn) | Console > client credentials ([details](#meizu-flyme)) |
 | Tencent | [Tencent Open Platform](https://app.open.qq.com) | App > Account > API publish > Apply ([details](#tencent-app-store-yingyongbao)) |
+| Samsung | [Seller Portal](https://seller.samsungapps.com) | Assistance > API Service > service account ID + private key |
+| Google Play | [Play Console](https://play.google.com/console) | Service account JSON key with release permission on the app |
 | Pgyer | [pgyer.com](https://www.pgyer.com/account/api) | Account > API key ([details](#pgyer)) |
 | fir.im | [betaqr.com.cn](https://www.betaqr.com.cn) | Account > API Token ([details](#firim)) |
 
@@ -709,22 +771,6 @@ For the full API, see the godoc for [`pkg/apkgo`](pkg/apkgo).
       --timeout 15m
 ```
 
-### fastlane
-
-Already using fastlane? Wire releases into your lane with [**fastlane-plugin-apkgo**](https://github.com/KevinGong2013/fastlane-plugin-apkgo). Credentials are hosted by [apkgo cloud](https://apkgo.baici.tech), so you don't have to pile secrets into CI:
-
-```ruby
-# fastlane add_plugin apkgo
-lane :release do
-  gradle(task: "assembleRelease")
-  upload_to_apkgo(
-    api_key: ENV["APKGO_API_KEY"],
-    release_notes: "Bug fixes and improvements",
-    stores: ["huawei", "xiaomi", "oppo", "vivo", "tencent"]
-  )
-end
-```
-
 ### Docker
 
 ```bash
@@ -767,11 +813,14 @@ Encryption: AES-256-GCM with scrypt key derivation; a wrong password produces a 
 
 ```
 apkgo init          [-s store1,store2] [-c config.yaml]
-apkgo upload        -f <apk> [--file64 <apk>] [-s stores] [-n notes] [--notes-file path] [--dry-run | --sandbox] [-t timeout]
+apkgo upload        -f <apk|aab|app|url> [--file64 <apk|url>] [-s stores] [-n notes] [--notes-file path]
+                    [--release-time <RFC3339>] [--fetch-header "Name: value"] [--dry-run | --sandbox]
+                    [--progress-stream] [-t timeout]
+apkgo audit         [-s stores] (-f <apk> | -p <package>) [--watch] [--interval 30s]
 apkgo doctor        [-s stores] [-f <apk> | -p <package>]
 apkgo config export --out <file>
 apkgo config import <file>
-apkgo stores        [-o json|text]
+apkgo stores        [--configured] [-o json|text]
 apkgo history       [-n limit]
 apkgo upgrade
 apkgo version       [-o json|text]
@@ -781,6 +830,7 @@ apkgo version       [-o json|text]
 
 ```
 -c, --config        config file path (default: apkgo.yaml)
+    --creds-from    read JSON credentials from stdin or fd:N (overrides --config)
 -o, --output        output format: json or text (default: json)
 -t, --timeout       global timeout (default: 10m)
 -v, --verbose       verbose logs to stderr

@@ -91,7 +91,21 @@ apkgo upload -f app.apk --dry-run
 
 # vivo 走沙箱，其他渠道只验证不上传
 apkgo upload -f app.apk --sandbox
+
+# 直接用 http(s) 地址（自动下载到临时文件；私有地址可加请求头，可重复）
+apkgo upload -f https://artifacts.example.com/app-v1.apk --store huawei
+apkgo upload -f https://private.example.com/app.apk --fetch-header "Authorization: Bearer xxx"
+
+# 定时发布（RFC3339 时间）
+apkgo upload -f app.apk --release-time 2026-06-20T10:00:00+08:00
+
+# Google Play 上传 AAB（.aab 只会发到 googleplay）
+apkgo upload -f app-release.aab -s googleplay
 ```
+
+- `-f` 为 URL 时，huawei / honor / vivo 直接让商店从该地址拉包（honor 仅对 ≥ `url_push_min_mb`，默认 100MB 的文件），其他商店由 apkgo 下载后上传。
+- `--release-time` 支持 huawei、harmony、honor、xiaomi、oppo、vivo、samsung、tencent，其他商店立即发布。
+- 文件类型：`.apk` 发往所有安卓商店；`.aab` 仅 googleplay；鸿蒙 `.app` 仅 harmony。
 
 #### 鸿蒙（HarmonyOS）上架
 
@@ -107,6 +121,19 @@ apkgo doctor -f demo-default-signed.app -s harmony    # 体检凭证 / 应用 ID
 `--sandbox` 与 `--dry-run` 互斥。目前只有 vivo 支持沙箱：vivo 会真实调用沙箱 API，其他目标渠道执行与 `--dry-run` 相同的本地校验。沙箱运行不执行 hooks、不写上传历史、不触发生命周期事件回调，也不上报上传遥测。结果顶层包含 `"sandbox": true`，vivo 结果包含 `"sandbox": true`，其他渠道包含 `"dry_run": true`。
 
 vivo 的[沙箱环境](https://dev.vivo.com.cn/documentCenter/doc/327#s-l67kfh1m)与正式环境的应用数据、`access_key` 和密钥完全隔离；请按[在线测试环境说明](https://dev.vivo.com.cn/documentCenter/doc/327#s-b9qi52f4)先在沙箱创建应用并申请独立凭据。测试环境限制每个接口 100 次/天。
+
+### 查询审核状态
+
+上传成功只代表「已提交（审核中）」，审核结果用 `audit` 单独查询：
+
+```bash
+apkgo audit -p com.example.app
+apkgo audit -f app.apk -s tencent,huawei
+# 持续轮询，直到每个商店都出结果（通过 / 驳回 / 撤回）或达到 -t 超时
+apkgo audit -p com.example.app --watch --interval 1m -t 1h
+```
+
+目前支持 huawei、harmony、honor、xiaomi、oppo、vivo、meizu、tencent、samsung。
 
 ### 初始化配置
 
@@ -146,13 +173,16 @@ apkgo doctor -s huawei -p com.example.app
 apkgo doctor -s huawei -f app.apk         # 从 APK 自动取包名
 ```
 
-任一探针失败时，退出码为 1。目前 Huawei 已支持，其他商店标记为 `doctor not implemented`。
+任一探针失败时，退出码为 1。除 googleplay 与 script 外的商店均已支持，未实现的会标记为 `doctor not implemented`。
 
 ## 配置文件
 
 `apkgo.yaml`:
 
 ```yaml
+# 可选：检查新版本的频率，如 "30d"、"7d"，"0" 关闭
+# update_check: "7d"
+
 # hooks 为可选配置，不需要可以不写
 hooks:
   before: "./scripts/validate.sh"          # 所有上传前执行
@@ -166,6 +196,7 @@ stores:
     # app_id: ""  # 可选，不填则自动通过包名查询
     before: "./scripts/before-huawei.sh"   # 可选，该商店上传前执行
     after: "./scripts/after-huawei.sh"     # 可选，该商店上传后执行
+    timeout: 8m                            # 可选，该商店单独超时（覆盖全局 --timeout）
 
   harmony:
     # 鸿蒙（HarmonyOS）应用：凭证与 huawei 相同，可直接复用同一份 Service Account
@@ -192,7 +223,8 @@ stores:
   honor:
     client_id: "your-client-id"
     client_secret: "your-client-secret"
-    app_id: "your-app-id"
+    # app_id: ""          # 可选，不填则按包名自动查询
+    # url_push_min_mb: "100" # 可选，-f 为 URL 时 ≥ 该大小（MB）才让荣耀从 URL 拉包
 
   meizu:
     client_id: "your-client-id"       # 魅族开放平台「客户端凭证」
@@ -203,6 +235,16 @@ stores:
     access_secret: "your-access-secret"
     app_id: "your-app-id"
     # 多 app: app_id_map: '{"com.foo":"111","com.bar":"222"}'
+
+  samsung:
+    service_account_id: "your-service-account-id"  # Seller Portal 服务账号 ID
+    private_key: "-----BEGIN PRIVATE KEY-----..."   # Seller Portal 下载的 RSA 私钥（PEM）
+    content_id: "your-content-id"                  # Galaxy Store 中应用的 content ID
+
+  googleplay:
+    json_key_file: "/secure/path/play-sa.json"     # 服务账号 JSON 密钥
+    package_name: "com.example.app"
+    # track: "production"  # 可选：production（默认）/ beta / alpha / internal
 
   pgyer:
     api_key: "your-pgyer-api-key"
@@ -229,13 +271,15 @@ Hooks 是可选功能，不配置则不生效。Hook 脚本通过 stdin 接收 J
 - `after` hook 失败 → 仅记录警告，不影响结果
 - 自动注入环境变量：`APKGO_STORE`、`APKGO_PACKAGE`、`APKGO_VERSION`
 - stderr 输出作为错误信息
+- 通过 `sh -c` 执行（Windows 为 `cmd /C`）
+- `apk.platform` 为 `android`（APK/AAB）或 `harmony`（鸿蒙 `.app`）
 
 **全局 before hook** (`hooks.before`) stdin：
 
 ```json
 {
   "file_path": "/path/to/app.apk",
-  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "apk": {"platform": "android", "package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
   "stores": ["huawei", "xiaomi"]
 }
 ```
@@ -245,10 +289,10 @@ Hooks 是可选功能，不配置则不生效。Hook 脚本通过 stdin 接收 J
 ```json
 {
   "file_path": "/path/to/app.apk",
-  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "apk": {"platform": "android", "package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
   "results": [
-    {"store": "huawei", "success": true, "duration_ms": 12300},
-    {"store": "xiaomi", "success": false, "error": "auth failed", "duration_ms": 400}
+    {"store": "huawei", "success": true, "category": "success", "duration_ms": 12300},
+    {"store": "xiaomi", "success": false, "error": "auth failed", "category": "auth_failed", "duration_ms": 400}
   ]
 }
 ```
@@ -258,7 +302,7 @@ Hooks 是可选功能，不配置则不生效。Hook 脚本通过 stdin 接收 J
 ```json
 {
   "file_path": "/path/to/app.apk",
-  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "apk": {"platform": "android", "package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
   "store": "huawei"
 }
 ```
@@ -268,9 +312,9 @@ Hooks 是可选功能，不配置则不生效。Hook 脚本通过 stdin 接收 J
 ```json
 {
   "file_path": "/path/to/app.apk",
-  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
+  "apk": {"platform": "android", "package": "com.example.app", "version_name": "1.0.0", "version_code": 1, "app_name": "MyApp"},
   "store": "huawei",
-  "result": {"store": "huawei", "success": true, "duration_ms": 12300}
+  "result": {"store": "huawei", "success": true, "category": "success", "duration_ms": 12300}
 }
 ```
 
@@ -305,6 +349,11 @@ export APKGO_TENCENT_USER_ID="your-user-id"
 export APKGO_TENCENT_ACCESS_SECRET="your-secret"
 export APKGO_TENCENT_APP_ID="your-app-id"
 # 多 app: APKGO_TENCENT_APP_ID_MAP='{"com.foo":"111","com.bar":"222"}'
+export APKGO_SAMSUNG_SERVICE_ACCOUNT_ID="your-sa-id"
+export APKGO_SAMSUNG_PRIVATE_KEY="$(cat samsung-private-key.pem)"
+export APKGO_SAMSUNG_CONTENT_ID="your-content-id"
+export APKGO_GOOGLEPLAY_JSON_KEY_FILE="/secure/path/play-sa.json"
+export APKGO_GOOGLEPLAY_PACKAGE_NAME="com.example.app"
 export APKGO_PGYER_API_KEY="your-pgyer-key"
 export APKGO_FIR_API_TOKEN="your-fir-token"
 
@@ -350,7 +399,7 @@ apkgo 的输出格式专为 AI Agent 和自动化场景设计：
 **结构化 JSON 输出** (stdout):
 ```json
 {
-  "apk": {"package": "com.example.app", "version_name": "1.0.0", "version_code": 1},
+  "apk": {"platform": "android", "package": "com.example.app", "version_name": "1.0.0", "version_code": 1},
   "results": [
     {"store": "huawei", "success": true, "category": "success", "duration_ms": 12300},
     {"store": "oppo",   "success": true, "category": "already_done", "duration_ms": 3200},
@@ -431,7 +480,10 @@ cmd.Wait()
 
 ```
 apkgo init          [-s store1,store2] [-c config.yaml]
-apkgo upload        -f <apk> [--file64 <apk>] [-s stores] [-n notes] [--notes-file path] [--dry-run | --sandbox] [-t timeout]
+apkgo upload        -f <apk|aab|app|url> [--file64 <apk|url>] [-s stores] [-n notes] [--notes-file path]
+                    [--release-time <RFC3339>] [--fetch-header "Name: value"] [--dry-run | --sandbox]
+                    [--progress-stream] [-t timeout]
+apkgo audit         [-s stores] (-f <apk> | -p <package>) [--watch] [--interval 30s]
 apkgo doctor        [-s stores] [-f <apk> | -p <package>]
 apkgo config export --out <file>
 apkgo config import <file>
@@ -445,6 +497,7 @@ apkgo version       [-o json|text]
 
 ```
 -c, --config        配置文件路径 (默认: apkgo.yaml)
+    --creds-from    从 stdin 或 fd:N 读取 JSON 凭证（覆盖 --config）
 -o, --output        输出格式: json 或 text (默认: json)
 -t, --timeout       全局超时 (默认: 10m)
 -v, --verbose       详细日志输出到 stderr
