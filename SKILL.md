@@ -1,7 +1,7 @@
 ---
 name: apkgo
-version: "2026.07.27"
-description: The apkgo-cloud CLI and distribution skill. Install the apkgo-cloud CLI (one-line installer, browser login, no local store secrets), then `preview` an APK to get a public 内测 download link (share it, anyone can install), `release` to distribute to Android app stores (Huawei, Xiaomi, OPPO, vivo, Honor, Meizu, Tencent, Google Play, Samsung, Pgyer, fir.im), the Apple App Store (.ipa) and HarmonyOS 鸿蒙 AppGallery (.app), or `submit-copyright` to hand off 软著 (software copyright) materials for filing. Use this when the user already knows what they want to do and just needs the tool. If a developer publishing for the first time says 「开始上架」 or doesn't know where to start, use the `apkgo-start-publishing` skill instead — it assesses their situation and routes them. A REST Open API (X-API-Key, curl) is available as a fallback for CI/CD.
+version: "2026.09.24"
+description: The apkgo-cloud CLI and distribution skill. Install the apkgo-cloud CLI (one-line installer, browser login, no local store secrets), then `preview` an APK to get a public 内测 download link (share it, anyone can install), `release` to distribute to Android app stores (Huawei, Xiaomi, OPPO, vivo, Honor, Meizu, Tencent, Google Play, Samsung, Pgyer, fir.im), the Apple App Store (.ipa) and HarmonyOS 鸿蒙 AppGallery (.app). Use this when the user wants to share a build or ship a release. To prepare store listing materials and create the app entries in each store before the first release, use the `apkgo-app-listing` skill. A REST Open API (X-API-Key, curl) is available as a fallback for CI/CD.
 ---
 
 <!-- Canonical source: apkgo-cloud repo, web/public/skill.md — served at
@@ -12,7 +12,7 @@ description: The apkgo-cloud CLI and distribution skill. Install the apkgo-cloud
 
 Ship an Android app through the hosted **apkgo cloud** service. Two ways in:
 
-- **CLI (`apkgo-cloud`)** — recommended for agents and interactive use. Install once, log in through the browser, then run one command to get a shareable download link, distribute to stores, or file a software-copyright application. No store credentials held locally.
+- **CLI (`apkgo-cloud`)** — recommended for agents and interactive use. Install once, log in through the browser, then run one command to get a shareable download link or distribute to stores. No store credentials held locally.
 - **Open API (`X-API-Key`, curl)** — for CI/CD runners where you don't want to install a binary. See [Open API — CI/CD fallback](#open-api--cicd-fallback) at the end.
 
 Hosted at **`https://apkgo.baici.tech`**. Store credentials are encrypted server-side; multiple apps and team members per organization; async distribution with optional webhook callbacks; dashboard-visible audit log.
@@ -23,8 +23,7 @@ Use this skill when the user wants to:
 
 - Get a **public 内测 (beta) download link** for an APK they can send to testers → `preview`
 - **Distribute/publish/release** an APK to Android app stores (Huawei, Xiaomi, OPPO, vivo, Honor, Meizu, Tencent, Google Play, Samsung, Pgyer, fir.im), an .ipa to the App Store, or a HarmonyOS 鸿蒙 `.app` pack to AppGallery → `release`
-- Just finished building an app and says **「开始上架」 / "help me publish my first app"** → use the `apkgo-start-publishing` skill instead — it assesses the user's situation (账号/软著/备案) and routes them
-- File a **软著 (software copyright)** application → `submit-copyright`
+- Prepare listing materials or create the app entry in each store before its first release (「准备上架资料」「创建 App 提审」) → use the `apkgo-app-listing` skill instead
 - Automate distribution in **CI/CD** without shipping store secrets → [Open API](#open-api--cicd-fallback)
 
 ## Install & log in (CLI)
@@ -37,9 +36,9 @@ apkgo-cloud login      # opens the browser; user clicks 同意授权
 apkgo-cloud whoami     # confirm the connected organization
 ```
 
-Windows (PowerShell): download `https://apkgo.baici.tech/dl/apkgo-cloud-windows-amd64.exe`, rename it to `apkgo-cloud.exe`, and put it on your PATH. Full agent setup doc: **https://apkgo.baici.tech/doc/cli-setup.md**.
+Windows (PowerShell): `iwr https://apkgo.baici.tech/install.ps1 -UseBasicParsing | iex` — installs to `%LOCALAPPDATA%\apkgo-cloud` and adds it to your user PATH (open a new terminal afterwards). Full agent setup doc: **https://apkgo.baici.tech/doc/cli-setup.md**.
 
-Keep the skills local and fresh: `apkgo-cloud skill install` drops the apkgo skills into **your** skills directory — pass `--dir` to choose it (default `.trae/skills` for Trae IDE; use `~/.trae/skills` for user-level, or your own agent's skills dir). `apkgo-cloud skill update --dir <dir>` refreshes them when a new version ships.
+Keep the skills local and fresh: `apkgo-cloud skill install` drops the apkgo skills into **your** skills directory — pass `--dir` to choose it (default `.claude/skills`; for Trae IDE pass `--dir .trae/skills`, or `~/.trae/skills` for user-level; otherwise your own agent's skills dir). `apkgo-cloud skill update --dir <dir>` refreshes them when a new version ships.
 
 **Login is browser-only.** The CLI starts a local callback, opens the approve page, and receives the credential automatically — it's written to `~/.apkgo-cloud/config.json` (0600). **Never ask the user for an API key or password.** If the browser doesn't open, hand the user the URL the CLI printed.
 
@@ -70,33 +69,16 @@ apkgo-cloud release ./app-release.apk --no-wait            # create job, don't w
 - Without `--no-wait`, the CLI polls until every store finishes and prints a `✓/✗` per-store summary; it exits non-zero if the job fails (usable in CI).
 - The worker re-parses the binary after download; its metadata wins. A package mismatch fails the job before any store upload.
 
-## File a 软著 (software copyright) application — `submit-copyright`
+## Before the first release — hand off
 
-Most Android stores require a software-copyright certificate before listing. If the org bought the 软著代提交 (copyright filing) add-on, the CLI can package the materials and hand them to an operator who files with the copyright center.
-
-```bash
-apkgo-cloud auth check                    # exit 0 = entitled, exit 1 = not purchased
-apkgo-cloud submit-copyright ./软著材料目录   # zips the folder and submits
-```
-
-`auth check`'s exit code gates scripts. `submit-copyright` also refuses to run without the entitlement. Direct users who haven't purchased it to the 增值服务 / 首次上架服务包 in the dashboard.
-
-**Don't have the materials yet?** Generating a 软著 registration package (source-code document + manual + form fields) from the codebase is its own skill: **https://apkgo.baici.tech/skill-copyright.md**. It produces the folder that `submit-copyright` then submits.
-
-## First-time publishing (「开始上架」) — hand off
-
-**This skill does not drive first-time publishing.** When a developer says 「开始上架」/「帮我上架」/「我要发布应用」, or doesn't know where to start, switch to the **`apkgo-start-publishing`** skill (https://apkgo.baici.tech/skill-start-publishing.md). It assesses what they still need (developer accounts, 软著, App 备案) and routes to the right sub-skill:
+`release` only works for apps that already exist in each store. When the app has never been listed — the user says 「帮我上架」 for a new app, or needs icons, screenshots, copy, a privacy policy or to submit the store entry for review — switch to the **`apkgo-app-listing`** skill (https://apkgo.baici.tech/skill-app-listing.md):
 
 | 用户说 | 用这个 skill | 它负责 |
 |---|---|---|
-| 「开始上架」「帮我上架」「不知道从哪开始」 | `apkgo-start-publishing` | 总入口：评估现状（账号/软著/备案），分流到各环节 |
-| 「注册开发者账号」「注册华为/小米账号」 | `apkgo-onboarding` | 各商店开发者账号注册（8 家分店指南） |
-| 「生成软著材料」「写软著源代码文档」 | `apkgo-copyright` | 从代码库生成软著申请材料 |
-| 「提交软著」「代我申请软著」 | `apkgo-copyright-submit` | 编排完整提交：生成 → 索要资质 → 校验 → 上传 |
 | 「准备上架资料」「写应用描述」「创建 App 提审」 | `apkgo-app-listing` | 图标/截图/文案/隐私政策/资质/测试账号，创建条目提审 |
-| 「上传 APK」「生成内测链接」「发布到商店」 | `apkgo`（本 skill） | CLI 本体：preview / release / submit-copyright |
+| 「上传 APK」「生成内测链接」「发布到商店」 | `apkgo`（本 skill） | CLI 本体：preview / release |
 
-Come back here once they reach the actual distribution step — that's what `release` is for.
+Come back here once the store entries are approved — every later version ships with `release`.
 
 **Steps that must be the user's own action — stop and wait, never do these for them or try to bypass:** 人脸核身 (face verification), 短信/图形验证码, 对公打款 (corporate bank verification), payment. When you hit one, tell the user exactly what to do and continue only after they confirm.
 
@@ -114,10 +96,8 @@ HarmonyOS notes: `harmony` reuses the huawei AGC Service Account (add a「鸿蒙
 | `apkgo-cloud whoami` | Show the connected organization |
 | `apkgo-cloud logout` | Remove local credentials |
 | `apkgo-cloud preview <apk> [--notes ...] [--password ...]` | Public 内测 download link (`/d/<slug>`), no store creds; optional download password |
-| `apkgo-cloud release <apk> [--stores a,b] [--notes ...] [--no-wait]` | Distribute to bound app stores |
-| `apkgo-cloud auth check` | Exit 0/1 — is the org entitled to 软著代提交 |
-| `apkgo-cloud submit-copyright <dir\|zip>` | Package & submit 软著 materials |
-| `apkgo-cloud skill <list\|install\|update\|check>` | Install/refresh these skills into `.trae/skills/` (`check` exits 1 if outdated) |
+| `apkgo-cloud release <apk\|ipa\|app> [--stores a,b] [--notes ...] [--no-wait] [--app name\|id]` | Distribute to bound app stores; `.ipa` matches the iOS app by bundle id, `--app` picks the app when that fails |
+| `apkgo-cloud skill <list\|install\|update\|check> [--dir <dir>]` | Install/refresh these skills (default dir `.claude/skills/`; `check` exits 1 if outdated) |
 | `apkgo-cloud version` | Print version |
 
 `APKGO_CLOUD_BASE` overrides the service URL (default `https://apkgo.baici.tech`).
@@ -199,7 +179,22 @@ Status flow: `pending` → `processing` → `completed` | `failed`. Per-store ou
 
 ### Webhook callbacks (alternative to polling)
 
-Configure a Webhook URL + optional HMAC secret in the dashboard (API 密钥 page). Each finished job POSTs `{"event":"upload.completed"|"upload.failed","job_id":...,"status":...,"results":[...]}`. Verify `X-Webhook-Signature: sha256=<hex>` (HMAC-SHA256 of the raw body).
+**Pro plan (专业版) and above.** Configure one org-level Webhook URL + optional HMAC secret at the bottom of the dashboard's **API 密钥** page. Saving first POSTs a signed `webhook.test` event to the URL — it's saved **only if the endpoint answers HTTP 200** (any other status or a connection error is shown inline). The URL must be `http(s)` and publicly reachable; loopback / private / link-local addresses (127.0.0.1, 10.x, 192.168.x, …) are rejected.
+
+Events (all `POST`, `Content-Type: application/json`):
+
+| `event` | When | Body |
+|---|---|---|
+| `upload.completed` | A job finished and every store succeeded | `job_id`, `app_name`, `package_name`, `version_name`, `version_code`, `status`, `results[]` (`store_name`, `success`, `error`, `duration_ms`), `timestamp` |
+| `upload.failed` | A job finished with at least one store failed | same as above |
+| `review.changed` | A store's review verdict came in — one request **per store** | `app_id`, `app_name`, `package_name`, `store`, `version_name`, `version_code`, `review_state` (`approved` \| `rejected` \| `withdrawn`), `previous_state` (usually `reviewing`), `review_detail` (store's reason, when rejected), `timestamp` |
+| `webhook.test` | Sent once when the URL is saved | `org_name`, `message`, `timestamp` — just answer 200 |
+
+```json
+{"event":"review.changed","app_id":"7c9e…","app_name":"我的应用","package_name":"com.example.app","store":"huawei","version_name":"1.2.0","version_code":12,"review_state":"rejected","previous_state":"reviewing","review_detail":"应用存在隐私政策问题","timestamp":"2026-04-11T09:30:00+08:00"}
+```
+
+Branch on `event` and ignore unknown values (new events may be added). If a secret is set, verify `X-Webhook-Signature: sha256=<hex>` = HMAC-SHA256 of the **raw** body with the secret (no header when the secret is empty). Delivery is fire-and-forget: 10 s timeout, any 2xx counts as success, **no retries** — keep polling `GET /openapi/v1/uploads/{jobId}` as the source of truth if you can't afford a missed callback.
 
 ### Endpoint reference
 
@@ -212,9 +207,6 @@ Configure a Webhook URL + optional HMAC secret in the dashboard (API 密钥 page
 | GET  | `/openapi/v1/uploads/{jobId}` | Job status + per-store results |
 | POST | `/openapi/v1/uploads/{jobId}/cancel` | Cancel a pending/processing job |
 | POST | `/openapi/v1/uploads/{jobId}/retry` | Re-run a failed job |
-| GET  | `/openapi/v1/copyright/eligibility` | Is the org entitled to 软著代提交 |
-| POST | `/openapi/v1/copyright/tickets` | Upload ticket for a 软著 materials zip |
-| POST | `/openapi/v1/copyright` | Record a 软著 submission |
 
 Every endpoint requires the key to carry the **`upload`** permission (default for new keys); `"*"` grants everything. App and store-account management (including per-app store switches) stays dashboard-only.
 
