@@ -13,10 +13,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const (
-	endpoint = "https://apkgo.baici.tech/telemetry/v1/events"
-	idFile   = ".apkgo_id"
-)
+const idFile = ".apkgo_id"
+
+// endpoint is a var so tests can point it at a local server.
+var endpoint = "https://apkgo.baici.tech/telemetry/v1/events"
 
 // Event represents an anonymous usage event.
 type Event struct {
@@ -40,6 +40,7 @@ type StoreResult struct {
 var (
 	installID string
 	once      sync.Once
+	inflight  sync.WaitGroup
 )
 
 func getInstallID() string {
@@ -62,18 +63,40 @@ func getInstallID() string {
 }
 
 // Send fires an event asynchronously. Never blocks, never errors.
+// Call Flush before the process exits, otherwise the request is usually
+// killed mid-flight.
 func Send(event Event) {
 	event.InstallID = getInstallID()
 	event.OS = runtime.GOOS
 	event.Arch = runtime.GOARCH
 	event.Timestamp = time.Now().Unix()
 
+	inflight.Add(1)
 	go func() {
+		defer inflight.Done()
 		body, err := json.Marshal(event)
 		if err != nil {
 			return
 		}
 		client := &http.Client{Timeout: 5 * time.Second}
-		client.Post(endpoint, "application/json", bytes.NewReader(body))
+		resp, err := client.Post(endpoint, "application/json", bytes.NewReader(body))
+		if err != nil {
+			return
+		}
+		resp.Body.Close()
 	}()
+}
+
+// Flush waits for in-flight events to be delivered, giving up after
+// timeout. Returns immediately when nothing was sent.
+func Flush(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		inflight.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
 }

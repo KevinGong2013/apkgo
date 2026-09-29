@@ -1,13 +1,18 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -24,6 +29,7 @@ type Event struct {
 	Timestamp  int64         `json:"ts"`
 	ReceivedAt string        `json:"received_at,omitempty"`
 	RemoteAddr string        `json:"remote_addr,omitempty"`
+	ClientIP   string        `json:"client_ip,omitempty"`
 }
 
 type StoreResult struct {
@@ -115,10 +121,14 @@ func (s *Stats) snapshot() map[string]any {
 	}
 }
 
+// tokenFile holds the generated admin token when ADMIN_TOKEN is unset.
+const tokenFile = "admin_token"
+
 var (
-	dataDir string
-	stats   *Stats
-	writeMu sync.Mutex
+	dataDir    string
+	stats      *Stats
+	writeMu    sync.Mutex
+	adminToken string
 )
 
 func main() {
@@ -126,13 +136,19 @@ func main() {
 	dataDir = getEnv("DATA_DIR", "/data")
 	os.MkdirAll(dataDir, 0755)
 
+	var err error
+	if adminToken, err = loadAdminToken(); err != nil {
+		slog.Error("load admin token", "error", err)
+		os.Exit(1)
+	}
+
 	stats = newStats()
 	replayAll()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/events", handleEvent)
-	mux.HandleFunc("GET /v1/stats", handleStats)
-	mux.HandleFunc("GET /v1/events", handleListEvents)
+	mux.HandleFunc("GET /v1/stats", requireToken(handleStats))
+	mux.HandleFunc("GET /v1/events", requireToken(handleListEvents))
 	mux.HandleFunc("GET /healthz", handleHealth)
 
 	slog.Info("telemetry server starting", "port", port, "data_dir", dataDir)
@@ -151,6 +167,7 @@ func handleEvent(w http.ResponseWriter, r *http.Request) {
 
 	event.ReceivedAt = time.Now().UTC().Format(time.RFC3339)
 	event.RemoteAddr = r.RemoteAddr
+	event.ClientIP = clientIP(r)
 
 	line, _ := json.Marshal(event)
 	line = append(line, '\n')
@@ -214,6 +231,66 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // --- helpers ---
 
+// loadAdminToken returns the bearer token guarding the read endpoints:
+// ADMIN_TOKEN if set, otherwise one persisted in the data dir, generated
+// on first start.
+func loadAdminToken() (string, error) {
+	if t := os.Getenv("ADMIN_TOKEN"); t != "" {
+		return t, nil
+	}
+	path := filepath.Join(dataDir, tokenFile)
+	if data, err := os.ReadFile(path); err == nil {
+		if t := strings.TrimSpace(string(data)); t != "" {
+			return t, nil
+		}
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	t := hex.EncodeToString(buf)
+	if err := os.WriteFile(path, []byte(t+"\n"), 0600); err != nil {
+		return "", err
+	}
+	slog.Info("generated admin token", "path", path)
+	return t, nil
+}
+
+func requireToken(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(adminToken)) != 1 {
+			writeJSON(w, 401, map[string]string{"error": "unauthorized"})
+			return
+		}
+		next(w, r)
+	}
+}
+
+// clientIP returns the caller's address. Behind the reverse proxy the peer
+// is the proxy's private docker IP, so the real client is the last
+// X-Forwarded-For hop — the one the proxy itself appended. The header is
+// only trusted from private/loopback peers so direct hits can't spoof it.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	peer := net.ParseIP(host)
+	if peer == nil || !(peer.IsPrivate() || peer.IsLoopback()) {
+		return host
+	}
+	values := r.Header.Values("X-Forwarded-For")
+	if len(values) == 0 {
+		return host
+	}
+	hops := strings.Split(values[len(values)-1], ",")
+	if last := strings.TrimSpace(hops[len(hops)-1]); last != "" {
+		return last
+	}
+	return host
+}
+
 func replayAll() {
 	entries, _ := os.ReadDir(dataDir)
 	// Sort to replay in chronological order
@@ -221,10 +298,11 @@ func replayAll() {
 		return entries[i].Name() < entries[j].Name()
 	})
 	for _, entry := range entries {
-		if entry.IsDir() {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "events_") || !strings.HasSuffix(name, ".jsonl") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dataDir, entry.Name()))
+		data, err := os.ReadFile(filepath.Join(dataDir, name))
 		if err != nil {
 			continue
 		}
@@ -276,7 +354,7 @@ func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return
