@@ -32,13 +32,23 @@ func init() {
 			{Key: "package_name", Required: true, Desc: "Android package name (e.g. com.example.app)"},
 			{Key: "track", Required: false, Desc: "Release track: production, beta, alpha, internal (default: production)"},
 		},
+		Listing: listingSpec,
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
 }
 
+// apiHost serves both the Android Publisher REST API and its media
+// upload endpoints (under /upload/...).
+const apiHost = "https://androidpublisher.googleapis.com"
+
 type Store struct {
-	client      *resty.Client
+	client *resty.Client
+	// uploadBase is the media-upload counterpart of client's base URL
+	// (.../upload/androidpublisher/v3/applications/{package}). Binaries
+	// and listing images are POSTed under it; kept separate so tests can
+	// point both at one httptest server.
+	uploadBase  string
 	packageName string
 	track       string
 }
@@ -79,12 +89,13 @@ func New(cfg map[string]string) (*Store, error) {
 	}
 
 	client := resty.New().
-		SetBaseURL("https://androidpublisher.googleapis.com/androidpublisher/v3/applications/"+packageName).
+		SetBaseURL(apiHost+"/androidpublisher/v3/applications/"+packageName).
 		SetAuthToken(token).
 		SetHeader("Content-Type", "application/json")
 
 	return &Store{
 		client:      client,
+		uploadBase:  apiHost + "/upload/androidpublisher/v3/applications/" + packageName,
 		packageName: packageName,
 		track:       track,
 	}, nil
@@ -100,7 +111,7 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 	return store.NewResult(s.Name(), start)
 }
 
-func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
+func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	rep := progress.Safe(req.Progress)
 
 	// 1. Create edit
@@ -108,12 +119,13 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	var editResp struct {
 		ID string `json:"id"`
 	}
-	_, err := s.client.R().
+	resp, err := s.client.R().
+		SetContext(ctx).
 		SetBody(map[string]string{}).
 		SetResult(&editResp).
 		Post("/edits")
-	if err != nil {
-		return fmt.Errorf("create edit: %w", err)
+	if err := checkResp("create edit", resp, err); err != nil {
+		return err
 	}
 	editID := editResp.ID
 	if editID == "" {
@@ -138,26 +150,24 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		uploadPath = "bundles"
 		contentType = "application/octet-stream"
 	}
-	uploadURL := fmt.Sprintf(
-		"https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/%s/edits/%s/%s",
-		s.packageName, editID, uploadPath,
-	)
+	uploadURL := fmt.Sprintf("%s/edits/%s/%s", s.uploadBase, editID, uploadPath)
 
 	// Both /apks and /bundles return `versionCode` in the response body.
 	var uploadResp struct {
 		VersionCode int `json:"versionCode"`
 	}
-	_, err = s.client.R().
+	resp, err = s.client.R().
+		SetContext(ctx).
 		SetHeader("Content-Type", contentType).
 		SetBody(rc).
 		SetResult(&uploadResp).
 		Post(uploadURL)
-	if err != nil {
-		artifact := "apk"
-		if isAAB {
-			artifact = "aab"
-		}
-		return fmt.Errorf("upload %s: %w", artifact, err)
+	artifact := "apk"
+	if isAAB {
+		artifact = "aab"
+	}
+	if err := checkResp("upload "+artifact, resp, err); err != nil {
+		return err
 	}
 
 	// 3. Assign to track
@@ -170,7 +180,8 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		})
 	}
 
-	_, err = s.client.R().
+	resp, err = s.client.R().
+		SetContext(ctx).
 		SetBody(map[string]any{
 			"track": s.track,
 			"releases": []map[string]any{{
@@ -180,16 +191,27 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 			}},
 		}).
 		Put(fmt.Sprintf("/edits/%s/tracks/%s", editID, s.track))
-	if err != nil {
-		return fmt.Errorf("set track: %w", err)
+	if err := checkResp("set track", resp, err); err != nil {
+		return err
 	}
 
-	// 4. Commit edit
+	// 4. Store listing (商店资料), in the same edit so it goes live with
+	// this release. Any failure aborts before commit, leaving the edit
+	// uncommitted (Play discards it).
+	if !req.Listing.Empty() {
+		rep.Phase("listing")
+		if err := s.updateListing(ctx, editID, req.Listing); err != nil {
+			return fmt.Errorf("listing: %w", err)
+		}
+	}
+
+	// 5. Commit edit
 	rep.Phase("committing")
-	_, err = s.client.R().
+	resp, err = s.client.R().
+		SetContext(ctx).
 		Post(fmt.Sprintf("/edits/%s:commit", editID))
-	if err != nil {
-		return fmt.Errorf("commit: %w", err)
+	if err := checkResp("commit", resp, err); err != nil {
+		return err
 	}
 
 	return nil

@@ -18,6 +18,7 @@ import (
 	"github.com/go-resty/resty/v2"
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
+	"github.com/KevinGong2013/apkgo/v4/pkg/imgcheck"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
@@ -33,6 +34,25 @@ func init() {
 			{Key: "client_secret", Required: true, Desc: "Honor developer API client secret"},
 			{Key: "app_id", Required: false, Desc: "Honor app ID (auto-detected from package name if omitted)"},
 			{Key: "url_push_min_mb", Required: false, Desc: "min APK size (MB) to pull from -f URL instead of uploading; honor throttles its download-status poll to ~3min so small files upload faster (default 100)"},
+		},
+		// Honor 文件类型表: icon fileType 1 (512×512, ≤200KB, PNG/JPG/JPEG);
+		// portrait screenshots fileType 3 (1080×1920, ≤5MB each, 3–5).
+		// update-language-info: intro ≤8000 chars (required), briefIntro ≤80.
+		Listing: &store.ListingSpec{
+			Brief:       store.TextSpec{Max: 80},
+			Description: store.TextSpec{Min: 1, Max: 8000},
+			Icon: store.ImageSpec{
+				Formats:  []string{"png", "jpeg"},
+				Sizes:    []store.Size{{Width: 512, Height: 512}},
+				MaxBytes: 200 * 1024,
+			},
+			Screenshot: store.ImageSpec{
+				Formats:  []string{"png", "jpeg"},
+				Sizes:    []store.Size{{Width: 1080, Height: 1920}},
+				MaxBytes: 5 << 20,
+			},
+			MinScreenshots: 3,
+			MaxScreenshots: 5,
 		},
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
@@ -206,9 +226,14 @@ const (
 	publishBase = "https://appmarket-openapi-drcn.cloud.honor.com"
 )
 
-// fileTypeAPK is honor's numeric file-type discriminator for APK binaries in
-// get-file-upload-url / update-file-info requests.
-const fileTypeAPK = 100
+// Honor's numeric file-type discriminators (文件类型表), set per file in
+// get-file-upload-url / upload-by-url. update-file-info binds by objectId
+// only; the type travels with the object.
+const (
+	fileTypeIcon               = 1   // 应用图标, per language
+	fileTypePortraitScreenshot = 3   // 应用介绍截图-纵向, per language, ordered from 0
+	fileTypeAPK                = 100 // 应用包
+)
 
 // Download-mode (upload-by-url) constants. Honor pulls the package from a
 // public URL asynchronously and rate-limits status queries to ~once/3min,
@@ -297,18 +322,45 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (string, e
 	// enough to be worth Honor's async download (it throttles status polls
 	// to ~once/3min, so small files upload faster directly), hand Honor the
 	// URL and let it pull the binary; otherwise upload the bytes.
+	var apkObjectID int64
 	if req.SourceURL != "" && s.shouldURLPush(req.FilePath) {
-		if err := s.uploadByURL(ctx, appID, req.SourceURL, req.FilePath, rep); err != nil {
+		if apkObjectID, err = s.uploadByURL(ctx, appID, req.SourceURL, req.FilePath, rep); err != nil {
 			return "", fmt.Errorf("upload apk by url: %w", err)
 		}
-	} else if err := s.uploadAPK(ctx, appID, req.FilePath, rep); err != nil {
+	} else if apkObjectID, err = s.uploadAPK(ctx, appID, req.FilePath, rep); err != nil {
+		return "", fmt.Errorf("upload apk: %w", err)
+	}
+	bindings := []map[string]any{{"objectId": apkObjectID}}
+
+	// Listing images ride along with this version: staged now, bound in the
+	// same update-file-info call as the APK. A single call keeps the APK
+	// binding intact whatever Honor does with files a later call leaves out.
+	listing := req.Listing
+	if listing.Empty() {
+		listing = nil
+	}
+	if listing != nil {
+		rep.Phase("listing")
+		images, err := s.uploadListingImages(ctx, appID, lang.LanguageID, listing)
+		if err != nil {
+			return "", fmt.Errorf("upload listing images: %w", err)
+		}
+		bindings = append(bindings, images...)
+	}
+
+	rep.Phase("publishing")
+	if err := s.bindFiles(ctx, appID, bindings); err != nil {
 		return "", fmt.Errorf("upload apk: %w", err)
 	}
 
-	if req.ReleaseNotes != "" {
-		rep.Phase("release notes")
-		if err := s.updateLanguageInfo(appID, lang, req.ReleaseNotes); err != nil {
-			return "", fmt.Errorf("update release notes: %w", err)
+	if req.ReleaseNotes != "" || (listing != nil && (listing.Brief != "" || listing.Description != "")) {
+		what := "release notes"
+		if listing != nil {
+			what = "language info"
+		}
+		rep.Phase(what)
+		if err := s.updateLanguageInfo(appID, lang, req.ReleaseNotes, listing); err != nil {
+			return "", fmt.Errorf("update %s: %w", what, err)
 		}
 	}
 
@@ -452,16 +504,65 @@ func (s *Store) getAppLanguage(appID string) (*languageInfo, error) {
 
 // ---- upload: url → put → bind ----
 
-func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progress.Reporter) error {
+// uploadAPK stages the APK and returns its objectId; the caller binds it
+// with update-file-info.
+func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progress.Reporter) (int64, error) {
+	return s.uploadFile(ctx, appID, apkPath, filepath.Base(apkPath), fileTypeAPK, rep)
+}
+
+// uploadListingImages stages the listing's icon and screenshots and returns
+// their update-file-info bindings. Both are per-language on Honor, so each
+// binding carries languageID; screenshots are ordered from 0 in the given
+// order. Byte progress is not reported: the bar tracks the APK.
+func (s *Store) uploadListingImages(ctx context.Context, appID, languageID string, l *store.Listing) ([]map[string]any, error) {
+	rep := progress.Safe(nil)
+	var bindings []map[string]any
+	if l.Icon != "" {
+		objectID, err := s.uploadFile(ctx, appID, l.Icon, imageFileName(l.Icon), fileTypeIcon, rep)
+		if err != nil {
+			return nil, fmt.Errorf("icon: %w", err)
+		}
+		bindings = append(bindings, map[string]any{"objectId": objectID, "languageId": languageID})
+	}
+	for i, p := range l.Screenshots {
+		objectID, err := s.uploadFile(ctx, appID, p, imageFileName(p), fileTypePortraitScreenshot, rep)
+		if err != nil {
+			return nil, fmt.Errorf("screenshot %d: %w", i, err)
+		}
+		bindings = append(bindings, map[string]any{"objectId": objectID, "languageId": languageID, "order": i})
+	}
+	return bindings, nil
+}
+
+// imageFileName is the name Honor sees for a listing image. Honor checks
+// the file name's suffix against the allowed formats, so derive it from
+// the actual content (validated as png/jpeg upstream) rather than trusting
+// the local extension.
+func imageFileName(path string) string {
+	base := filepath.Base(path)
+	info, err := imgcheck.Inspect(path)
+	if err != nil {
+		return base
+	}
+	ext := ".png"
+	if info.Format == "jpeg" {
+		ext = ".jpg"
+	}
+	return strings.TrimSuffix(base, filepath.Ext(base)) + ext
+}
+
+// uploadFile stages one local file on Honor (get-file-upload-url → multipart
+// POST to the signed URL) and returns its objectId. Nothing changes on the
+// app until update-file-info binds the objectId.
+func (s *Store) uploadFile(ctx context.Context, appID, path, fileName string, fileType int, rep progress.Reporter) (int64, error) {
 	// Step 1: sha256 + filesize (honor requires them in the get-upload-url body)
 	rep.Phase("hashing")
-	size, sum, err := statAndSha256(apkPath)
+	size, sum, err := statAndSha256(path)
 	if err != nil {
-		return fmt.Errorf("hash apk: %w", err)
+		return 0, fmt.Errorf("hash file: %w", err)
 	}
 
-	// Step 2: request an upload URL + objectId for this binary
-	fileName := filepath.Base(apkPath)
+	// Step 2: request an upload URL + objectId for this file
 	var urlResp struct {
 		honorResp
 		Data []struct {
@@ -474,32 +575,32 @@ func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progre
 		SetQueryParam("appId", appID).
 		SetBody([]map[string]any{{
 			"fileName":   fileName,
-			"fileType":   fileTypeAPK,
+			"fileType":   fileType,
 			"fileSize":   size,
 			"fileSha256": sum,
 		}}).
 		SetResult(&urlResp).
 		Post("/openapi/v1/publish/get-file-upload-url")
 	if err != nil {
-		return fmt.Errorf("get upload url: %w", err)
+		return 0, fmt.Errorf("get upload url: %w", err)
 	}
 	if httpResp.IsError() {
-		return fmt.Errorf("get upload url: http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+		return 0, fmt.Errorf("get upload url: http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
 	}
 	if urlResp.Code != 0 {
-		return fmt.Errorf("get upload url [%d] %s", urlResp.Code, urlResp.text())
+		return 0, fmt.Errorf("get upload url [%d] %s", urlResp.Code, urlResp.text())
 	}
 	if len(urlResp.Data) == 0 {
-		return fmt.Errorf("empty upload url response")
+		return 0, fmt.Errorf("empty upload url response")
 	}
 	upload := urlResp.Data[0]
 
-	// Step 3: stream the APK to the signed URL as a multipart POST.
+	// Step 3: stream the file to the signed URL as a multipart POST.
 	// Progress.Reader forwards byte counts to the mpb bar.
 	rep.Phase("uploading")
-	rc, fSize, err := progress.OpenFile(apkPath, rep)
+	rc, fSize, err := progress.OpenFile(path, rep)
 	if err != nil {
-		return fmt.Errorf("open apk: %w", err)
+		return 0, fmt.Errorf("open file: %w", err)
 	}
 	defer rc.Close()
 
@@ -510,27 +611,24 @@ func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progre
 		Files:   []httpx.FileField{{Field: "file", FileName: fileName, Reader: rc, Size: fSize}},
 	})
 	if err != nil {
-		return fmt.Errorf("upload: %w", err)
+		return 0, fmt.Errorf("upload: %w", err)
 	}
 	defer putHTTP.Body.Close()
 	putBody, _ := io.ReadAll(putHTTP.Body)
 	if putHTTP.StatusCode >= 400 {
-		return fmt.Errorf("upload: http %d: %s", putHTTP.StatusCode, truncateBody(string(putBody)))
+		return 0, fmt.Errorf("upload: http %d: %s", putHTTP.StatusCode, truncateBody(string(putBody)))
 	}
 	// Honor returns a JSON envelope on success; HTTP may be 200 with code!=0
 	// when the signed URL rejects the payload (expired nonce, bad sha256).
 	var putResp honorResp
 	if jerr := json.Unmarshal(putBody, &putResp); jerr != nil {
-		return fmt.Errorf("decode upload response (HTTP %d): %v: %s",
+		return 0, fmt.Errorf("decode upload response (HTTP %d): %v: %s",
 			putHTTP.StatusCode, jerr, truncateBody(string(putBody)))
 	}
 	if putResp.Code != 0 {
-		return fmt.Errorf("upload [%d] %s: %s", putResp.Code, putResp.text(), truncateBody(string(putBody)))
+		return 0, fmt.Errorf("upload [%d] %s: %s", putResp.Code, putResp.text(), truncateBody(string(putBody)))
 	}
-
-	// Step 4: tell honor that objectId is the new binary for this app.
-	rep.Phase("publishing")
-	return s.bindFile(ctx, appID, upload.ObjectID)
+	return upload.ObjectID, nil
 }
 
 // shouldURLPush reports whether the APK is large enough that Honor's async
@@ -551,14 +649,14 @@ func (s *Store) shouldURLPush(apkPath string) bool {
 
 // uploadByURL hands Honor a public download URL (upload-by-url) instead of
 // uploading the APK bytes. Honor downloads the file on its own side
-// (async); we poll until it reports the upload finished, then bind the
-// objectId exactly as the upload path does. The URL must be HTTPS, public
-// and unauthenticated — Honor GETs it directly.
-func (s *Store) uploadByURL(ctx context.Context, appID, sourceURL, apkPath string, rep progress.Reporter) error {
+// (async); we poll until it reports the upload finished and return the
+// objectId, which the caller binds exactly as on the upload path. The URL
+// must be HTTPS, public and unauthenticated — Honor GETs it directly.
+func (s *Store) uploadByURL(ctx context.Context, appID, sourceURL, apkPath string, rep progress.Reporter) (int64, error) {
 	rep.Phase("hashing")
 	size, sum, err := statAndSha256(apkPath)
 	if err != nil {
-		return fmt.Errorf("hash apk: %w", err)
+		return 0, fmt.Errorf("hash apk: %w", err)
 	}
 	fileName := filepath.Base(apkPath)
 
@@ -575,7 +673,7 @@ func (s *Store) uploadByURL(ctx context.Context, appID, sourceURL, apkPath strin
 		}},
 	})
 	if err != nil {
-		return fmt.Errorf("create url upload task: %w", err)
+		return 0, fmt.Errorf("create url upload task: %w", err)
 	}
 
 	// Step 2: poll until Honor finishes downloading (status 0). Honor
@@ -584,7 +682,7 @@ func (s *Store) uploadByURL(ctx context.Context, appID, sourceURL, apkPath strin
 	for status != honorUploadDone {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("waiting for honor to download package from url: %w", ctx.Err())
+			return 0, fmt.Errorf("waiting for honor to download package from url: %w", ctx.Err())
 		case <-time.After(honorURLPushPollPeriod):
 		}
 		_, status, err = s.urlPushTask(ctx, appID, map[string]any{
@@ -592,13 +690,10 @@ func (s *Store) uploadByURL(ctx context.Context, appID, sourceURL, apkPath strin
 			"objectList": []map[string]any{{"objectId": objectID}},
 		})
 		if err != nil {
-			return fmt.Errorf("query url upload status: %w", err)
+			return 0, fmt.Errorf("query url upload status: %w", err)
 		}
 	}
-
-	// Step 3: bind the objectId to the app, same as the upload path.
-	rep.Phase("publishing")
-	return s.bindFile(ctx, appID, objectID)
+	return objectID, nil
 }
 
 // urlPushTask POSTs to upload-by-url and returns the first object's id and
@@ -632,15 +727,19 @@ func (s *Store) urlPushTask(ctx context.Context, appID string, body map[string]a
 	return resp.Data[0].ObjectID, resp.Data[0].Status, nil
 }
 
-// bindFile tells Honor that objectId is the new binary for the app's draft
-// version (update-file-info). Shared by the upload and URL-push paths.
-func (s *Store) bindFile(ctx context.Context, appID string, objectID int64) error {
+// bindFiles attaches staged objectIds to the app's draft version
+// (update-file-info): the APK from the upload or URL-push path, plus any
+// listing images. Per Honor's docs an update only needs the files that
+// change — the rest are inherited from the previous version. Per-language
+// files (icon, screenshots) carry languageId; multi-file types carry an
+// order from 0.
+func (s *Store) bindFiles(ctx context.Context, appID string, files []map[string]any) error {
 	var bindResp honorResp
 	bindHTTP, err := s.client.R().
 		SetContext(ctx).
 		SetQueryParam("appId", appID).
 		SetBody(map[string]any{
-			"bindingFileList": []map[string]any{{"objectId": objectID}},
+			"bindingFileList": files,
 		}).
 		SetResult(&bindResp).
 		Post("/openapi/v1/publish/update-file-info")
@@ -658,32 +757,52 @@ func (s *Store) bindFile(ctx context.Context, appID string, objectID int64) erro
 
 // ---- release notes ----
 
-func (s *Store) updateLanguageInfo(appID string, existing *languageInfo, releaseNotes string) error {
+// updateLanguageInfo writes the release notes (newFeature) and, when l is
+// non-nil, the listing's intro (long description) / briefIntro (one-line
+// intro) for the existing language. Empty listing fields keep the
+// console's current value; appName is always echoed back unchanged.
+func (s *Store) updateLanguageInfo(appID string, existing *languageInfo, releaseNotes string, l *store.Listing) error {
+	info := *existing
+	if l != nil {
+		if l.Description != "" {
+			info.Intro = l.Description
+		}
+		if l.Brief != "" {
+			info.BriefIntro = l.Brief
+		}
+	}
+
 	// Honor's update-language-info validates intro / briefIntro as
 	// non-empty at request time. If the app on Honor's console has
 	// either field blank, we'd hit "[20076] app introduction is empty"
 	// after the APK is already uploaded, which is confusing. Fail fast
 	// and tell the operator exactly which field to fill in.
-	if existing.Intro == "" {
+	if info.Intro == "" {
 		return store.Categorize(store.CategoryConfigInvalid,
 			fmt.Errorf("honor app intro (应用简介) is empty on the console — fill it in before publishing: https://developer.honor.com/cn/console"))
 	}
 
 	// Honor's update-language-info blanks out every field it receives as
-	// empty, so we re-send appName/intro/briefIntro verbatim and only
-	// mutate newFeature.
+	// empty, so we re-send appName/intro/briefIntro (verbatim unless the
+	// listing overrides them) alongside newFeature.
+	entry := map[string]any{
+		"languageId": info.LanguageID,
+		"appName":    info.AppName,
+		"intro":      info.Intro,
+		"briefIntro": info.BriefIntro,
+	}
+	if releaseNotes != "" {
+		entry["newFeature"] = releaseNotes
+	}
+	// setAll defaults to 1, which deletes every language missing from
+	// languageInfoList. We only send one, so ask Honor to leave the
+	// others alone.
+	body := map[string]any{"languageInfoList": []map[string]any{entry}, "setAll": 0}
+
 	var resp honorResp
 	httpResp, err := s.client.R().
 		SetQueryParam("appId", appID).
-		SetBody(map[string]any{
-			"languageInfoList": []map[string]any{{
-				"languageId": existing.LanguageID,
-				"appName":    existing.AppName,
-				"intro":      existing.Intro,
-				"briefIntro": existing.BriefIntro,
-				"newFeature": releaseNotes,
-			}},
-		}).
+		SetBody(body).
 		SetResult(&resp).
 		Post("/openapi/v1/publish/update-language-info")
 	if err != nil {

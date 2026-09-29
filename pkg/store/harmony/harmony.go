@@ -8,9 +8,10 @@
 //
 //	GET  /api/publish/v2/appid-list?packageTypes=7     bundleName → appId
 //	GET  /api/publish/v2/upload-url/for-obs            signed PUT target (objectId)
-//	PUT  <urlInfo.url> (+ urlInfo.headers)             raw .app bytes
+//	PUT  <urlInfo.url> (+ urlInfo.headers)             raw .app / listing image bytes
 //	PUT  /api/publish/v3/app-package-info              bind objectId → packageId
-//	PUT  /api/publish/v3/app-language-info             newFeatures (release notes)
+//	PUT  /api/publish/v3/app-language-info             newFeatures (release notes), briefInfo / appDesc (listing)
+//	PUT  /api/publish/v3/app-file-info                 listing icon / screenshots (objectIds)
 //	GET  /api/publish/v3/package/compile/status        wait for server-side parse
 //	POST /api/publish/v3/app-submit                    submit for review
 //	GET  /api/publish/v3/app-info                      review status (apkgo audit)
@@ -58,9 +59,10 @@ func init() {
 		ConsoleURL:               "https://developer.huawei.com/consumer/cn/doc/app/agc-help-connect-api-obtain-server-auth-0000002271134661",
 		Platform:                 store.PlatformHarmony,
 		SupportsScheduledRelease: true,
+		Listing:                  listingSpec,
 		Fields: append(append([]store.FieldSchema{}, huawei.CredentialFields...),
 			store.FieldSchema{Key: "app_id", Required: false, Desc: "AGC app ID of the HarmonyOS app (auto-detected from bundleName if omitted)"},
-			store.FieldSchema{Key: "lang", Required: false, Desc: "Language of the release notes, e.g. zh-CN (default: the app's default language in AGC)"},
+			store.FieldSchema{Key: "lang", Required: false, Desc: "Language of the release notes and listing, e.g. zh-CN (default: the app's default language in AGC)"},
 			store.FieldSchema{Key: "chinese_mainland_flag", Required: false, Desc: "Set to 1 (distribute in Chinese mainland) or 0 when the developer is registered outside mainland China; AGC requires it in that case"},
 		),
 	}, func(cfg map[string]string) (store.Store, error) {
@@ -125,6 +127,15 @@ func (s *Store) publish(ctx context.Context, req *store.UploadRequest) (string, 
 			fmt.Errorf("harmony store needs a HarmonyOS .app package, got %s", filepath.Base(req.FilePath)))
 	}
 
+	listing := req.Listing
+	if listing.Empty() {
+		listing = nil
+	}
+	if notes := req.ReleaseNotes; listing != nil && notes != "" && (notes == listing.Brief || notes == listing.Description) {
+		return "", store.Categorize(store.CategoryConfigInvalid,
+			fmt.Errorf("release notes must differ from the listing brief and description (AGC rejects identical newFeatures / briefInfo / appDesc)"))
+	}
+
 	rep.Phase("auth")
 	appID := s.configAppID
 	if appID == "" {
@@ -135,10 +146,11 @@ func (s *Store) publish(ctx context.Context, req *store.UploadRequest) (string, 
 		}
 	}
 
-	objectID, fileName, err := s.uploadPackage(ctx, appID, req.FilePath, rep)
+	objectID, err := s.uploadFile(ctx, appID, req.FilePath, rep)
 	if err != nil {
 		return "", fmt.Errorf("upload package: %w", err)
 	}
+	fileName := filepath.Base(req.FilePath)
 
 	rep.Phase("binding package")
 	packageID, err := s.bindPackage(ctx, appID, fileName, objectID)
@@ -152,10 +164,29 @@ func (s *Store) publish(ctx context.Context, req *store.UploadRequest) (string, 
 		return fmt.Errorf("%w (软件包已上传至 AGC，请到后台检查并完成提审：%s)", err, consoleURL)
 	}
 
-	if req.ReleaseNotes != "" {
-		rep.Phase("release notes")
-		if err := s.updateReleaseNotes(ctx, appID, req.ReleaseNotes); err != nil {
-			return packageID, wrap(fmt.Errorf("update release notes: %w", err))
+	// Release notes and listing are per-language and go with this version,
+	// so they must land before submit; any failure blocks the submit.
+	hasText := req.ReleaseNotes != "" || (listing != nil && (listing.Brief != "" || listing.Description != ""))
+	hasImages := listing != nil && (listing.Icon != "" || len(listing.Screenshots) > 0)
+	if hasText || hasImages {
+		if listing != nil {
+			rep.Phase("listing")
+		} else {
+			rep.Phase("release notes")
+		}
+		lang, err := s.language(ctx, appID)
+		if err != nil {
+			return packageID, wrap(fmt.Errorf("resolve default language: %w", err))
+		}
+		if hasText {
+			if err := s.updateLanguageInfo(ctx, appID, lang, req.ReleaseNotes, listing); err != nil {
+				return packageID, wrap(fmt.Errorf("update language info: %w", err))
+			}
+		}
+		if hasImages {
+			if err := s.updateListingFiles(ctx, appID, lang, listing); err != nil {
+				return packageID, wrap(fmt.Errorf("update listing images: %w", err))
+			}
 		}
 	}
 
@@ -209,25 +240,26 @@ func (s *Store) fetchAppID(ctx context.Context, bundleName string) (string, erro
 	return ids[0].Value, nil
 }
 
-// uploadPackage runs the two-step Upload Management API: fetch a signed
-// OBS PUT target for the file, then stream the bytes to it. Returns the
-// objectId the package-info binding needs.
-func (s *Store) uploadPackage(ctx context.Context, appID, path string, rep progress.Reporter) (objectID, fileName string, err error) {
-	fileName = filepath.Base(path)
+// uploadFile runs the two-step Upload Management API for any file — the
+// .app pack or a listing image: fetch a signed OBS PUT target for it,
+// then stream the bytes there. Returns the objectId the binding
+// endpoints (app-package-info, app-file-info) reference.
+func (s *Store) uploadFile(ctx context.Context, appID, path string, rep progress.Reporter) (string, error) {
+	fileName := filepath.Base(path)
 	size, sum, err := fileSizeAndSHA256(path)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 
 	info, err := s.getUploadURL(ctx, appID, fileName, size, sum)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 
 	rep.Phase("uploading")
 	rc, _, err := progress.OpenFile(path, rep)
 	if err != nil {
-		return "", "", fmt.Errorf("open package: %w", err)
+		return "", fmt.Errorf("open %s: %w", fileName, err)
 	}
 	defer rc.Close()
 
@@ -237,7 +269,7 @@ func (s *Store) uploadPackage(ctx context.Context, appID, path string, rep progr
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, method, info.URL, rc)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	httpReq.ContentLength = size
 	httpReq.Header.Set("Content-Type", "application/octet-stream")
@@ -251,14 +283,14 @@ func (s *Store) uploadPackage(ctx context.Context, appID, path string, rep progr
 	}
 	resp, err := s.upload.Do(httpReq)
 	if err != nil {
-		return "", "", httpx.RedactURLError(err)
+		return "", httpx.RedactURLError(err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", "", fmt.Errorf("put package: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", fmt.Errorf("put %s: http %d: %s", fileName, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	return info.ObjectID, fileName, nil
+	return info.ObjectID, nil
 }
 
 // urlInfo is the AGC CommonUrlInfo payload.
@@ -330,15 +362,31 @@ func (s *Store) bindPackage(ctx context.Context, appID, fileName, objectID strin
 	return resp.PackageID, nil
 }
 
-// updateReleaseNotes writes newFeatures for one language. AGC requires
-// the language code; when none is configured the app's default language
-// is looked up so the notes land on the listing users actually see.
-func (s *Store) updateReleaseNotes(ctx context.Context, appID, notes string) error {
-	lang := s.lang
-	if lang == "" {
-		var err error
-		if lang, err = s.defaultLang(ctx, appID); err != nil {
-			return fmt.Errorf("resolve default language: %w", err)
+// language is the language release notes and listing are written to.
+// AGC requires the language code; when none is configured the app's
+// default language is looked up so they land on the listing users
+// actually see.
+func (s *Store) language(ctx context.Context, appID string) (string, error) {
+	if s.lang != "" {
+		return s.lang, nil
+	}
+	return s.defaultLang(ctx, appID)
+}
+
+// updateLanguageInfo writes one language's text: newFeatures (release
+// notes) and, from the listing, briefInfo / appDesc. Empty values are
+// left out so AGC keeps what it has.
+func (s *Store) updateLanguageInfo(ctx context.Context, appID, lang, notes string, l *store.Listing) error {
+	body := map[string]any{"lang": lang}
+	if notes != "" {
+		body["newFeatures"] = notes
+	}
+	if l != nil {
+		if l.Brief != "" {
+			body["briefInfo"] = l.Brief
+		}
+		if l.Description != "" {
+			body["appDesc"] = l.Description
 		}
 	}
 	var resp struct {
@@ -347,7 +395,7 @@ func (s *Store) updateReleaseNotes(ctx context.Context, appID, notes string) err
 	httpResp, err := s.client.R().
 		SetContext(ctx).
 		SetQueryParams(map[string]string{"appId": appID, "releaseType": "1"}).
-		SetBody(map[string]any{"lang": lang, "newFeatures": notes}).
+		SetBody(body).
 		SetResult(&resp).
 		Put("/api/publish/v3/app-language-info")
 	if err != nil {

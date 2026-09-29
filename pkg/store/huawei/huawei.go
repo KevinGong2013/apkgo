@@ -24,6 +24,7 @@ func init() {
 		ConsoleURL:               "https://developer.huawei.com/consumer/cn/doc/AppGallery-connect-Guides/agcapi-getstarted-0000001111845114#section1785535363715",
 		SupportsScheduledRelease: true,
 		SupportsURLPush:          true,
+		Listing:                  listingSpec,
 		Fields: append(append([]store.FieldSchema{}, CredentialFields...),
 			store.FieldSchema{Key: "app_id", Required: false, Desc: "Huawei app ID (auto-detected from package name if omitted)"},
 		),
@@ -262,7 +263,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		if err := s.submitPackageByURL(appID, req.SourceURL, req); err != nil {
 			return fmt.Errorf("submit package by url: %w", err)
 		}
-	} else if err := s.uploadAPK(appID, req.FilePath, rep); err != nil {
+	} else if err := s.uploadAPK(ctx, appID, req.FilePath, rep); err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
 
@@ -271,6 +272,15 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		rep.Phase("release notes")
 		if err := s.updateAppInfo(appID, req.ReleaseNotes); err != nil {
 			return fmt.Errorf("update release notes: %w", err)
+		}
+	}
+
+	// Update the store listing (商店资料) so it's reviewed together with
+	// this version: after the package is attached, before app-submit.
+	if !req.Listing.Empty() {
+		rep.Phase("listing")
+		if err := s.updateListing(ctx, appID, req.Listing); err != nil {
+			return fmt.Errorf("update listing: %w", err)
 		}
 	}
 
@@ -380,34 +390,75 @@ func (s *Store) fetchAppID(packageName string) (string, error) {
 	return resp.AppIds[0].Value, nil
 }
 
-// uploadAPK handles the 3-step file upload: get URL → upload → update file info.
-func (s *Store) uploadAPK(appID, apkPath string, rep progress.Reporter) error {
-	// Step 1: Get upload URL
-	url, authCode, err := s.getUploadURL(appID)
+// app-file-info fileType values (Publishing API v2 更新应用文件信息).
+const (
+	fileTypeIcon       = 0 // 应用图标
+	fileTypeScreenshot = 2 // 应用介绍截图
+	fileTypePackage    = 5 // 软件包 (APK/AAB/RPK)
+)
+
+// uploadAPK uploads the APK and binds it to the app's draft version as
+// its package: upload-url → upload → app-file-info (fileType 5).
+func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progress.Reporter) error {
+	rep.Phase("uploading")
+	f, err := s.uploadFile(ctx, appID, apkPath, "apk", rep)
 	if err != nil {
 		return err
 	}
+	ret, err := s.updateFileInfo(ctx, appID, map[string]any{
+		"fileType": fileTypePackage,
+		"files":    []uploadedFile{{FileName: f.FileName, FileDestURL: f.FileDestURL}},
+	})
+	if err != nil {
+		return err
+	}
+	if ret.Code != 0 {
+		return store.Categorize(classifyHuawei(ret),
+			fmt.Errorf("update file info: [%d] %s%s", ret.Code, ret.text(), packageLimitHint(ret)))
+	}
+	return nil
+}
 
-	// Step 2: Upload file to the URL
+// uploadedFile is a file on Huawei's file server as reported by the
+// upload endpoint. It doubles as the FileInfo entry of app-file-info.
+type uploadedFile struct {
+	FileName    string `json:"fileName,omitempty"`
+	FileDestURL string `json:"fileDestUrl"`
+	// Returned for images only; FileInfo takes them back verbatim
+	// (Huawei's spelling: "imageResolutionSingature").
+	ImageResolution          string `json:"imageResolution,omitempty"`
+	ImageResolutionSignature string `json:"imageResolutionSingature,omitempty"`
+}
+
+// uploadFile puts one local file on Huawei's file server: upload-url for
+// the given suffix (apk, png, jpg, …) → multipart POST. The returned file
+// still has to be bound to the app with updateFileInfo.
+func (s *Store) uploadFile(ctx context.Context, appID, path, suffix string, rep progress.Reporter) (uploadedFile, error) {
+	url, authCode, err := s.getUploadURL(ctx, appID, suffix)
+	if err != nil {
+		return uploadedFile{}, err
+	}
+
 	var fileResp struct {
 		Result struct {
 			UploadFileRsp struct {
 				IfSuccess    int `json:"ifSuccess"`
 				FileInfoList []struct {
-					FileDestUlr string `json:"fileDestUlr"`
+					FileDestUlr              string `json:"fileDestUlr"`
+					ImageResolution          string `json:"imageResolution"`
+					ImageResolutionSingature string `json:"imageResolutionSingature"`
 				} `json:"fileInfoList"`
 			} `json:"UploadFileRsp"`
 			ResultCode string `json:"resultCode"`
 		} `json:"result"`
 	}
-	filename := filepath.Base(apkPath)
-	rep.Phase("uploading")
-	rc, fSize, err := progress.OpenFile(apkPath, rep)
+	filename := filepath.Base(path)
+	rc, fSize, err := progress.OpenFile(path, rep)
 	if err != nil {
-		return fmt.Errorf("open apk: %w", err)
+		return uploadedFile{}, fmt.Errorf("open %s: %w", suffix, err)
 	}
 	defer rc.Close()
-	resp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
+	resp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
 		Method: http.MethodPost,
 		URL:    url,
 		Fields: map[string]string{
@@ -419,50 +470,60 @@ func (s *Store) uploadAPK(appID, apkPath string, rep progress.Reporter) error {
 		Files: []httpx.FileField{{Field: "file", FileName: filename, Reader: rc, Size: fSize}},
 	})
 	if err != nil {
-		return err
+		return uploadedFile{}, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("upload failed: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return uploadedFile{}, fmt.Errorf("upload failed: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	if jerr := json.Unmarshal(body, &fileResp); jerr != nil {
-		return fmt.Errorf("decode upload response (HTTP %d): %v: %s",
+		return uploadedFile{}, fmt.Errorf("decode upload response (HTTP %d): %v: %s",
 			resp.StatusCode, jerr, strings.TrimSpace(string(body)))
 	}
 	if fileResp.Result.ResultCode != "0" {
-		return fmt.Errorf("upload failed, resultCode: %s", fileResp.Result.ResultCode)
+		return uploadedFile{}, fmt.Errorf("upload failed, resultCode: %s", fileResp.Result.ResultCode)
 	}
 	if len(fileResp.Result.UploadFileRsp.FileInfoList) == 0 {
-		return fmt.Errorf("no file info returned after upload")
+		return uploadedFile{}, fmt.Errorf("no file info returned after upload")
 	}
+	info := fileResp.Result.UploadFileRsp.FileInfoList[0]
+	return uploadedFile{
+		FileName:                 filename,
+		FileDestURL:              info.FileDestUlr,
+		ImageResolution:          info.ImageResolution,
+		ImageResolutionSignature: info.ImageResolutionSingature,
+	}, nil
+}
 
-	// Step 3: Update file info
-	var updateResp struct {
+// updateFileInfo binds uploaded files to the app's draft version
+// (PUT app-file-info). body carries fileType and files, plus lang (and
+// imgShowType for screenshots) for images. The ret is returned for the
+// caller to classify.
+func (s *Store) updateFileInfo(ctx context.Context, appID string, body map[string]any) (retInfo, error) {
+	var resp struct {
 		Ret retInfo `json:"ret"`
 	}
-	_, err = s.client.R().
+	httpResp, err := s.client.R().
+		SetContext(ctx).
 		SetQueryParams(map[string]string{
 			"appId":       appID,
 			"releaseType": "1",
 		}).
-		SetBody(map[string]any{
-			"fileType": 5,
-			"files": []map[string]string{{
-				"fileName":    filename,
-				"fileDestUrl": fileResp.Result.UploadFileRsp.FileInfoList[0].FileDestUlr,
-			}},
-		}).
-		SetResult(&updateResp).
+		SetBody(body).
+		SetResult(&resp).
+		SetError(&resp).
 		Put("/api/publish/v2/app-file-info")
 	if err != nil {
-		return err
+		return retInfo{}, err
 	}
-	if updateResp.Ret.Code != 0 {
-		return store.Categorize(classifyHuawei(updateResp.Ret),
-			fmt.Errorf("update file info: [%d] %s%s", updateResp.Ret.Code, updateResp.Ret.text(), packageLimitHint(updateResp.Ret)))
+	// A non-2xx answer that still carries a ret code goes back to the
+	// caller, which classifies it (and adds packageLimitHint) like any
+	// other rejection.
+	if httpResp.IsError() && resp.Ret.Code == 0 {
+		return retInfo{}, fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
 	}
-	return nil
+	return resp.Ret, nil
 }
 
 // packageLimitHint appends actionable guidance when Huawei rejects a file-info
@@ -660,19 +721,21 @@ func (s *Store) submitApp(appID string, releaseTime *time.Time) (retInfo, error)
 	return resp.Ret, nil
 }
 
-// getUploadURL fetches a per-upload destination URL + auth code from Huawei.
-// Reused by both the upload path and `apkgo doctor` to verify release perms.
-func (s *Store) getUploadURL(appID string) (uploadURL, authCode string, err error) {
+// getUploadURL fetches a per-upload destination URL + auth code from Huawei
+// for a file with the given suffix (apk, png, jpg, …). Reused by both the
+// upload path and `apkgo doctor` to verify release perms.
+func (s *Store) getUploadURL(ctx context.Context, appID, suffix string) (uploadURL, authCode string, err error) {
 	var resp struct {
 		Ret      retInfo `json:"ret"`
 		URL      string  `json:"uploadUrl"`
 		AuthCode string  `json:"authCode"`
 	}
 	httpResp, err := s.client.R().
+		SetContext(ctx).
 		SetQueryParams(map[string]string{
 			"appId":       appID,
 			"releaseType": "1",
-			"suffix":      "apk",
+			"suffix":      suffix,
 		}).
 		SetResult(&resp).
 		Get("/api/publish/v2/upload-url")
@@ -730,7 +793,7 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 		probes = append(probes, store.Probe{Name: "appid-list", Status: "skip", Detail: "using configured app_id=" + appID})
 	}
 
-	if _, _, err := s.getUploadURL(appID); err != nil {
+	if _, _, err := s.getUploadURL(ctx, appID, "apk"); err != nil {
 		probes = append(probes, store.Probe{Name: "release-permission", Status: "fail", Error: err.Error()})
 		return probes
 	}
