@@ -53,6 +53,7 @@ func init() {
 			{Key: "cert", Required: false, Desc: "Xiaomi public key certificate (raw PEM or base64); optional, defaults to built-in dev.api.public.cer"},
 			{Key: "cert_file", Required: false, Desc: "Path to Xiaomi public key certificate file (.cer/.pem); optional, defaults to built-in dev.api.public.cer"},
 		},
+		Listing: listingSpec,
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
@@ -190,16 +191,22 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		req.AppName = info.AppName
 	}
 
-	// Extract icon from APK. /dev/push marks `icon` as required for every
-	// synchroType (new app and update alike — only screenshots are
-	// new-app-only), and whatever we send replaces the icon on the
-	// console, so it must be the densest launcher icon available (#51).
-	rep.Phase("icon")
-	iconPath, err := extractIcon(req.FilePath)
-	if err != nil {
-		return fmt.Errorf("extract icon: %w", err)
+	// /dev/push marks `icon` as required for every synchroType (new app and
+	// update alike — only screenshots are new-app-only), and whatever we
+	// send replaces the icon on the console. A listing icon is the user's
+	// own file: send it as is and never delete it. Otherwise extract the
+	// densest launcher icon from the APK (#51) into a temp file.
+	var iconPath string
+	if req.Listing != nil && req.Listing.Icon != "" {
+		iconPath = req.Listing.Icon
+	} else {
+		rep.Phase("icon")
+		iconPath, err = extractIcon(req.FilePath)
+		if err != nil {
+			return fmt.Errorf("extract icon: %w", err)
+		}
+		defer os.Remove(iconPath)
 	}
-	defer os.Remove(iconPath)
 
 	// Push
 	return s.push(ctx, synchroType, req, iconPath, rep)
@@ -253,15 +260,34 @@ func (s *Store) push(ctx context.Context, synchroType int, req *store.UploadRequ
 		// timestamp (absolute instant, timezone-independent).
 		appInfo["onlineTime"] = req.ReleaseTime.UnixMilli()
 	}
+	// Listing (商店资料): only non-empty fields are sent, so the store keeps
+	// its current value for the rest. The icon arrives as iconPath (see
+	// upload); screenshots become screenshot_1..N parts below.
+	// NOTE: the /dev/push doc marks brief/desc/screenshot_1-3 only as
+	// "新增时必选" (synchroType=0); whether they take effect on an update
+	// (synchroType=1, apkgo's normal path) still needs verifying against a
+	// real account.
+	if l := req.Listing; l != nil {
+		if l.Brief != "" {
+			appInfo["brief"] = l.Brief
+		}
+		if l.Description != "" {
+			appInfo["desc"] = l.Description
+		}
+	}
+	shots := screenshotFiles(req.Listing)
 
 	// Order matters only for reproducibility, not for xiaomi: keep the sig
 	// list in the order the /dev/push docs list the parts (apk, secondApk,
-	// icon) rather than letting map iteration shuffle it per run.
+	// icon, screenshot_1..N) rather than letting map iteration shuffle it
+	// per run. The doc requires every uploaded file, screenshots included,
+	// to be signed.
 	files := []sigFile{{name: "apk", path: req.FilePath}}
 	if req.File64Path != "" {
 		files = append(files, sigFile{name: "secondApk", path: req.File64Path})
 	}
 	files = append(files, sigFile{name: "icon", path: iconPath})
+	files = append(files, shots...)
 
 	body := s.encode(map[string]any{
 		"synchroType": synchroType,
@@ -295,7 +321,19 @@ func (s *Store) push(ctx context.Context, synchroType int, req *store.UploadRequ
 		}
 		defer apk64RC.Close()
 	}
-	rep.Total(apkSize + iconSize + apk64Size)
+
+	shotParts := make([]httpx.FileField, 0, len(shots))
+	var shotsSize int64
+	for _, f := range shots {
+		rc, size, err := progress.WrapFile(f.path, rep)
+		if err != nil {
+			return fmt.Errorf("open %s: %w", f.name, err)
+		}
+		defer rc.Close()
+		shotParts = append(shotParts, httpx.FileField{Field: f.name, FileName: filepath.Base(f.path), Reader: rc, Size: size})
+		shotsSize += size
+	}
+	rep.Total(apkSize + iconSize + apk64Size + shotsSize)
 
 	fields := make(map[string]string, len(body))
 	for k := range body {
@@ -308,6 +346,7 @@ func (s *Store) push(ctx context.Context, synchroType int, req *store.UploadRequ
 	if apk64RC != nil {
 		parts = append(parts, httpx.FileField{Field: "secondApk", FileName: filepath.Base(req.File64Path), Reader: apk64RC, Size: apk64Size})
 	}
+	parts = append(parts, shotParts...)
 
 	pushResp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
 		Method: http.MethodPost,
