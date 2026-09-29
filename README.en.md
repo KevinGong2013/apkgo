@@ -145,7 +145,7 @@ stores:
 
 | Store | Intro | Description | Icon | Screenshots |
 |---|---|---|---|---|
-| huawei | ≤80 | ≤8000 | PNG 216×216, ≤500KB | ≥1080×1920 at 9:16, ≤5MB, 3–10 |
+| huawei | ≤80 | ≤8000 | PNG 216×216, ≤500KB (WebP ≤100KB) | 9:16 (450×800 suggested), ≤2MB (WebP ≤100KB), 3–5 |
 | harmony | ≤80, must differ from description | ≤8000 | PNG/WebP 216×216 or 1024×1024 | ≥1080×1920 at 9:16, 3–10 |
 | honor | ≤80 | ≤8000 | PNG/JPG 512×512, ≤200KB | 1080×1920, ≤5MB, 3–5 |
 | vivo | 5–16 CJK chars | 50–1000 | square PNG 256–512px, ≤500KB | 1080×1920, ≤2MB, 3–5 |
