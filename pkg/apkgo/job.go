@@ -21,7 +21,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -169,7 +171,7 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		}
 	}
 	if listingFile != nil {
-		if unknown := listingFile.UnknownStores(); len(unknown) > 0 {
+		if unknown := listingFile.UnknownStores(slices.Sorted(maps.Keys(job.Config.Stores))); len(unknown) > 0 {
 			return nil, fmt.Errorf("listing: unknown stores %v", unknown)
 		}
 	}
@@ -275,6 +277,32 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 			return nil, fmt.Errorf("no configured store accepts %s packages (configured: %v)", filePlatform, skipped)
 		}
 	}
+	// Listing (商店资料): resolve and validate every target store's listing
+	// before stores are created (their auth handshakes) or anything is
+	// uploaded, and report all problems at once. Runs before the dry-run
+	// return so --dry-run is a real preflight for the listing too. Stores
+	// that can't update their listing get none, so their results don't
+	// claim it.
+	listingByStore := make(map[string]*store.Listing, len(requested))
+	var listingUnsupported []string
+	for _, name := range requested {
+		l := listingFile.Resolve(name)
+		if l == nil {
+			continue
+		}
+		if store.ListingSpecFor(name) == nil {
+			listingUnsupported = append(listingUnsupported, name)
+			continue
+		}
+		listingByStore[name] = l
+	}
+	if err := validateListings(requested, listingByStore); err != nil {
+		return nil, err
+	}
+	if len(listingUnsupported) > 0 {
+		ctxlog.FromContext(ctx).Warn("listing updates not supported by some stores; they will upload without it", "stores", listingUnsupported)
+	}
+
 	storesWithHooks, err := job.Config.CreateStoresForEnvironment(requested, environment)
 	if err != nil {
 		return nil, err
@@ -283,18 +311,12 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 	storeNames := make([]string, len(storesWithHooks))
 	sandboxCapable := make([]bool, len(storesWithHooks))
 	listings := make([]*store.Listing, len(storesWithHooks))
-	var listingUnsupported []string
 	entries := make([]uploader.StoreEntry, 0, len(storesWithHooks))
 	for i, swh := range storesWithHooks {
 		name := swh.Store.Name()
 		storeNames[i] = name
 		sandboxCapable[i] = store.SupportsSandbox(swh.ConfigName)
-		// Stores that can't update their listing get none, so their
-		// results don't claim it; warned about below.
-		if listings[i] = listingFile.Resolve(swh.ConfigName); listings[i] != nil && store.ListingSpecFor(swh.ConfigName) == nil {
-			listingUnsupported = append(listingUnsupported, name)
-			listings[i] = nil
-		}
+		listings[i] = listingByStore[swh.ConfigName]
 		if job.Sandbox && !sandboxCapable[i] {
 			continue
 		}
@@ -365,17 +387,6 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		if len(rejected) > 0 {
 			return nil, fmt.Errorf("AAB upload targets %v which only accept .apk (use -s googleplay or build an APK)", rejected)
 		}
-	}
-
-	// Listing (商店资料): validate every target store's resolved listing
-	// against its spec before anything is uploaded, and report all
-	// problems at once. Runs before the dry-run return so --dry-run is a
-	// real preflight for the listing too.
-	if err := validateListings(storesWithHooks, listings); err != nil {
-		return nil, err
-	}
-	if len(listingUnsupported) > 0 {
-		ctxlog.FromContext(ctx).Warn("listing updates not supported by some stores; they will upload without it", "stores", listingUnsupported)
 	}
 
 	if job.DryRun {
@@ -466,12 +477,12 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 	return &Result{APK: info, Sandbox: job.Sandbox, Results: results}, nil
 }
 
-// validateListings checks each store's resolved listing against its
-// spec and returns every problem at once.
-func validateListings(stores []config.StoreWithHooks, listings []*store.Listing) error {
+// validateListings checks each named store's resolved listing against
+// its spec and returns every problem at once, in the given order.
+func validateListings(names []string, listings map[string]*store.Listing) error {
 	var errs []error
-	for i, swh := range stores {
-		errs = append(errs, store.ValidateListing(swh.ConfigName, listings[i])...)
+	for _, name := range names {
+		errs = append(errs, store.ValidateListing(name, listings[name])...)
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("listing does not meet store requirements:\n%w", errors.Join(errs...))

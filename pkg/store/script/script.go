@@ -19,8 +19,8 @@ func init() {
 		Fields: []store.FieldSchema{
 			{Key: "command", Required: true, Desc: "Shell command or script path to execute"},
 		},
-		// No constraints: the listing is passed through to the script as
-		// the Listing field of the stdin JSON.
+		// No constraints (images only have to exist): the listing is passed
+		// through to the script as the Listing field of the stdin JSON.
 		Listing: &store.ListingSpec{},
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)

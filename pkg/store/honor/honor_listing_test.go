@@ -36,6 +36,7 @@ type fakeHonor struct {
 	t          *testing.T
 	srv        *httptest.Server
 	failUpload map[string]bool
+	landscape  bool // get-app-detail lists a landscape screenshot (fileType 2)
 
 	mu      sync.Mutex
 	calls   []honorCall
@@ -66,9 +67,13 @@ func (f *fakeHonor) serve(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/openapi/v1/publish/get-app-detail":
 		f.calls = append(f.calls, call)
+		files := `[{"fileName":"app.apk","fileType":100}]`
+		if f.landscape {
+			files = `[{"fileName":"app.apk","fileType":100},{"fileName":"l1.png","fileType":2,"languageId":"zh-CN","order":0}]`
+		}
 		io.WriteString(w, `{"code":0,"data":{"languageInfo":[
 			{"languageId":"en-US","appName":"App","intro":"old intro en"},
-			{"languageId":"zh-CN","appName":"应用","intro":"旧介绍","briefIntro":"旧简介"}]}}`)
+			{"languageId":"zh-CN","appName":"应用","intro":"旧介绍","briefIntro":"旧简介"}],"fileInfo":`+files+`}}`)
 		return
 	case "/openapi/v1/publish/file-upload":
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -345,12 +350,40 @@ func TestUploadListingImageFailureSkipsSubmit(t *testing.T) {
 	if res.Success {
 		t.Fatal("Upload succeeded, want a listing error")
 	}
-	if !strings.Contains(res.Error, "screenshot 0") {
+	if !strings.Contains(res.Error, "screenshot 1") {
 		t.Errorf("error = %q, want it to name the failing screenshot", res.Error)
 	}
 	for _, endpoint := range []string{"update-file-info", "update-language-info", "submit-audit"} {
 		if n := len(f.only(endpoint)); n != 0 {
 			t.Errorf("%s called %d times after a failed listing upload, want 0", endpoint, n)
 		}
+	}
+}
+
+// TestUploadListingRejectsLandscapeApp: Honor takes one screenshot
+// orientation per app; when the console currently holds landscape ones,
+// a portrait listing is refused before anything is uploaded.
+func TestUploadListingRejectsLandscapeApp(t *testing.T) {
+	f := newFakeHonor(t)
+	f.landscape = true
+	dir := t.TempDir()
+	listing := &store.Listing{Screenshots: []string{
+		writePNG(t, dir, "s1.png", 1080, 1920),
+		writePNG(t, dir, "s2.png", 1080, 1920),
+		writePNG(t, dir, "s3.png", 1080, 1920),
+	}}
+	res := f.store().Upload(context.Background(), &store.UploadRequest{FilePath: writeAPK(t, dir), Listing: listing})
+	if res.Success || !strings.Contains(res.Error, "landscape screenshots") {
+		t.Fatalf("result = %+v, want a landscape-orientation error", res)
+	}
+	if got, want := f.paths(), []string{"get-app-detail"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("request sequence = %v, want %v (nothing uploaded)", got, want)
+	}
+	// Text-only listings don't touch screenshots and still go through.
+	f = newFakeHonor(t)
+	f.landscape = true
+	res = f.store().Upload(context.Background(), &store.UploadRequest{FilePath: writeAPK(t, dir), Listing: &store.Listing{Brief: "新简介"}})
+	if !res.Success {
+		t.Fatalf("text-only listing on a landscape app failed: %s", res.Error)
 	}
 }

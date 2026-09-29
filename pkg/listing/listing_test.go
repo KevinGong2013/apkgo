@@ -76,8 +76,19 @@ stores:
 		t.Errorf("test-a.cn = %+v, want %+v", got, want)
 	}
 
-	if unknown := f.UnknownStores(); unknown != nil {
+	if unknown := f.UnknownStores([]string{"test-a.cn", "test-b"}); unknown != nil {
 		t.Errorf("UnknownStores = %v", unknown)
+	}
+}
+
+// An empty (or comment-only) listing file is an empty listing.
+func TestLoadEmptyFile(t *testing.T) {
+	f, err := listing.Load(write(t, t.TempDir(), "listing.yaml", "# fill me in\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := f.Resolve("test-a"); got != nil {
+		t.Errorf("Resolve = %+v, want nil", got)
 	}
 }
 
@@ -100,11 +111,13 @@ func TestLoadErrors(t *testing.T) {
 
 func TestUnknownStores(t *testing.T) {
 	dir := t.TempDir()
-	f, err := listing.Load(write(t, dir, "listing.yaml", "stores:\n  test-a: {brief: x}\n  tset-b: {brief: y}\n"))
+	// test-a: registered type, not configured — fine (shared listing files).
+	// tset-b: not a store. test-a.prd: instance typo for test-a.prod.
+	f, err := listing.Load(write(t, dir, "listing.yaml", "stores:\n  test-a: {brief: x}\n  tset-b: {brief: y}\n  test-a.prd: {brief: z}\n  test-a.prod: {brief: w}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(f.UnknownStores(), ","); got != "tset-b" {
+	if got := strings.Join(f.UnknownStores([]string{"test-a.prod", "test-b"}), ","); got != "test-a.prd,tset-b" {
 		t.Errorf("UnknownStores = %q", got)
 	}
 }

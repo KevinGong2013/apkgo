@@ -10,13 +10,13 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
-	"github.com/KevinGong2013/apkgo/v4/pkg/imgcheck"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 // listingSpec mirrors Play Console's store-listing limits: short
 // description ≤80, full description ≤4000, a 512×512 PNG hi-res icon
-// ≤1 MB, and 2–8 PNG/JPEG phone screenshots with edges in 320–3840 px.
+// ≤1 MB, and 2–8 PNG/JPEG phone screenshots with edges in 320–3840 px
+// and the long edge at most twice the short one.
 var listingSpec = &store.ListingSpec{
 	Brief:       store.TextSpec{Max: 80},
 	Description: store.TextSpec{Max: 4000},
@@ -26,31 +26,13 @@ var listingSpec = &store.ListingSpec{
 		MaxBytes: 1 << 20,
 	},
 	Screenshot: store.ImageSpec{
-		Formats: []string{"png", "jpeg"},
-		MinEdge: 320,
-		MaxEdge: 3840,
+		Formats:   []string{"png", "jpeg"},
+		MinEdge:   320,
+		MaxEdge:   3840,
+		MaxAspect: &store.Size{Width: 2, Height: 1},
 	},
 	MinScreenshots: 2,
 	MaxScreenshots: 8,
-	Check:          checkListing,
-}
-
-// checkListing enforces Play's screenshot aspect rule, which ImageSpec
-// can't express: the long edge may be at most twice the short edge.
-// Unreadable files are skipped — ValidateListing already reports them.
-func checkListing(l *store.Listing) []error {
-	var errs []error
-	for i, p := range l.Screenshots {
-		info, err := imgcheck.Inspect(p)
-		if err != nil {
-			continue
-		}
-		if max(info.Width, info.Height) > 2*min(info.Width, info.Height) {
-			errs = append(errs, fmt.Errorf("%s[%d]: %s: size %dx%d, long edge must be at most twice the short edge",
-				store.ListingScreenshots, i, p, info.Width, info.Height))
-		}
-	}
-	return errs
 }
 
 // Play image types (AppImageType) used for the listing.

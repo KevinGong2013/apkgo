@@ -241,7 +241,7 @@ func TestListingSpec(t *testing.T) {
 		{"landscape screenshot", store.Listing{Screenshots: append(shots[:2:2], writePNG(t, "l.png", 1920, 1080))}, "aspect ratio must be 9:16"},
 		{"small webp icon", store.Listing{Icon: writeWebP(t, "i.webp", 216, 216, 100<<10)}, ""},
 		{"large webp icon", store.Listing{Icon: writeWebP(t, "i.webp", 216, 216, 100<<10+2)}, "webp 102402 bytes, at most 102400"},
-		{"large webp screenshot", store.Listing{Screenshots: append(shots[:2:2], writeWebP(t, "s.webp", 1080, 1920, 200<<10+2))}, "listing: screenshots[2]: "},
+		{"large webp screenshot", store.Listing{Screenshots: append(shots[:2:2], writeWebP(t, "s.webp", 1080, 1920, 200<<10+2))}, "listing screenshots[2]: "},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
