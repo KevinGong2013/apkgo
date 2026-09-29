@@ -23,6 +23,7 @@ import (
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/apk"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
+	"github.com/KevinGong2013/apkgo/v4/pkg/imgcheck"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
@@ -44,6 +45,26 @@ func init() {
 			{Key: "app_id", Required: false, Desc: "Tencent app ID (single-app fallback; required if app_id_map is empty)"},
 			{Key: "app_id_map", Required: false, Desc: `JSON map of package_name → app_id for multi-app setups, e.g. '{"com.foo":"111","com.bar":"222"}'`},
 			{Key: "package_name", Required: false, Desc: "Android package name (auto-detected from APK if omitted)"},
+		},
+		// update_app limits (wikinew.open.qq.com iwiki/4015262492):
+		// one_word_summary 5–15 字, introduce 60–500 字, icon a 512×512
+		// PNG (直角) ≤200KB, 4–5 screenshots ≤1MB each (1080×1920
+		// suggested) that must all share one size — see checkListing.
+		Listing: &store.ListingSpec{
+			Brief:       store.TextSpec{Min: 5, Max: 15},
+			Description: store.TextSpec{Min: 60, Max: 500},
+			Icon: store.ImageSpec{
+				Formats:  []string{"png"},
+				Sizes:    []store.Size{{Width: 512, Height: 512}},
+				MaxBytes: 200 * 1024,
+			},
+			Screenshot: store.ImageSpec{
+				Formats:  []string{"png", "jpeg"},
+				MaxBytes: 1 << 20,
+			},
+			MinScreenshots: 4,
+			MaxScreenshots: 5,
+			Check:          checkListing,
 		},
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
@@ -190,11 +211,85 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		}
 	}
 
-	// 3. Submit update. The app is now submitted and under review (审核中).
+	// 3. Listing (商店资料): upload its images for serial numbers so the
+	// listing goes into the same update_app call as the APK. Any failure
+	// aborts before update_app — nothing is submitted.
+	listing, err := s.listingParams(ctx, pkg, appID, req.Listing)
+	if err != nil {
+		return fmt.Errorf("listing: %w", err)
+	}
+
+	// 4. Submit update. The app is now submitted and under review (审核中).
 	// Review progress is decoupled from upload — poll it with `apkgo audit`
 	// (which runs on its own context) instead of blocking the upload here.
 	rep.Phase("publishing")
-	return s.updateApp(pkg, appID, req, apkSerial, apkMD5, apk64Serial, apk64MD5)
+	return s.updateApp(pkg, appID, req, apkSerial, apkMD5, apk64Serial, apk64MD5, listing)
+}
+
+// listingParams uploads l's icon and screenshots (file_type=img) and
+// returns the update_app fields for l. Only non-empty fields are set —
+// Tencent's rule for update_app is 不变更则不填, so an omitted field keeps
+// the store's current value. A nil or empty l yields no fields.
+func (s *Store) listingParams(ctx context.Context, pkg, appID string, l *store.Listing) (url.Values, error) {
+	params := url.Values{}
+	if l.Empty() {
+		return params, nil
+	}
+	if l.Brief != "" {
+		params.Set("one_word_summary", l.Brief)
+	}
+	if l.Description != "" {
+		params.Set("introduce", l.Description)
+	}
+
+	// Images are small; they don't count toward the APK progress bar.
+	rep := progress.Safe(nil)
+	if l.Icon != "" {
+		serial, _, err := s.uploadFile(ctx, pkg, appID, l.Icon, "img", rep)
+		if err != nil {
+			return nil, fmt.Errorf("upload icon: %w", err)
+		}
+		params.Set("icon_file_serial_number", serial)
+	}
+	if len(l.Screenshots) > 0 {
+		serials := make([]string, len(l.Screenshots))
+		for i, p := range l.Screenshots {
+			serial, _, err := s.uploadFile(ctx, pkg, appID, p, "img", rep)
+			if err != nil {
+				return nil, fmt.Errorf("upload screenshot %d: %w", i+1, err)
+			}
+			serials[i] = serial
+		}
+		// Display order = serial order, `|`-separated.
+		params.Set("snapshots_file_serial_number", strings.Join(serials, "|"))
+	}
+	return params, nil
+}
+
+// checkListing is the ListingSpec.Check for rules the generic spec can't
+// express: Tencent requires all screenshots to share one pixel size
+// (所有图片宽高一致). Unreadable files are skipped — ValidateListing
+// already reports those per screenshot.
+func checkListing(l *store.Listing) []error {
+	var errs []error
+	first := -1
+	var want imgcheck.Info
+	for i, p := range l.Screenshots {
+		info, err := imgcheck.Inspect(p)
+		if err != nil {
+			continue
+		}
+		if first < 0 {
+			first, want = i, info
+			continue
+		}
+		if info.Width != want.Width || info.Height != want.Height {
+			errs = append(errs, fmt.Errorf("%s[%d] is %dx%d but %s[%d] is %dx%d: all screenshots must be the same size",
+				store.ListingScreenshots, i, info.Width, info.Height,
+				store.ListingScreenshots, first, want.Width, want.Height))
+		}
+	}
+	return errs
 }
 
 // sumFileSizes totals the byte sizes of the given paths. Empty paths are ignored.
@@ -299,7 +394,10 @@ func (s *Store) uploadFile(ctx context.Context, pkg, appID, filePath, fileType s
 // Submitting an arm64-only APK as `apk32_flag=1` fails server-side with
 // `[4000045] 解析校验32位或32&64位兼容包失败`, so when no --file64 is given
 // we inspect lib/<abi>/ to pick the right single-file branch.
-func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial, apkMD5, apk64Serial, apk64MD5 string) error {
+//
+// listing carries the listing (商店资料) fields from listingParams; empty
+// when the upload has no listing.
+func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial, apkMD5, apk64Serial, apk64MD5 string, listing url.Values) error {
 	params := url.Values{}
 	params.Set("pkg_name", pkg)
 	params.Set("app_id", appID)
@@ -340,6 +438,11 @@ func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial
 	// Release notes
 	if req.ReleaseNotes != "" {
 		params.Set("feature", req.ReleaseNotes)
+	}
+
+	// Listing: only the fields being changed (不变更则不填).
+	for k, v := range listing {
+		params[k] = v
 	}
 
 	var resp tencentResp
