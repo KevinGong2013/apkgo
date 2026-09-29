@@ -24,6 +24,7 @@ import (
 	"github.com/go-resty/resty/v2"
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
+	"github.com/KevinGong2013/apkgo/v4/pkg/imgcheck"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
@@ -38,11 +39,49 @@ func init() {
 			{Key: "private_key", Required: true, Desc: "RSA private key (PEM) from Seller Portal"},
 			{Key: "content_id", Required: true, Desc: "App content ID in Galaxy Store"},
 		},
+		// Content Publish API reference (contentUpdate): text limits are in
+		// bytes, icon is a 512x512 PNG up to 1024 KB, screenshots are 4–8
+		// JPG/PNG of 320–3840px; the 2:1 aspect-ratio cap is in checkListing.
+		Listing: &store.ListingSpec{
+			Brief:       store.TextSpec{Max: 40, Unit: store.UnitBytes},
+			Description: store.TextSpec{Max: 4000, Unit: store.UnitBytes},
+			Icon: store.ImageSpec{
+				Formats:  []string{"png"},
+				Sizes:    []store.Size{{Width: 512, Height: 512}},
+				MaxBytes: 1024 * 1024,
+			},
+			Screenshot: store.ImageSpec{
+				Formats: []string{"png", "jpeg"},
+				MinEdge: 320,
+				MaxEdge: 3840,
+			},
+			MinScreenshots: 4,
+			MaxScreenshots: 8,
+			Check:          checkListing,
+		},
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
 	store.RegisterAuditor("samsung", audit)
 	store.RegisterDiagnoser("samsung", diagnose)
+}
+
+// checkListing adds the screenshot rule ImageSpec can't express: Galaxy
+// Store caps the aspect ratio at 2:1 (either orientation). Unreadable files
+// are skipped — ValidateListing already reports them.
+func checkListing(l *store.Listing) []error {
+	var errs []error
+	for i, p := range l.Screenshots {
+		info, err := imgcheck.Inspect(p)
+		if err != nil {
+			continue
+		}
+		if max(info.Width, info.Height) > 2*min(info.Width, info.Height) {
+			errs = append(errs, fmt.Errorf("%s[%d]: %s: size %dx%d, aspect ratio must be at most 2:1",
+				store.ListingScreenshots, i, p, info.Width, info.Height))
+		}
+	}
+	return errs
 }
 
 // diagnose is registered with `apkgo doctor`. It exercises the read-only
@@ -318,17 +357,14 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 	return store.NewResult(s.Name(), start)
 }
 
-func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
+func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	rep := progress.Safe(req.Progress)
 
 	// 1. Create an upload session. The response carries an absolute upload URL
 	//    (on seller.samsungapps.com — a different host from the API gateway)
 	//    plus a sessionId valid for 24h.
 	rep.Phase("auth")
-	var session struct {
-		URL       string `json:"url"`
-		SessionID string `json:"sessionId"`
-	}
+	var session uploadSession
 	if _, err := s.client.R().SetResult(&session).Post("/seller/createUploadSessionId"); err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
@@ -336,42 +372,22 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		return fmt.Errorf("create session: response missing url/sessionId")
 	}
 
-	// 2. Upload the APK to the session URL. Per the docs sessionId is a
-	//    multipart form field (not a query param), and the upload needs the
-	//    service-account-id header like every other content call.
+	// 2. Upload the APK to the session URL.
 	rep.Phase("uploading")
-	rc, fSize, err := progress.OpenFile(req.FilePath, rep)
+	fileKey, err := s.uploadFile(ctx, session, req.FilePath, rep)
 	if err != nil {
-		return fmt.Errorf("open apk: %w", err)
+		return err
 	}
-	defer rc.Close()
 
-	httpResp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
-		Method:  http.MethodPost,
-		URL:     session.URL,
-		Headers: samsungAuthHeaders(s),
-		Fields:  map[string]string{"sessionId": session.SessionID},
-		Files:   []httpx.FileField{{Field: "file", FileName: filepath.Base(req.FilePath), Reader: rc, Size: fSize}},
-		Client:  s.uploadClient, // nil unless APKGO_SAMSUNG_HTTPS_PROXY is set
-	})
-	if err != nil {
-		return fmt.Errorf("upload: %w", err)
-	}
-	defer httpResp.Body.Close()
-	body, _ := io.ReadAll(httpResp.Body)
-	if httpResp.StatusCode >= 400 {
-		return fmt.Errorf("upload failed: http %d: %s", httpResp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var uploadResp struct {
-		FileKey  string `json:"fileKey"`
-		ErrorMsg string `json:"errorMsg,omitempty"`
-	}
-	if jerr := json.Unmarshal(body, &uploadResp); jerr != nil {
-		return fmt.Errorf("decode upload response (HTTP %d): %v: %s",
-			httpResp.StatusCode, jerr, strings.TrimSpace(string(body)))
-	}
-	if uploadResp.FileKey == "" {
-		return fmt.Errorf("upload failed: %s", uploadResp.ErrorMsg)
+	// 2b. Upload the listing images (same session) and collect the listing
+	//     fields for contentUpdate below. Any failure aborts before the
+	//     update version is created, so nothing is submitted.
+	var listing map[string]any
+	if !req.Listing.Empty() {
+		rep.Phase("listing")
+		if listing, err = s.listingFields(ctx, session, req.Listing); err != nil {
+			return err
+		}
 	}
 
 	// 3. Read the app's current state once: the metadata (defaultLanguageCode/
@@ -379,7 +395,7 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	//    contentUpdate below, plus the newest binary's gms flag (many apps are
 	//    gms="N") and its binarySeq for device-group mapping.
 	rep.Phase("publishing")
-	cur, err := s.fetchContentInfo(context.Background())
+	cur, err := s.fetchContentInfo(ctx)
 	if err != nil {
 		return fmt.Errorf("read content: %w", err)
 	}
@@ -408,6 +424,12 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 		upd["publicationType"] = "02" // scheduled date (01 = auto after review, 03 = manual)
 		upd["startPublicationDate"] = store.BeijingLocalTime(*req.ReleaseTime)
 	}
+	// The listing (商店资料) rides on this same contentUpdate — the official
+	// "submit an update" flow edits app data here — so it's reviewed
+	// together with the new binary.
+	for k, v := range listing {
+		upd[k] = v
+	}
 	// contentUpdate can answer 200 with a non-zero resultCode (logical error);
 	// the non-2xx hook won't catch that, so check it explicitly.
 	var updResp struct {
@@ -428,7 +450,7 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	add := map[string]any{
 		"contentId": s.contentID,
 		"gms":       gms,
-		"filekey":   uploadResp.FileKey,
+		"filekey":   fileKey,
 	}
 	if binarySeq != "" {
 		add["binarySeqForDeviceInfo"] = binarySeq
@@ -451,6 +473,90 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 	}
 
 	return nil
+}
+
+// uploadSession is a createUploadSessionId response: the absolute upload URL
+// and a sessionId valid for 24h. One session carries the binary and the
+// listing images.
+type uploadSession struct {
+	URL       string `json:"url"`
+	SessionID string `json:"sessionId"`
+}
+
+// uploadFile uploads the local file at path to the session URL and returns
+// its fileKey. Per the docs sessionId is a multipart form field (not a query
+// param), and the upload needs the service-account-id header like every
+// other content call. Byte progress goes to rep.
+func (s *Store) uploadFile(ctx context.Context, session uploadSession, path string, rep progress.Reporter) (string, error) {
+	name := filepath.Base(path)
+	rc, fSize, err := progress.OpenFile(path, rep)
+	if err != nil {
+		return "", fmt.Errorf("open %s: %w", name, err)
+	}
+	defer rc.Close()
+
+	httpResp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
+		Method:  http.MethodPost,
+		URL:     session.URL,
+		Headers: samsungAuthHeaders(s),
+		Fields:  map[string]string{"sessionId": session.SessionID},
+		Files:   []httpx.FileField{{Field: "file", FileName: name, Reader: rc, Size: fSize}},
+		Client:  s.uploadClient, // nil unless APKGO_SAMSUNG_HTTPS_PROXY is set
+	})
+	if err != nil {
+		return "", fmt.Errorf("upload %s: %w", name, err)
+	}
+	defer httpResp.Body.Close()
+	body, _ := io.ReadAll(httpResp.Body)
+	if httpResp.StatusCode >= 400 {
+		return "", fmt.Errorf("upload %s failed: http %d: %s", name, httpResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var uploadResp struct {
+		FileKey  string `json:"fileKey"`
+		ErrorMsg string `json:"errorMsg,omitempty"`
+	}
+	if jerr := json.Unmarshal(body, &uploadResp); jerr != nil {
+		return "", fmt.Errorf("decode upload response for %s (HTTP %d): %v: %s",
+			name, httpResp.StatusCode, jerr, strings.TrimSpace(string(body)))
+	}
+	if uploadResp.FileKey == "" {
+		return "", fmt.Errorf("upload %s failed: %s", name, uploadResp.ErrorMsg)
+	}
+	return uploadResp.FileKey, nil
+}
+
+// listingFields uploads the listing's icon and screenshots through session
+// and returns the contentUpdate fields for l. Only non-empty fields are
+// returned; an omitted field keeps the store's current value.
+func (s *Store) listingFields(ctx context.Context, session uploadSession, l *store.Listing) (map[string]any, error) {
+	fields := map[string]any{}
+	if l.Brief != "" {
+		fields["shortDescription"] = l.Brief
+	}
+	if l.Description != "" {
+		fields["longDescription"] = l.Description
+	}
+	if l.Icon != "" {
+		key, err := s.uploadFile(ctx, session, l.Icon, progress.Safe(nil))
+		if err != nil {
+			return nil, fmt.Errorf("listing %s: %w", store.ListingIcon, err)
+		}
+		fields["iconKey"] = key
+	}
+	if len(l.Screenshots) > 0 {
+		// The array is the full, ordered screenshot set: existing screenshots
+		// left out of it are removed, and reuseYn=false + a new key replaces.
+		shots := make([]map[string]any, 0, len(l.Screenshots))
+		for i, p := range l.Screenshots {
+			key, err := s.uploadFile(ctx, session, p, progress.Safe(nil))
+			if err != nil {
+				return nil, fmt.Errorf("listing %s[%d]: %w", store.ListingScreenshots, i, err)
+			}
+			shots = append(shots, map[string]any{"screenshotKey": key, "reuseYn": false})
+		}
+		fields["screenshots"] = shots
+	}
+	return fields, nil
 }
 
 func (s *Store) getAccessToken() (string, error) {

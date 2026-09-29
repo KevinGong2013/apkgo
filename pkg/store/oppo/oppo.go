@@ -33,6 +33,7 @@ func init() {
 			{Key: "client_id", Required: true, Desc: "OPPO open platform client ID"},
 			{Key: "client_secret", Required: true, Desc: "OPPO open platform client secret"},
 		},
+		Listing: listingSpec,
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
@@ -254,7 +255,26 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		apkInfos = append(apkInfos, apkInfo{URL: result64.URL, MD5: result64.MD5, CpuCode: 64})
 	}
 
-	// 3. Publish. Two errno cases here are not real failures:
+	// 3. Listing (商店资料): upload its images and swap the new values into
+	// the fields /app/upd round-trips, so they're reviewed with this
+	// version. Any failure stops here, before anything is submitted.
+	if !req.Listing.Empty() {
+		rep.Phase("listing")
+		if err := s.applyListing(ctx, app, req.Listing); err != nil {
+			return fmt.Errorf("listing: %w", err)
+		}
+	}
+
+	// OPPO's /app/upd re-validates the icon_url it round-trips from /app/info
+	// (must be a 512×512 PNG <1MB). If the stored icon doesn't comply, swap in
+	// one extracted from the APK and re-uploaded; otherwise this is a no-op.
+	// A listing icon was already validated against the same rule, so it
+	// replaces the stored one as is.
+	if req.Listing == nil || req.Listing.Icon == "" {
+		app.IconURL = s.compliantIconURL(ctx, app.IconURL, req.FilePath, rep)
+	}
+
+	// 4. Publish. Two errno cases here are not real failures:
 	//
 	//   911216 "版本更新任务处理中" — a previous publish for this same
 	//     version is still being processed. Skip ahead to polling; the
@@ -263,26 +283,32 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	//   911215 "应用审核中" — the previous task has already finished and
 	//     the version is in OPPO's review queue. apkgo's job is done;
 	//     return success.
-	// OPPO's /app/upd re-validates the icon_url it round-trips from /app/info
-	// (must be a 512×512 PNG <1MB). If the stored icon doesn't comply, swap in
-	// one extracted from the APK and re-uploaded; otherwise this is a no-op.
-	app.IconURL = s.compliantIconURL(ctx, app.IconURL, req.FilePath, rep)
-
+	//
+	// In both cases OPPO kept the earlier submission, so this run's listing
+	// never reached it: the result is already-done, which keeps
+	// store.ListingResult from claiming the listing.
 	rep.Phase("publishing")
+	inFlight := false
 	if err := s.publish(req, app, apkInfos); err != nil {
 		switch {
 		case isOppoUnderReview(err):
 			return &store.AlreadyDoneError{Reason: "version already in OPPO review queue"}
 		case isOppoTaskInFlight(err):
-			// fall through to polling
+			inFlight = true // fall through to polling
 		default:
 			return fmt.Errorf("publish: %w", err)
 		}
 	}
 
-	// 4. Poll task state
+	// 5. Poll task state
 	rep.Phase("polling")
-	return s.pollTaskState(ctx, req.PackageName, strconv.Itoa(int(req.VersionCode)))
+	if err := s.pollTaskState(ctx, req.PackageName, strconv.Itoa(int(req.VersionCode))); err != nil {
+		return err
+	}
+	if inFlight && !req.Listing.Empty() {
+		return &store.AlreadyDoneError{Reason: "an earlier publish of this version was still in progress; this run's listing was not submitted"}
+	}
+	return nil
 }
 
 // isOppoTaskInFlight reports whether the publish failure is the
@@ -369,6 +395,7 @@ func (s *Store) uploadFile(ctx context.Context, filePath, fileType string, rep p
 		} `json:"data"`
 	}
 	httpResp, err := s.client.R().
+		SetContext(ctx).
 		SetResult(&urlResp).
 		SetQueryParamsFromValues(s.sign(url.Values{})).
 		Get("/resource/v1/upload/get-upload-url")
@@ -491,6 +518,10 @@ func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkIn
 // so a polling timeout means "task is in flight, finish in the console".
 const oppoConsoleURL = "https://open.oppomobile.com"
 
+// taskPollInterval is pollTaskState's delay between task-state queries.
+// A var so tests can shorten it.
+var taskPollInterval = 10 * time.Second
+
 // pollTaskState waits for OPPO's async publish task to finish. Empirically
 // the task can take anywhere from ~30s for a clean update to several
 // minutes for a fresh review, so we poll for ~5 minutes (30 × 10s) before
@@ -498,10 +529,8 @@ const oppoConsoleURL = "https://open.oppomobile.com"
 // a hard failure, since the package is already on OPPO's side at that
 // point and the operator's recovery action is to finish in the console.
 func (s *Store) pollTaskState(ctx context.Context, pkgName, versionCode string) error {
-	const (
-		attempts = 30
-		interval = 10 * time.Second
-	)
+	const attempts = 30
+	interval := taskPollInterval
 
 	wrap := func(format string, args ...any) error {
 		return fmt.Errorf(format+" (APK 已上传，发布任务已创建；可在 OPPO 后台查看进度：%s)", append(args, oppoConsoleURL)...)
