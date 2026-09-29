@@ -72,8 +72,9 @@
 - **非本地化**：`PUT /api/publish/v2/app-info` —— apkgo 现在已经在用这个接口改 `newFeatures`（见 `pkg/store/huawei/huawei.go`），也支持 `defaultLang`、`privacyPolicy`、`isFree`/`price`/`priceDetail`、`publishCountry`、`childType`/`grandChildType`（分类）。
 - **本地化**：`PUT /api/publish/v2/app-language-info` —— `lang`（必填）、`appName`（≤64字符）、`appDesc`（长描述，≤8000字符）、`briefInfo`（简介，≤80字符）、`newFeatures`（≤500字符）。
 - **文件类（icon/截图/宣传图）**：走与 APK 相同的三步流程（`upload-url` → multipart 上传 → `PUT /api/publish/v2/app-file-info`）。`fileType` 枚举：`0`=icon，`1`=介绍视频+海报，`2`=截图，`3`=宣传视频+海报，`4`=推广/特色图，`5`=应用包（apkgo 现用），`6-16`=证书/VR素材。
-  - icon：216×216px PNG（限制 ≤2MB 或 ≤500KB，两份文档不一致，取严格值），仅 1 张。
-  - 截图：450×800（竖）或 800×450（横），JPG/JPEG/PNG，手机端 3–5 张，≤2MB/张。
+  - icon：216×216px，PNG ≤500KB / WEBP ≤100KB，仅 1 张（附录「应用文件要求」→ Android应用，2026-03）。
+  - 截图：以 **AGC 控制台**为准——手机 3–10 张，最低 1080×1920 且宽高比 9:16，PNG/JPG/JPEG ≤5MB/张。附录（2026-03）仍写竖 720×1280 / 横 1280×720、3–5 张，已落后于控制台。
+  - ⚠️ 附录表格里「竖屏 450×800、≤2MB」是**应用介绍视频海报**的规格，不是截图，早先调研误读。
   - 推广图：PNG/JPG/JPEG/WebP，≤2MB。
 - **本地化维度**：`app-language-info` 要求 `lang`；`app-file-info` 更新图片/视频类文件时**同样要求语言参数**。
 - **生效方式**（官方帮助中心「更新应用信息」）：不换包做「同版本升级」，改资料后提交审核，通过才生效；已提交审核后要改资料需先「撤销审核」。
@@ -253,6 +254,6 @@ Android Publisher API v3，与现有 `androidpublisher.googleapis.com` 上传流
 7. **长度/规格差异很大**，校验（最好加自动缩放）放在各 store 包内部，而不是 `pkg/store` 通用层：
    - 一句话介绍：OPPO ≤13（无标点空格）、腾讯 5–15 字、vivo 5–16 字、小米 ≤17 字、三星 ≤40 字节、华为/鸿蒙/荣耀/Google Play ≤80；
    - 长描述：魅族 100–1000、vivo 50–1000、腾讯 60–500、OPPO ≥20；
-   - icon：华为/鸿蒙 216×216（鸿蒙也可 1024×1024），vivo 256–512 正方形，其余 512×512；荣耀/腾讯 ≤200KB、vivo ≤500KB；
-   - 截图张数：腾讯 4–5、三星 4–8、vivo/荣耀 3–5、鸿蒙 3–10、OPPO 竖版 ≥2；尺寸多为 1080×1920。
+   - icon：华为/鸿蒙 216×216（鸿蒙也可 1024×1024），vivo 256–512 正方形，其余 512×512；荣耀/腾讯 ≤200KB、华为/vivo ≤500KB；
+   - 截图张数：腾讯 4–5、三星 4–8、vivo/荣耀 3–5、华为/鸿蒙 3–10、OPPO 竖版 ≥2；尺寸多为 1080×1920（华为/鸿蒙为最低 1080×1920 且 9:16）。
 8. **实现前先实测**：见 TL;DR「仍需实测」清单。
