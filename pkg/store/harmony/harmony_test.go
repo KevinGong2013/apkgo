@@ -26,20 +26,25 @@ type fakeAGC struct {
 	srv     *httptest.Server
 	mu      sync.Mutex
 	calls   []string
-	putBody []byte
+	putBody []byte // the .app bytes
 	putHdr  http.Header
 	putHost string
+	objects map[string][]byte // every OBS PUT body, by objectId
 
-	compilePolls int // how many status polls report "still compiling"
-	submitBusy   int // how many submits report "still compiling"
-	notesLang    string
-	notesText    string
-	submitBody   map[string]any
-	uploadQuery  map[string]string
+	compilePolls  int // how many status polls report "still compiling"
+	submitBusy    int // how many submits report "still compiling"
+	fileInfoCode  int // non-zero: app-file-info fails with this ret code
+	notesLang     string
+	notesText     string
+	langBody      map[string]string
+	fileInfoQuery map[string]string
+	fileInfoBody  []byte
+	submitBody    map[string]any
+	uploadQueries []map[string]string
 }
 
 func newFakeAGC(t *testing.T) *fakeAGC {
-	f := &fakeAGC{t: t}
+	f := &fakeAGC{t: t, objects: map[string][]byte{}}
 	mux := http.NewServeMux()
 	ok := func(w http.ResponseWriter, extra map[string]any) {
 		w.Header().Set("Content-Type", "application/json")
@@ -63,14 +68,12 @@ func newFakeAGC(t *testing.T) *fakeAGC {
 	mux.HandleFunc("/api/publish/v2/upload-url/for-obs", func(w http.ResponseWriter, r *http.Request) {
 		f.record("upload-url")
 		f.mu.Lock()
-		f.uploadQuery = map[string]string{}
-		for k := range r.URL.Query() {
-			f.uploadQuery[k] = r.URL.Query().Get(k)
-		}
+		f.uploadQueries = append(f.uploadQueries, flatQuery(r))
 		f.mu.Unlock()
+		objectID := "CN/2026091101/" + r.URL.Query().Get("fileName")
 		ok(w, map[string]any{"urlInfo": map[string]any{
-			"objectId": "CN/2026091101/obj.app",
-			"url":      f.srv.URL + "/obs/CN/2026091101/obj.app",
+			"objectId": objectID,
+			"url":      f.srv.URL + "/obs/" + objectID,
 			"method":   "PUT",
 			"headers": map[string]string{
 				"Authorization":        "AWS4-HMAC-SHA256 sig",
@@ -88,10 +91,14 @@ func newFakeAGC(t *testing.T) *fakeAGC {
 			t.Errorf("obs method = %s", r.Method)
 		}
 		b, _ := io.ReadAll(r.Body)
+		objectID := strings.TrimPrefix(r.URL.Path, "/obs/")
 		f.mu.Lock()
-		f.putBody = b
-		f.putHdr = r.Header.Clone()
-		f.putHost = r.Host
+		f.objects[objectID] = b
+		if strings.HasSuffix(objectID, ".app") {
+			f.putBody = b
+			f.putHdr = r.Header.Clone()
+			f.putHost = r.Host
+		}
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	})
@@ -99,7 +106,7 @@ func newFakeAGC(t *testing.T) *fakeAGC {
 		f.record("app-package-info")
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["objectId"] != "CN/2026091101/obj.app" || !strings.HasSuffix(body["fileName"], ".app") {
+		if body["objectId"] != "CN/2026091101/"+body["fileName"] || !strings.HasSuffix(body["fileName"], ".app") {
 			t.Errorf("app-package-info body = %v", body)
 		}
 		ok(w, map[string]any{"packageId": "pkg-9"})
@@ -118,7 +125,25 @@ func newFakeAGC(t *testing.T) *fakeAGC {
 		json.NewDecoder(r.Body).Decode(&body)
 		f.mu.Lock()
 		f.notesLang, f.notesText = body["lang"], body["newFeatures"]
+		f.langBody = body
 		f.mu.Unlock()
+		ok(w, nil)
+	})
+	mux.HandleFunc("/api/publish/v3/app-file-info", func(w http.ResponseWriter, r *http.Request) {
+		f.record("app-file-info")
+		if r.Method != http.MethodPut {
+			t.Errorf("app-file-info method = %s", r.Method)
+		}
+		b, _ := io.ReadAll(r.Body)
+		f.mu.Lock()
+		f.fileInfoQuery, f.fileInfoBody = flatQuery(r), b
+		code := f.fileInfoCode
+		f.mu.Unlock()
+		if code != 0 {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"ret": map[string]any{"code": code, "msg": "screenshot resolution invalid"}})
+			return
+		}
 		ok(w, nil)
 	})
 	mux.HandleFunc("/api/publish/v3/package/compile/status", func(w http.ResponseWriter, r *http.Request) {
@@ -153,6 +178,14 @@ func newFakeAGC(t *testing.T) *fakeAGC {
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
 	return f
+}
+
+func flatQuery(r *http.Request) map[string]string {
+	q := map[string]string{}
+	for k := range r.URL.Query() {
+		q[k] = r.URL.Query().Get(k)
+	}
+	return q
 }
 
 func (f *fakeAGC) record(name string) {
@@ -220,9 +253,9 @@ func TestUploadHappyPath(t *testing.T) {
 		t.Errorf("Host = %q, want obs.example.com", f.putHost)
 	}
 	sum := sha256.Sum256([]byte("fake harmony app pack bytes"))
-	if f.uploadQuery["sha256"] != hex.EncodeToString(sum[:]) || f.uploadQuery["contentLength"] != "27" ||
-		f.uploadQuery["fileName"] != "demo-default-signed.app" || f.uploadQuery["chineseMainlandFlag"] != "1" {
-		t.Errorf("upload-url query = %v", f.uploadQuery)
+	if q := f.uploadQueries[0]; q["sha256"] != hex.EncodeToString(sum[:]) || q["contentLength"] != "27" ||
+		q["fileName"] != "demo-default-signed.app" || q["chineseMainlandFlag"] != "1" {
+		t.Errorf("upload-url query = %v", q)
 	}
 	if f.notesLang != "zh-CN" || f.notesText != "修复若干问题" {
 		t.Errorf("release notes = %q/%q", f.notesLang, f.notesText)
