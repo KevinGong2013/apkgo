@@ -26,7 +26,7 @@ curl -fsSL https://apkgo.com.cn/install.sh | sh
 npx skills add KevinGong2013/apkgo
 
 # Go
-go install github.com/KevinGong2013/apkgo@latest
+go install github.com/KevinGong2013/apkgo/v3@latest
 
 # Docker
 docker pull ghcr.io/kevingong2013/apkgo:latest
@@ -52,6 +52,8 @@ curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo
 # Download apkgo_Windows_x86_64.zip from https://github.com/KevinGong2013/apkgo/releases/latest
 # Extract and add apkgo.exe to PATH
 ```
+
+> If `apkgo version` reports `unknown command`, or the help lists only `doctor` / `upload`, an old apkgo earlier on your PATH is shadowing the new one (typically v1, left in `%USERPROFILE%\go\bin` by a `go install` without `/v3`). Run `where apkgo` (macOS/Linux: `which -a apkgo`) to list every copy and delete the stale one.
 
 </details>
 
