@@ -38,41 +38,24 @@ var listingSpec = &store.ListingSpec{
 	Brief:       store.TextSpec{Max: 80},
 	Description: store.TextSpec{Max: 8000},
 	Icon: store.ImageSpec{
-		Formats:  []string{"png", "webp"},
-		Sizes:    []store.Size{{Width: 216, Height: 216}},
-		MaxBytes: 500 << 10,
+		Formats:          []string{"png", "webp"},
+		Sizes:            []store.Size{{Width: 216, Height: 216}},
+		MaxBytes:         500 << 10,
+		MaxBytesByFormat: map[string]int64{"webp": webpMaxBytes},
 	},
 	Screenshot: store.ImageSpec{
-		Formats:  []string{"png", "jpeg", "webp"},
-		Aspect:   &store.Size{Width: 9, Height: 16},
-		MaxBytes: 2 << 20,
+		Formats:          []string{"png", "jpeg", "webp"},
+		Aspect:           &store.Size{Width: 9, Height: 16},
+		MaxBytes:         2 << 20,
+		MaxBytesByFormat: map[string]int64{"webp": webpMaxBytes},
 	},
 	MinScreenshots: 3,
 	MaxScreenshots: 5,
-	Check:          checkListing,
 }
 
 // webpMaxBytes caps WEBP icons and screenshots; PNG/JPEG get the larger
 // ImageSpec.MaxBytes.
 const webpMaxBytes = 100 << 10
-
-func checkListing(l *store.Listing) []error {
-	var errs []error
-	check := func(field, path string) {
-		info, err := imgcheck.Inspect(path)
-		if err != nil || info.Format != "webp" || info.Bytes <= webpMaxBytes {
-			return // unreadable files are already reported by ValidateListing
-		}
-		errs = append(errs, fmt.Errorf("%s: %s: webp %d bytes, at most %d allowed", field, path, info.Bytes, webpMaxBytes))
-	}
-	if l.Icon != "" {
-		check(store.ListingIcon, l.Icon)
-	}
-	for i, p := range l.Screenshots {
-		check(fmt.Sprintf("%s[%d]", store.ListingScreenshots, i), p)
-	}
-	return errs
-}
 
 // updateListing submits l's non-empty fields for the app's default
 // language, as part of the draft version that app-submit sends to review:

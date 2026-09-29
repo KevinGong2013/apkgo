@@ -24,7 +24,6 @@ import (
 	"github.com/go-resty/resty/v2"
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
-	"github.com/KevinGong2013/apkgo/v4/pkg/imgcheck"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
@@ -41,7 +40,7 @@ func init() {
 		},
 		// Content Publish API reference (contentUpdate): text limits are in
 		// bytes, icon is a 512x512 PNG up to 1024 KB, screenshots are 4–8
-		// JPG/PNG of 320–3840px; the 2:1 aspect-ratio cap is in checkListing.
+		// JPG/PNG of 320–3840px with an aspect ratio of at most 2:1.
 		Listing: &store.ListingSpec{
 			Brief:       store.TextSpec{Max: 40, Unit: store.UnitBytes},
 			Description: store.TextSpec{Max: 4000, Unit: store.UnitBytes},
@@ -51,37 +50,19 @@ func init() {
 				MaxBytes: 1024 * 1024,
 			},
 			Screenshot: store.ImageSpec{
-				Formats: []string{"png", "jpeg"},
-				MinEdge: 320,
-				MaxEdge: 3840,
+				Formats:   []string{"png", "jpeg"},
+				MinEdge:   320,
+				MaxEdge:   3840,
+				MaxAspect: &store.Size{Width: 2, Height: 1},
 			},
 			MinScreenshots: 4,
 			MaxScreenshots: 8,
-			Check:          checkListing,
 		},
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
 	store.RegisterAuditor("samsung", audit)
 	store.RegisterDiagnoser("samsung", diagnose)
-}
-
-// checkListing adds the screenshot rule ImageSpec can't express: Galaxy
-// Store caps the aspect ratio at 2:1 (either orientation). Unreadable files
-// are skipped — ValidateListing already reports them.
-func checkListing(l *store.Listing) []error {
-	var errs []error
-	for i, p := range l.Screenshots {
-		info, err := imgcheck.Inspect(p)
-		if err != nil {
-			continue
-		}
-		if max(info.Width, info.Height) > 2*min(info.Width, info.Height) {
-			errs = append(errs, fmt.Errorf("%s[%d]: %s: size %dx%d, aspect ratio must be at most 2:1",
-				store.ListingScreenshots, i, p, info.Width, info.Height))
-		}
-	}
-	return errs
 }
 
 // diagnose is registered with `apkgo doctor`. It exercises the read-only
@@ -552,6 +533,7 @@ func (s *Store) listingFields(ctx context.Context, session uploadSession, l *sto
 			if err != nil {
 				return nil, fmt.Errorf("listing %s[%d]: %w", store.ListingScreenshots, i, err)
 			}
+			// reuseYn is a JSON boolean, as in the modify-app-data example.
 			shots = append(shots, map[string]any{"screenshotKey": key, "reuseYn": false})
 		}
 		fields["screenshots"] = shots

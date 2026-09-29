@@ -280,15 +280,17 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (int64, er
 	// 4. Submit for review, echoing the currently-listed metadata with
 	// the new package, release notes and listing. A latest version
 	// sitting in "审核不通过" must go through failapp/update instead of
-	// publish (which would fail with 113042/113046); that endpoint takes
-	// the version id as `verisonId` (sic, official spelling in docs
-	// §3.7), not `verId`.
+	// publish (which would fail with 113042/113046). The docs (§3.7) spell
+	// that endpoint's version id `verisonId` while responses use `verId`;
+	// neither is confirmed against a live account yet, so send both (an
+	// unknown key is ignored).
 	rep.Phase("publishing")
 	body := det.publishBody(packageURL, req.ReleaseNotes, lu)
 	uri := "/open/api/v1/app/publish"
 	if app.Status == statusRejected {
 		uri = "/open/api/v1/app/failapp/update"
 		body["verisonId"] = app.VerID
+		body["verId"] = app.VerID
 	}
 	verID, err := s.submit(ctx, uri, body)
 	if err != nil {

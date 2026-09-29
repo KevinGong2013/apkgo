@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -230,9 +231,10 @@ const (
 // get-file-upload-url / upload-by-url. update-file-info binds by objectId
 // only; the type travels with the object.
 const (
-	fileTypeIcon               = 1   // 应用图标, per language
-	fileTypePortraitScreenshot = 3   // 应用介绍截图-纵向, per language, ordered from 0
-	fileTypeAPK                = 100 // 应用包
+	fileTypeIcon                = 1   // 应用图标, per language
+	fileTypeLandscapeScreenshot = 2   // 应用介绍截图-横向 (never sent; mutually exclusive with 3)
+	fileTypePortraitScreenshot  = 3   // 应用介绍截图-纵向, per language, ordered from 0
+	fileTypeAPK                 = 100 // 应用包
 )
 
 // Download-mode (upload-by-url) constants. Honor pulls the package from a
@@ -313,9 +315,22 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (string, e
 	// We need the existing appName/intro/briefIntro to echo back verbatim
 	// when we PATCH the release notes later — update-language-info will
 	// overwrite these fields with empty strings if we don't resend them.
-	lang, err := s.getAppLanguage(appID)
+	lang, files, err := s.getAppDetail(appID)
 	if err != nil {
 		return "", fmt.Errorf("get app detail: %w", err)
+	}
+
+	listing := req.Listing
+	if listing.Empty() {
+		listing = nil
+	}
+	// Honor takes one screenshot orientation per app and apkgo only binds
+	// portrait ones, so refuse before uploading anything when the app
+	// currently has landscape screenshots — review would reject the mix.
+	if listing != nil && len(listing.Screenshots) > 0 &&
+		slices.ContainsFunc(files, func(f pubFileInfo) bool { return f.FileType == fileTypeLandscapeScreenshot }) {
+		return "", store.Categorize(store.CategoryConfigInvalid,
+			fmt.Errorf("honor app currently has landscape screenshots (横向截图) but the listing's are portrait — switch the console to 纵向截图 or drop screenshots from the listing"))
 	}
 
 	// Get the APK to Honor. When -f is a public URL and the APK is large
@@ -335,10 +350,6 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (string, e
 	// Listing images ride along with this version: staged now, bound in the
 	// same update-file-info call as the APK. A single call keeps the APK
 	// binding intact whatever Honor does with files a later call leaves out.
-	listing := req.Listing
-	if listing.Empty() {
-		listing = nil
-	}
 	if listing != nil {
 		rep.Phase("listing")
 		images, err := s.uploadListingImages(ctx, appID, lang.LanguageID, listing)
@@ -350,7 +361,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (string, e
 
 	rep.Phase("publishing")
 	if err := s.bindFiles(ctx, appID, bindings); err != nil {
-		return "", fmt.Errorf("upload apk: %w", err)
+		return "", fmt.Errorf("bind files: %w", err)
 	}
 
 	if req.ReleaseNotes != "" || (listing != nil && (listing.Brief != "" || listing.Description != "")) {
@@ -470,11 +481,24 @@ type languageInfo struct {
 	BriefIntro string `json:"briefIntro,omitempty"`
 }
 
+// pubFileInfo is one entry of get-app-detail's fileInfo (应用绑定文件列表).
+type pubFileInfo struct {
+	FileType int `json:"fileType"`
+}
+
 func (s *Store) getAppLanguage(appID string) (*languageInfo, error) {
+	lang, _, err := s.getAppDetail(appID)
+	return lang, err
+}
+
+// getAppDetail reads get-app-detail: the language entry release notes and
+// listing text go to (zh-CN, else the first) plus the app's bound files.
+func (s *Store) getAppDetail(appID string) (*languageInfo, []pubFileInfo, error) {
 	var resp struct {
 		honorResp
 		Data struct {
 			LanguageInfo []languageInfo `json:"languageInfo"`
+			FileInfo     []pubFileInfo  `json:"fileInfo"`
 		} `json:"data"`
 	}
 	httpResp, err := s.client.R().
@@ -482,24 +506,24 @@ func (s *Store) getAppLanguage(appID string) (*languageInfo, error) {
 		SetResult(&resp).
 		Get("/openapi/v1/publish/get-app-detail")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if httpResp.IsError() {
-		return nil, fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+		return nil, nil, fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
 	}
 	if resp.Code != 0 {
-		return nil, fmt.Errorf("[%d] %s", resp.Code, resp.text())
+		return nil, nil, fmt.Errorf("[%d] %s", resp.Code, resp.text())
 	}
 	if len(resp.Data.LanguageInfo) == 0 {
-		return nil, fmt.Errorf("no languageInfo in app detail response")
+		return nil, nil, fmt.Errorf("no languageInfo in app detail response")
 	}
 	// Prefer zh-CN; fall back to whatever is first.
 	for i := range resp.Data.LanguageInfo {
 		if resp.Data.LanguageInfo[i].LanguageID == "zh-CN" {
-			return &resp.Data.LanguageInfo[i], nil
+			return &resp.Data.LanguageInfo[i], resp.Data.FileInfo, nil
 		}
 	}
-	return &resp.Data.LanguageInfo[0], nil
+	return &resp.Data.LanguageInfo[0], resp.Data.FileInfo, nil
 }
 
 // ---- upload: url → put → bind ----
@@ -527,7 +551,7 @@ func (s *Store) uploadListingImages(ctx context.Context, appID, languageID strin
 	for i, p := range l.Screenshots {
 		objectID, err := s.uploadFile(ctx, appID, p, imageFileName(p), fileTypePortraitScreenshot, rep)
 		if err != nil {
-			return nil, fmt.Errorf("screenshot %d: %w", i, err)
+			return nil, fmt.Errorf("screenshot %d: %w", i+1, err)
 		}
 		bindings = append(bindings, map[string]any{"objectId": objectID, "languageId": languageID, "order": i})
 	}

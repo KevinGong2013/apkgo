@@ -24,8 +24,8 @@ type StoreEntry struct {
 	Before  string
 	After   string
 	Timeout time.Duration // zero means inherit parent ctx
-	// Listing is this store's resolved listing (商店资料), or nil. It
-	// replaces UploadRequest.Listing for this store.
+	// Listing, when non-nil, is this store's resolved listing (商店资料)
+	// and replaces UploadRequest.Listing for it; nil keeps the request's.
 	Listing *store.Listing
 }
 
@@ -78,7 +78,9 @@ func (u *Uploader) Run(ctx context.Context, req *store.UploadRequest, info *apk.
 			// the pointer fields (ReleaseTime, Listing) as read-only.
 			storeReq := *req
 			storeReq.Progress = u.Progress.ReporterFor(name)
-			storeReq.Listing = e.Listing
+			if e.Listing != nil {
+				storeReq.Listing = e.Listing
+			}
 
 			storeStart := time.Now()
 			u.Events.emit(Event{Type: EventStoreStart, Store: name})

@@ -34,6 +34,21 @@ func init() {
 	}, func(map[string]string) (store.Store, error) { return nil, nil })
 	store.Register("test-nolisting", store.ConfigSchema{Name: "test-nolisting"},
 		func(map[string]string) (store.Store, error) { return nil, nil })
+	store.Register("test-listing-aspect", store.ConfigSchema{
+		Name: "test-listing-aspect",
+		Listing: &store.ListingSpec{Screenshot: store.ImageSpec{
+			MinWidth: 1080, MinHeight: 1920, Aspect: &store.Size{Width: 9, Height: 16},
+		}},
+	}, func(map[string]string) (store.Store, error) { return nil, nil })
+	store.Register("test-listing-maxaspect", store.ConfigSchema{
+		Name: "test-listing-maxaspect",
+		Listing: &store.ListingSpec{Screenshot: store.ImageSpec{
+			MaxAspect: &store.Size{Width: 2, Height: 1}, MaxBytes: 1 << 20, MaxBytesByFormat: map[string]int64{"jpeg": 100},
+		}},
+	}, func(map[string]string) (store.Store, error) { return nil, nil })
+	// An unconstrained spec, like the script store's.
+	store.Register("test-listing-any", store.ConfigSchema{Name: "test-listing-any", Listing: &store.ListingSpec{}},
+		func(map[string]string) (store.Store, error) { return nil, nil })
 }
 
 func writeImage(t *testing.T, name string, w, h int) string {
@@ -117,12 +132,6 @@ func TestValidateListingReportsEveryProblem(t *testing.T) {
 }
 
 func TestValidateListingMinSizeAndAspect(t *testing.T) {
-	spec := store.ImageSpec{MinWidth: 1080, MinHeight: 1920, Aspect: &store.Size{Width: 9, Height: 16}}
-	store.Register("test-listing-aspect", store.ConfigSchema{
-		Name:    "test-listing-aspect",
-		Listing: &store.ListingSpec{Screenshot: spec},
-	}, func(map[string]string) (store.Store, error) { return nil, nil })
-
 	for _, c := range []struct {
 		w, h int
 		want string // "" = valid
@@ -142,6 +151,44 @@ func TestValidateListingMinSizeAndAspect(t *testing.T) {
 		case c.want != "" && (got == nil || !strings.Contains(got.Error(), c.want)):
 			t.Errorf("%dx%d: got %v, want %q", c.w, c.h, got, c.want)
 		}
+	}
+}
+
+func TestValidateListingMaxAspectAndBytesByFormat(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		w, h int
+		want string // "" = valid
+	}{
+		{"s-1080x1920.png", 1080, 1920, ""},
+		{"s-400x800.png", 400, 800, ""}, // exactly 2:1
+		{"s-1000x320.png", 1000, 320, "aspect ratio must be at most 2:1"},
+		{"s-1080x1920.jpg", 1080, 1920, "jpeg"}, // jpeg cap is 100 bytes
+	} {
+		path := writeImage(t, c.name, c.w, c.h)
+		got := errors.Join(store.ValidateListing("test-listing-maxaspect", &store.Listing{Screenshots: []string{path}})...)
+		switch {
+		case c.want == "" && got != nil:
+			t.Errorf("%s: unexpected %v", c.name, got)
+		case c.want != "" && (got == nil || !strings.Contains(got.Error(), c.want)):
+			t.Errorf("%s: got %v, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// An unconstrained ImageSpec (the script store) accepts any existing file
+// and still reports a missing one.
+func TestValidateListingUnconstrainedImages(t *testing.T) {
+	svg := filepath.Join(t.TempDir(), "logo.svg")
+	if err := os.WriteFile(svg, []byte("<svg/>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if errs := store.ValidateListing("test-listing-any", &store.Listing{Icon: svg, Screenshots: []string{svg}}); len(errs) > 0 {
+		t.Errorf("unexpected errors: %v", errs)
+	}
+	errs := store.ValidateListing("test-listing-any", &store.Listing{Icon: filepath.Join(t.TempDir(), "nope.svg")})
+	if len(errs) != 1 || !errors.Is(errs[0], os.ErrNotExist) {
+		t.Errorf("errs = %v, want one not-exist error", errs)
 	}
 }
 

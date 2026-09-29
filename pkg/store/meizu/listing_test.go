@@ -281,8 +281,8 @@ func TestUploadListingImageFailure(t *testing.T) {
 
 // TestUploadRejectedUsesVerisonID: a rejected latest version resubmits
 // via failapp/update, whose version-id parameter is spelled `verisonId`
-// in the official docs (§3.7) — not `verId`. The listing applies there
-// too.
+// in the official docs (§3.7); `verId` goes along until one spelling is
+// confirmed live. The listing applies there too.
 func TestUploadRejectedUsesVerisonID(t *testing.T) {
 	f := &fakeMeizu{t: t, status: statusRejected}
 	res := runUpload(t, f, t.TempDir(), &store.Listing{Brief: "new brief"})
@@ -295,8 +295,8 @@ func TestUploadRejectedUsesVerisonID(t *testing.T) {
 	if got := f.submitBody["verisonId"]; got != float64(42) {
 		t.Errorf("verisonId = %v, want 42", got)
 	}
-	if _, ok := f.submitBody["verId"]; ok {
-		t.Errorf("body carries undocumented verId: %v", f.submitBody["verId"])
+	if got := f.submitBody["verId"]; got != float64(42) {
+		t.Errorf("verId = %v, want 42", got)
 	}
 	if got := f.submitBody["recommendDesc"]; got != "new brief" {
 		t.Errorf("recommendDesc = %v, want new brief", got)
