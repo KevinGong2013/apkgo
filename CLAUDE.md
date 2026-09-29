@@ -79,7 +79,8 @@ without uploading a version, and the app name is never changed. The file
 (`pkg/listing`) holds defaults plus per-store overrides under `stores:`
 (an instance like `script.cdn` inherits its type's override); relative
 paths resolve against the file. Only the store's default language is
-updated.
+updated. Supported: **huawei, harmony, honor, vivo, oppo, xiaomi, meizu,
+samsung, tencent, googleplay** (pgyer/fir: no).
 
 Each store declares a `store.ListingSpec` (length limits, image
 formats/sizes, screenshot count; see `listing` in `apkgo stores`). Every
