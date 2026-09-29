@@ -42,6 +42,7 @@ store reaches a terminal state (approved / rejected / withdrawn) or the global
 -n, --notes        Release notes text
     --notes-file   Read release notes from file (overrides --notes)
     --release-time Schedule a timed release (定时发布) at an RFC3339 time, e.g. 2026-06-20T10:00:00+08:00
+    --listing      Listing file (商店资料) to update together with this version
     --dry-run      Validate without uploading
     --sandbox      Upload sandbox-capable stores; dry-run all others (mutually exclusive with --dry-run)
 -t, --timeout      Global timeout (default: 10m)
@@ -68,6 +69,27 @@ schedule (googleplay, pgyer, fir, script) log a warning and release
 immediately. Each store maps the instant to its own field/format
 internally — epoch-based stores use the absolute instant; oppo/vivo/samsung
 render it in Beijing time (UTC+8).
+
+### Listing (`--listing`, 商店资料)
+
+Updates the store listing — one-line intro (`brief`), long `description`,
+`icon`, `screenshots` — **together with the new version**, before it is
+submitted for review. There is deliberately no way to update the listing
+without uploading a version, and the app name is never changed. The file
+(`pkg/listing`) holds defaults plus per-store overrides under `stores:`
+(an instance like `script.cdn` inherits its type's override); relative
+paths resolve against the file. Only the store's default language is
+updated.
+
+Each store declares a `store.ListingSpec` (length limits, image
+formats/sizes, screenshot count; see `listing` in `apkgo stores`). Every
+target's resolved listing is validated by `store.ValidateListing` before
+any upload (also in `--dry-run`) and all problems are reported at once
+(exit 3). Stores without a spec log a warning and upload without it; the
+`script` store receives it as `Listing` in its stdin JSON. Successful
+results list the submitted fields in `listing`. Library callers that
+drive `Store.Upload` directly set `UploadRequest.Listing` and use
+`store.ValidateListing` / `store.ListingResult` themselves.
 
 ### Download mode (URL pass-through)
 
@@ -136,6 +158,7 @@ cmd/           CLI commands (cobra)
 pkg/store/     Store interface + implementations (self-registering via init())
 pkg/config/    YAML config + env var loading
 pkg/apk/       APK metadata parser
+pkg/listing/   Listing file (商店资料) parser + per-store resolution
 pkg/uploader/  Concurrent upload orchestrator
 ```
 

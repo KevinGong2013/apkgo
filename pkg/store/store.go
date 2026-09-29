@@ -45,6 +45,13 @@ type UploadRequest struct {
 	SourceURL   string `json:",omitempty"`
 	Source64URL string `json:",omitempty"`
 
+	// Listing, when non-nil, updates the store's listing (商店资料: intro,
+	// description, icon, screenshots) together with this version, before
+	// it's submitted for review. It's already resolved for this store and
+	// validated against its ListingSpec (see ValidateListing). Stores
+	// without a ListingSpec ignore it. Read-only: shared across stores.
+	Listing *Listing `json:",omitempty"`
+
 	// Progress receives phase and byte-count events during upload.
 	// May be nil; stores must use progress.Safe() to guard against that.
 	// Tagged json:"-" so it's excluded when script-store marshals the
@@ -71,6 +78,10 @@ type UploadResult struct {
 	// a later AuditQuery.ExternalID to pin a review-status query to this
 	// exact submission instead of the store's ambiguous "current" state.
 	ExternalID string `json:"external_id,omitempty"`
+	// Listing names the listing fields (brief / description / icon /
+	// screenshots) submitted with this upload. Set only on success; see
+	// ListingResult.
+	Listing []string `json:"listing,omitempty"`
 }
 
 // NewResult creates a success result with timing.
@@ -135,6 +146,10 @@ type ConfigSchema struct {
 	// apkgo refuses up-front to send a package to a store of the wrong
 	// platform, and orchestrators use it to group stores per app platform.
 	Platform string `json:"platform,omitempty"`
+	// Listing is what the store accepts when updating its listing (商店资料)
+	// together with a new version. nil = listing updates not supported.
+	// Surfaced by `apkgo stores`; enforced by ValidateListing.
+	Listing *ListingSpec `json:"listing,omitempty"`
 }
 
 // Platform values for ConfigSchema.Platform.
