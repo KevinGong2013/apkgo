@@ -22,28 +22,33 @@ const (
 const fallbackLang = "zh-CN"
 
 // listingSpec is what AGC accepts for an Android app's listing (商店资料).
-// Sources: Publishing API v2 更新语言描述信息 (app-language-info) and the
-// Connect API 附录「应用文件要求」→ Android应用 → 手机 (agcapi-file-requirement,
-// consistent with the console's 应用素材规范 → APK应用（手机）):
+// Sources: Publishing API v2 更新语言描述信息 (app-language-info), the
+// Connect API 附录「应用文件要求」→ Android应用 (agcapi-file-requirement,
+// 2026-03) and the current AGC console, which is newer than the appendix
+// for phone screenshots (appendix: 720×1280, 3–5; console: 3–10, at least
+// 1080×1920 at 9:16):
 //
 //   - briefInfo (一句话简介) ≤80, appDesc (应用介绍) ≤8000 characters;
-//   - icon: exactly one, PNG 216×216, ≤2MB;
-//   - phone screenshots: 3–5, portrait 450×800, JPG/JPEG/PNG, ≤2MB each.
+//   - icon: exactly one, 216×216, PNG ≤500KB;
+//   - phone screenshots: 3–10, portrait, at least 1080×1920 and 9:16,
+//     PNG/JPG/JPEG ≤5MB each.
 var listingSpec = &store.ListingSpec{
 	Brief:       store.TextSpec{Max: 80},
 	Description: store.TextSpec{Max: 8000},
 	Icon: store.ImageSpec{
 		Formats:  []string{"png"},
 		Sizes:    []store.Size{{Width: 216, Height: 216}},
-		MaxBytes: 2 << 20,
+		MaxBytes: 500 << 10,
 	},
 	Screenshot: store.ImageSpec{
-		Formats:  []string{"png", "jpeg"},
-		Sizes:    []store.Size{{Width: 450, Height: 800}},
-		MaxBytes: 2 << 20,
+		Formats:   []string{"png", "jpeg"},
+		MinWidth:  1080,
+		MinHeight: 1920,
+		Aspect:    &store.Size{Width: 9, Height: 16},
+		MaxBytes:  5 << 20,
 	},
 	MinScreenshots: 3,
-	MaxScreenshots: 5,
+	MaxScreenshots: 10,
 }
 
 // updateListing submits l's non-empty fields for the app's default

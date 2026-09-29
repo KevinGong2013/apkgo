@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"errors"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"image/png"
@@ -112,6 +113,35 @@ func TestValidateListingReportsEveryProblem(t *testing.T) {
 	}
 	if len(errs) != 6 {
 		t.Errorf("got %d errors, want 6:\n%s", len(errs), joined)
+	}
+}
+
+func TestValidateListingMinSizeAndAspect(t *testing.T) {
+	spec := store.ImageSpec{MinWidth: 1080, MinHeight: 1920, Aspect: &store.Size{Width: 9, Height: 16}}
+	store.Register("test-listing-aspect", store.ConfigSchema{
+		Name:    "test-listing-aspect",
+		Listing: &store.ListingSpec{Screenshot: spec},
+	}, func(map[string]string) (store.Store, error) { return nil, nil })
+
+	for _, c := range []struct {
+		w, h int
+		want string // "" = valid
+	}{
+		{1080, 1920, ""},
+		{1440, 2560, ""},
+		{720, 1280, "need at least 1080x1920"},
+		{1200, 1920, "aspect ratio must be 9:16"},
+		{1920, 1080, "need at least 1080x1920"},
+	} {
+		path := writeImage(t, fmt.Sprintf("s-%dx%d.png", c.w, c.h), c.w, c.h)
+		errs := store.ValidateListing("test-listing-aspect", &store.Listing{Screenshots: []string{path}})
+		got := errors.Join(errs...)
+		switch {
+		case c.want == "" && got != nil:
+			t.Errorf("%dx%d: unexpected %v", c.w, c.h, got)
+		case c.want != "" && (got == nil || !strings.Contains(got.Error(), c.want)):
+			t.Errorf("%dx%d: got %v, want %q", c.w, c.h, got, c.want)
+		}
 	}
 }
 

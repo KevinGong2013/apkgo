@@ -105,6 +105,12 @@ type ImageSpec struct {
 	// MinEdge / MaxEdge bound both width and height, in pixels.
 	MinEdge int `json:"min_edge,omitempty"`
 	MaxEdge int `json:"max_edge,omitempty"`
+	// MinWidth / MinHeight are the smallest accepted size, in pixels.
+	MinWidth  int `json:"min_width,omitempty"`
+	MinHeight int `json:"min_height,omitempty"`
+	// Aspect, when set, requires width:height to equal
+	// Aspect.Width:Aspect.Height exactly (e.g. 9:16).
+	Aspect *Size `json:"aspect,omitempty"`
 	// Square requires width == height.
 	Square   bool  `json:"square,omitempty"`
 	MaxBytes int64 `json:"max_bytes,omitempty"`
@@ -253,6 +259,12 @@ func checkImage(path string, spec ImageSpec) error {
 	}
 	if spec.MaxEdge > 0 && max(info.Width, info.Height) > spec.MaxEdge {
 		problems = append(problems, fmt.Sprintf("size %dx%d, edges must be at most %dpx", info.Width, info.Height, spec.MaxEdge))
+	}
+	if info.Width < spec.MinWidth || info.Height < spec.MinHeight {
+		problems = append(problems, fmt.Sprintf("size %dx%d, need at least %dx%d", info.Width, info.Height, spec.MinWidth, spec.MinHeight))
+	}
+	if a := spec.Aspect; a != nil && info.Width*a.Height != info.Height*a.Width {
+		problems = append(problems, fmt.Sprintf("size %dx%d, aspect ratio must be %d:%d", info.Width, info.Height, a.Width, a.Height))
 	}
 	if spec.MaxBytes > 0 && info.Bytes > spec.MaxBytes {
 		problems = append(problems, fmt.Sprintf("%d bytes, at most %d allowed", info.Bytes, spec.MaxBytes))

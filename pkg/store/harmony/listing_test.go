@@ -238,7 +238,7 @@ func TestListingSpec(t *testing.T) {
 		{"brief too long", store.Listing{Brief: strings.Repeat("字", 81)}, "at most 80"},
 		{"icon wrong size", store.Listing{Icon: writePNG(t, "i.png", 512, 512)}, "want 216x216 or 1024x1024"},
 		{"too few screenshots", store.Listing{Screenshots: shots[:2]}, "need at least 3"},
-		{"landscape screenshot", store.Listing{Screenshots: append(shots[:2:2], writePNG(t, "l.png", 1920, 1080))}, "want 1080x1920"},
+		{"landscape screenshot", store.Listing{Screenshots: append(shots[:2:2], writePNG(t, "l.png", 1920, 1080))}, "aspect ratio must be 9:16"},
 		{"small webp icon", store.Listing{Icon: writeWebP(t, "i.webp", 216, 216, 100<<10)}, ""},
 		{"large webp icon", store.Listing{Icon: writeWebP(t, "i.webp", 216, 216, 100<<10+2)}, "webp 102402 bytes, at most 102400"},
 		{"large webp screenshot", store.Listing{Screenshots: append(shots[:2:2], writeWebP(t, "s.webp", 1080, 1920, 200<<10+2))}, "listing: screenshots[2]: "},
