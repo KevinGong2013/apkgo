@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/KevinGong2013/apkgo/v4/pkg/imgcheck"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
@@ -38,50 +37,31 @@ var listingSpec = &store.ListingSpec{
 	Brief:       store.TextSpec{Max: 80},
 	Description: store.TextSpec{Max: 8000},
 	Icon: store.ImageSpec{
-		Formats:  []string{"png", "webp"},
-		Sizes:    []store.Size{{Width: 216, Height: 216}, {Width: 1024, Height: 1024}},
-		MaxBytes: 3 << 20,
+		Formats:          []string{"png", "webp"},
+		Sizes:            []store.Size{{Width: 216, Height: 216}, {Width: 1024, Height: 1024}},
+		MaxBytes:         3 << 20,
+		MaxBytesByFormat: map[string]int64{"webp": iconWebPMaxBytes},
 	},
 	Screenshot: store.ImageSpec{
-		Formats:   []string{"png", "jpeg", "webp"},
-		MinWidth:  1080,
-		MinHeight: 1920,
-		Aspect:    &store.Size{Width: 9, Height: 16},
-		MaxBytes:  5 << 20,
+		Formats:          []string{"png", "jpeg", "webp"},
+		MinWidth:         1080,
+		MinHeight:        1920,
+		Aspect:           &store.Size{Width: 9, Height: 16},
+		MaxBytes:         5 << 20,
+		MaxBytesByFormat: map[string]int64{"webp": screenshotWebPMaxBytes},
 	},
 	MinScreenshots: 3,
 	MaxScreenshots: 10,
 	Check:          checkListing,
 }
 
-// checkListing adds the rules ListingSpec's fields can't express:
-//   - brief and description must differ (AGC rejects identical
-//     briefInfo / appDesc);
-//   - WEBP images have much lower byte caps than PNG/JPEG.
+// checkListing adds the rule ListingSpec's fields can't express: brief
+// and description must differ (AGC rejects identical briefInfo / appDesc).
 func checkListing(l *store.Listing) []error {
-	var errs []error
 	if l.Brief != "" && l.Brief == l.Description {
-		errs = append(errs, fmt.Errorf("%s and %s must differ, AGC rejects identical briefInfo / appDesc", store.ListingBrief, store.ListingDescription))
+		return []error{fmt.Errorf("%s and %s must differ, AGC rejects identical briefInfo / appDesc", store.ListingBrief, store.ListingDescription)}
 	}
-	if l.Icon != "" {
-		if err := checkWebPBytes(l.Icon, iconWebPMaxBytes); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", store.ListingIcon, err))
-		}
-	}
-	for i, p := range l.Screenshots {
-		if err := checkWebPBytes(p, screenshotWebPMaxBytes); err != nil {
-			errs = append(errs, fmt.Errorf("%s[%d]: %w", store.ListingScreenshots, i, err))
-		}
-	}
-	return errs
-}
-
-func checkWebPBytes(path string, limit int64) error {
-	info, err := imgcheck.Inspect(path)
-	if err != nil || info.Format != "webp" || info.Bytes <= limit {
-		return nil // unreadable files are already reported by ValidateListing
-	}
-	return fmt.Errorf("%s: webp %d bytes, at most %d allowed", path, info.Bytes, limit)
+	return nil
 }
 
 // langFileInfo / fileInfo mirror AGC's LangFileInfo / FileInfo.

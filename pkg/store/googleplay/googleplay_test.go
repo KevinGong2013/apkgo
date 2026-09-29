@@ -340,8 +340,8 @@ func TestListingSpec(t *testing.T) {
 		})
 	}
 
-	errs := checkListing(&store.Listing{Screenshots: []string{portrait, tall}})
+	errs := store.ValidateListing("googleplay", &store.Listing{Screenshots: []string{portrait, tall}})
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "screenshots[1]") {
-		t.Errorf("checkListing = %v, want one error for screenshots[1]", errs)
+		t.Errorf("aspect errs = %v, want one error for screenshots[1]", errs)
 	}
 }

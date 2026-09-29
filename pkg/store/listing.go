@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -111,9 +112,24 @@ type ImageSpec struct {
 	// Aspect, when set, requires width:height to equal
 	// Aspect.Width:Aspect.Height exactly (e.g. 9:16).
 	Aspect *Size `json:"aspect,omitempty"`
+	// MaxAspect, when set, caps the long edge at Width:Height times the
+	// short edge in either orientation (e.g. 2:1).
+	MaxAspect *Size `json:"max_aspect,omitempty"`
 	// Square requires width == height.
 	Square   bool  `json:"square,omitempty"`
 	MaxBytes int64 `json:"max_bytes,omitempty"`
+	// MaxBytesByFormat overrides MaxBytes for a format, e.g. a lower cap
+	// for "webp".
+	MaxBytesByFormat map[string]int64 `json:"max_bytes_by_format,omitempty"`
+}
+
+// constrained reports whether the spec checks anything about the image
+// itself. An unconstrained spec (the script store) only needs the file
+// to exist, so any file type goes through.
+func (spec ImageSpec) constrained() bool {
+	return len(spec.Formats) > 0 || len(spec.Sizes) > 0 || spec.MinEdge > 0 || spec.MaxEdge > 0 ||
+		spec.MinWidth > 0 || spec.MinHeight > 0 || spec.Aspect != nil || spec.MaxAspect != nil ||
+		spec.Square || spec.MaxBytes > 0 || len(spec.MaxBytesByFormat) > 0
 }
 
 // ListingSpec is what a store accepts for Listing. A store declares it in
@@ -236,6 +252,10 @@ func checkText(s string, spec TextSpec) error {
 }
 
 func checkImage(path string, spec ImageSpec) error {
+	if !spec.constrained() {
+		_, err := os.Stat(path)
+		return err
+	}
 	info, err := imgcheck.Inspect(path)
 	if err != nil {
 		return err
@@ -266,8 +286,15 @@ func checkImage(path string, spec ImageSpec) error {
 	if a := spec.Aspect; a != nil && info.Width*a.Height != info.Height*a.Width {
 		problems = append(problems, fmt.Sprintf("size %dx%d, aspect ratio must be %d:%d", info.Width, info.Height, a.Width, a.Height))
 	}
-	if spec.MaxBytes > 0 && info.Bytes > spec.MaxBytes {
-		problems = append(problems, fmt.Sprintf("%d bytes, at most %d allowed", info.Bytes, spec.MaxBytes))
+	if a := spec.MaxAspect; a != nil && max(info.Width, info.Height)*a.Height > min(info.Width, info.Height)*a.Width {
+		problems = append(problems, fmt.Sprintf("size %dx%d, aspect ratio must be at most %d:%d", info.Width, info.Height, a.Width, a.Height))
+	}
+	maxBytes := spec.MaxBytes
+	if m, ok := spec.MaxBytesByFormat[info.Format]; ok {
+		maxBytes = m
+	}
+	if maxBytes > 0 && info.Bytes > maxBytes {
+		problems = append(problems, fmt.Sprintf("%s %d bytes, at most %d allowed", info.Format, info.Bytes, maxBytes))
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("%s: %s", path, strings.Join(problems, "; "))

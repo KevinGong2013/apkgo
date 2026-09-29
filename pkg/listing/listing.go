@@ -20,9 +20,12 @@ package listing
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -63,7 +66,8 @@ func Load(path string) (*File, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	f := &File{}
-	if err := dec.Decode(f); err != nil {
+	// An empty (or comment-only) file is an empty listing, not an error.
+	if err := dec.Decode(f); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("listing %s: %w", path, err)
 	}
 
@@ -111,13 +115,16 @@ func (fs *Fields) load(dir, where string) error {
 	return nil
 }
 
-// UnknownStores returns override keys that aren't registered store names
-// (usually typos), sorted. Stores must be registered (blank-imported)
+// UnknownStores returns override keys that can't apply, sorted: names
+// that aren't a registered store type, and "type.instance" names that
+// match none of the configured stores (the usual typo). A plain type name
+// that isn't configured is fine, so one listing file can serve jobs with
+// different store subsets. Stores must be registered (blank-imported)
 // before calling it.
-func (f *File) UnknownStores() []string {
+func (f *File) UnknownStores(configured []string) []string {
 	var out []string
 	for name := range f.Stores {
-		if !store.Known(name) {
+		if !store.Known(name) || (strings.Contains(name, ".") && !slices.Contains(configured, name)) {
 			out = append(out, name)
 		}
 	}
