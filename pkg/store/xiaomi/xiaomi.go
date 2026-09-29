@@ -32,9 +32,9 @@ import (
 	// with "image: unknown format" when extracting the launcher icon.
 	_ "golang.org/x/image/webp"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/httpx"
-	"github.com/KevinGong2013/apkgo/v3/pkg/progress"
-	"github.com/KevinGong2013/apkgo/v3/pkg/store"
+	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
+	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 //go:embed dev.api.public.cer

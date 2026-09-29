@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/config"
-	"github.com/KevinGong2013/apkgo/v3/pkg/store"
-	"github.com/KevinGong2013/apkgo/v3/pkg/uploader"
+	"github.com/KevinGong2013/apkgo/v4/pkg/config"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
+	"github.com/KevinGong2013/apkgo/v4/pkg/uploader"
 )
 
 type sandboxTestStore struct {

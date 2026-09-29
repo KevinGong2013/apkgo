@@ -17,7 +17,7 @@ curl -fsSL https://apkgo.com.cn/install.sh | sh
 ```
 
 > Defaults to `/usr/local/bin`. If it isn't writable, the script will tell you to either use `sudo` or set `APKGO_INSTALL_DIR=$HOME/.local/bin`.
-> Pin a version: `APKGO_VERSION=v3.1.0 sh`.
+> Pin a version: `APKGO_VERSION=v4.0.0 sh`.
 
 **Other methods:**
 
@@ -26,7 +26,7 @@ curl -fsSL https://apkgo.com.cn/install.sh | sh
 npx skills add KevinGong2013/apkgo
 
 # Go
-go install github.com/KevinGong2013/apkgo/v3@latest
+go install github.com/KevinGong2013/apkgo/v4@latest
 
 # Docker
 docker pull ghcr.io/kevingong2013/apkgo:latest
@@ -53,7 +53,7 @@ curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo
 # Extract and add apkgo.exe to PATH
 ```
 
-> If `apkgo version` reports `unknown command`, or the help lists only `doctor` / `upload`, an old apkgo earlier on your PATH is shadowing the new one (typically v1, left in `%USERPROFILE%\go\bin` by a `go install` without `/v3`). Run `where apkgo` (macOS/Linux: `which -a apkgo`) to list every copy and delete the stale one.
+> If `apkgo version` reports `unknown command`, or the help lists only `doctor` / `upload`, an old apkgo earlier on your PATH is shadowing the new one (typically v1, left in `%USERPROFILE%\go\bin` by a `go install` without `/v4`; an older v3 install can shadow it the same way). Run `where apkgo` (macOS/Linux: `which -a apkgo`) to list every copy and delete the stale one.
 
 </details>
 

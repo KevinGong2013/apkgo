@@ -10,9 +10,9 @@ import (
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/apk"
-	"github.com/KevinGong2013/apkgo/v3/pkg/progress"
-	"github.com/KevinGong2013/apkgo/v3/pkg/store"
+	"github.com/KevinGong2013/apkgo/v4/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 

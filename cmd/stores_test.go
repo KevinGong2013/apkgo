@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/config"
+	"github.com/KevinGong2013/apkgo/v4/pkg/config"
 )
 
 func TestConfiguredStoreNamesAreNormalizedAndSorted(t *testing.T) {

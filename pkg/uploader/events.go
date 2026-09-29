@@ -3,7 +3,7 @@ package uploader
 import (
 	"time"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/store"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 // EventType discriminates the lifecycle moment an Event represents.

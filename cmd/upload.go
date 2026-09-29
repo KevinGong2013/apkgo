@@ -10,13 +10,13 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/vbauerster/mpb/v8"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/apk"
-	"github.com/KevinGong2013/apkgo/v3/pkg/apkgo"
-	"github.com/KevinGong2013/apkgo/v3/pkg/history"
-	"github.com/KevinGong2013/apkgo/v3/pkg/httpx"
-	"github.com/KevinGong2013/apkgo/v3/pkg/store"
-	"github.com/KevinGong2013/apkgo/v3/pkg/telemetry"
-	"github.com/KevinGong2013/apkgo/v3/pkg/uploader"
+	"github.com/KevinGong2013/apkgo/v4/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v4/pkg/apkgo"
+	"github.com/KevinGong2013/apkgo/v4/pkg/history"
+	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
+	"github.com/KevinGong2013/apkgo/v4/pkg/telemetry"
+	"github.com/KevinGong2013/apkgo/v4/pkg/uploader"
 )
 
 var (

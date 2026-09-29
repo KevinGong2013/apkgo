@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/KevinGong2013/apkgo/v3/cmd"
+	"github.com/KevinGong2013/apkgo/v4/cmd"
 )
 
 func main() {

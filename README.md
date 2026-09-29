@@ -17,7 +17,7 @@ curl -fsSL https://apkgo.com.cn/install.sh | sh
 ```
 
 > 默认装到 `/usr/local/bin`，不可写时会提示用 `sudo` 或 `APKGO_INSTALL_DIR=$HOME/.local/bin sh`。
-> 锁版本：`APKGO_VERSION=v3.1.0 sh`。
+> 锁版本：`APKGO_VERSION=v4.0.0 sh`。
 
 **其他方式：**
 
@@ -26,7 +26,7 @@ curl -fsSL https://apkgo.com.cn/install.sh | sh
 npx skills add KevinGong2013/apkgo
 
 # Go
-go install github.com/KevinGong2013/apkgo/v3@latest
+go install github.com/KevinGong2013/apkgo/v4@latest
 
 # Docker
 docker pull ghcr.io/kevingong2013/apkgo:latest
@@ -53,7 +53,7 @@ curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo
 # 解压后将 apkgo.exe 添加到 PATH
 ```
 
-> 如果 `apkgo version` 报 `unknown command` 或输出的帮助里只有 `doctor` / `upload`，说明 PATH 里优先命中了旧版 apkgo（常见于曾执行过不带 `/v3` 的 `go install`，旧版 v1 位于 `%USERPROFILE%\go\bin`）。用 `where apkgo`（macOS/Linux：`which -a apkgo`）找出所有副本，删除旧的即可。
+> 如果 `apkgo version` 报 `unknown command` 或输出的帮助里只有 `doctor` / `upload`，说明 PATH 里优先命中了旧版 apkgo（常见于曾执行过不带 `/v4` 的 `go install`，旧版 v1/v3 位于 `%USERPROFILE%\go\bin`）。用 `where apkgo`（macOS/Linux：`which -a apkgo`）找出所有副本，删除旧的即可。
 
 </details>
 

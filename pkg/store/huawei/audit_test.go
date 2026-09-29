@@ -3,7 +3,7 @@ package huawei
 import (
 	"testing"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/store"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 // TestMapHuaweiReleaseState locks in the releaseState → unified-state

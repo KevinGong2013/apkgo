@@ -11,7 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/store"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 // HookConfig holds before/after hook commands.
