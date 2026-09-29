@@ -188,9 +188,9 @@ func TestUploadWithListing(t *testing.T) {
 		Description: "应用介绍长描述",
 		Icon:        writePNG(t, dir, "icon.png", 216, 216),
 		Screenshots: []string{
-			writePNG(t, dir, "s1.png", 450, 800),
-			writePNG(t, dir, "s2.png", 450, 800),
-			writePNG(t, dir, "s3.png", 450, 800),
+			writePNG(t, dir, "s1.png", 1080, 1920),
+			writePNG(t, dir, "s2.png", 1080, 1920),
+			writePNG(t, dir, "s3.png", 1080, 1920),
 		},
 	}
 	if errs := store.ValidateListing("huawei", listing); len(errs) > 0 {

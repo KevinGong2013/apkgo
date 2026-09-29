@@ -32,8 +32,8 @@ const (
 //     release-notes check in publish).
 //   - icon: one per device; phone PNG ≤3MB or WEBP ≤100KB, 216×216 or
 //     1024×1024. AGC requires it to match the icon inside the .app.
-//   - phone screenshots: 3–10, portrait 1080×1920, PNG/JPEG ≤5MB or
-//     WEBP ≤200KB.
+//   - phone screenshots: 3–10, portrait, at least 1080×1920 at 9:16 (the
+//     console's 最低尺寸), PNG/JPEG ≤5MB or WEBP ≤200KB.
 var listingSpec = &store.ListingSpec{
 	Brief:       store.TextSpec{Max: 80},
 	Description: store.TextSpec{Max: 8000},
@@ -43,9 +43,11 @@ var listingSpec = &store.ListingSpec{
 		MaxBytes: 3 << 20,
 	},
 	Screenshot: store.ImageSpec{
-		Formats:  []string{"png", "jpeg", "webp"},
-		Sizes:    []store.Size{{Width: 1080, Height: 1920}},
-		MaxBytes: 5 << 20,
+		Formats:   []string{"png", "jpeg", "webp"},
+		MinWidth:  1080,
+		MinHeight: 1920,
+		Aspect:    &store.Size{Width: 9, Height: 16},
+		MaxBytes:  5 << 20,
 	},
 	MinScreenshots: 3,
 	MaxScreenshots: 10,
