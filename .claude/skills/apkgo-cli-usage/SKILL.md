@@ -98,12 +98,12 @@ icon: assets/icon-512.png
 screenshots: [assets/s1.png, assets/s2.png, assets/s3.png, assets/s4.png]
 stores:                            # per-store overrides (instances inherit their type's)
   oppo:   { brief: 十三字以内的简介 }
-  huawei: { icon: assets/icon-216.png, screenshots: [hw1.png, hw2.png, hw3.png] }
+  huawei: { icon: assets/icon-216.png }
 ```
 
 Omitted fields keep the store's current value; relative paths resolve against
 the file. Specs differ a lot per store (oppo intro ≤13 chars, huawei icon
-216×216 and screenshots 450×800, tencent 4–5 screenshots, …) — read them from
+216×216, tencent 4–5 screenshots, …) — read them from
 `apkgo stores` (`listing` per store) and put per-store variants under
 `stores:`. Every target is validated before any upload (also in `--dry-run`);
 all problems are listed at once, exit code 3. pgyer/fir don't support listings

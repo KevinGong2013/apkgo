@@ -135,8 +135,7 @@ stores:
   oppo:
     brief: 十三字以内的简介       # OPPO: ≤13 chars, no punctuation or spaces
   huawei:
-    icon: assets/icon-216.png
-    screenshots: [assets/hw1.png, assets/hw2.png, assets/hw3.png]   # Huawei wants 450×800
+    icon: assets/icon-216.png    # Huawei wants a 216×216 icon
 ```
 
 - Every field is optional; omitted fields keep the store's current value. `stores.<store>` overrides the defaults; an instance such as `script.cdn` inherits the `script` override.
@@ -146,8 +145,8 @@ stores:
 
 | Store | Intro | Description | Icon | Screenshots |
 |---|---|---|---|---|
-| huawei | ≤80 | ≤8000 | PNG 216×216, ≤2MB | 450×800, 3–5 |
-| harmony | ≤80, must differ from description | ≤8000 | PNG/WebP 216×216 or 1024×1024 | 1080×1920, 3–10 |
+| huawei | ≤80 | ≤8000 | PNG 216×216, ≤500KB | ≥1080×1920 at 9:16, ≤5MB, 3–10 |
+| harmony | ≤80, must differ from description | ≤8000 | PNG/WebP 216×216 or 1024×1024 | ≥1080×1920 at 9:16, 3–10 |
 | honor | ≤80 | ≤8000 | PNG/JPG 512×512, ≤200KB | 1080×1920, ≤5MB, 3–5 |
 | vivo | 5–16 CJK chars | 50–1000 | square PNG 256–512px, ≤500KB | 1080×1920, ≤2MB, 3–5 |
 | oppo | ≤13, no punctuation/spaces | ≥20 | PNG 512×512, ≤1MB | 1080×1920, ≤1MB, 2–5 |
