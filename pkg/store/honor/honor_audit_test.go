@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/store"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 // TestAuditByReleaseUsesGetAuditResult pins the fix: with a releaseId

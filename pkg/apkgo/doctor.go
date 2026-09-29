@@ -7,10 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/apk"
-	"github.com/KevinGong2013/apkgo/v3/pkg/config"
-	"github.com/KevinGong2013/apkgo/v3/pkg/httpx"
-	"github.com/KevinGong2013/apkgo/v3/pkg/store"
+	"github.com/KevinGong2013/apkgo/v4/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v4/pkg/config"
+	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 // DiagnoseJob describes a `doctor`-style run: probe each configured

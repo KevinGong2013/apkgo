@@ -17,7 +17,7 @@ import (
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // modern Android (R8) stores launcher icons as webp
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/progress"
+	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 )
 
 // OPPO requires the app icon submitted to /app/upd to be a 512×512 PNG under

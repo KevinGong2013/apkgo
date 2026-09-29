@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/apk"
-	"github.com/KevinGong2013/apkgo/v3/pkg/progress"
-	"github.com/KevinGong2013/apkgo/v3/pkg/store"
+	"github.com/KevinGong2013/apkgo/v4/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 // NDJSONManager emits newline-delimited JSON progress events to a

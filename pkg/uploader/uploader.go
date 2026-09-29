@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/apk"
-	"github.com/KevinGong2013/apkgo/v3/pkg/ctxlog"
-	"github.com/KevinGong2013/apkgo/v3/pkg/hooks"
-	"github.com/KevinGong2013/apkgo/v3/pkg/store"
+	"github.com/KevinGong2013/apkgo/v4/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v4/pkg/ctxlog"
+	"github.com/KevinGong2013/apkgo/v4/pkg/hooks"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 // StoreEntry pairs a store with its per-store hook commands and an

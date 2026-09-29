@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/KevinGong2013/apkgo/v3/pkg/store"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 func TestCategorize(t *testing.T) {

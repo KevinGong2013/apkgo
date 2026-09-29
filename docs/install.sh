@@ -5,7 +5,7 @@
 #   curl -fsSL https://apkgo.com.cn/install.sh | sh
 #
 # Environment overrides:
-#   APKGO_VERSION=v3.1.0                       # pin to a specific release
+#   APKGO_VERSION=v4.0.0                       # pin to a specific release
 #   APKGO_INSTALL_DIR=$HOME/.local/bin         # default: /usr/local/bin
 set -eu
 
