@@ -41,7 +41,7 @@ var listingSpec = &store.ListingSpec{
 // checkListing adds the rule TextSpec can't express: OPPO's summary must not
 // contain any punctuation or whitespace. ASCII symbols like ~ + | count too,
 // since OPPO's "任何标点符号" is meant loosely.
-func checkListing(l *store.Listing) []error {
+func checkListing(l *store.Listing, _ store.ImageInspector) []error {
 	for _, r := range l.Brief {
 		if unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.In(r, unicode.Sm, unicode.Sc, unicode.Sk) {
 			return []error{fmt.Errorf("%s must not contain punctuation or spaces (found %q)", store.ListingBrief, r)}

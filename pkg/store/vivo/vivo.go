@@ -78,7 +78,7 @@ func init() {
 const briefBadEndings = "。．.，,、；;：:…"
 
 // checkListing adds the vivo rules ListingSpec can't express.
-func checkListing(l *store.Listing) []error {
+func checkListing(l *store.Listing, _ store.ImageInspector) []error {
 	brief := strings.TrimSpace(l.Brief)
 	if brief == "" {
 		return nil

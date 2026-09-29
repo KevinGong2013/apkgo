@@ -6,7 +6,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/KevinGong2013/apkgo/v4/pkg/imgcheck"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
@@ -42,7 +41,7 @@ var listingSpec = &store.ListingSpec{
 //   - brief must not end with punctuation (句末勿加标点);
 //   - screenshots share one orientation — the console has a single
 //     截图方向 setting per app, so a portrait/landscape mix can't be shown.
-func checkListing(l *store.Listing) []error {
+func checkListing(l *store.Listing, inspect store.ImageInspector) []error {
 	var errs []error
 	if b := strings.TrimRightFunc(l.Brief, unicode.IsSpace); b != "" {
 		if r, _ := utf8.DecodeLastRuneInString(b); unicode.IsPunct(r) {
@@ -52,7 +51,7 @@ func checkListing(l *store.Listing) []error {
 
 	var portrait, landscape int
 	for _, p := range l.Screenshots {
-		info, err := imgcheck.Inspect(p)
+		info, err := inspect(p)
 		if err != nil {
 			continue // unreadable files are already reported by ValidateListing
 		}

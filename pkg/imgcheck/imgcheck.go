@@ -4,6 +4,7 @@
 package imgcheck
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	_ "image/jpeg" // register decoders for image.DecodeConfig
@@ -40,4 +41,14 @@ func Inspect(path string) (Info, error) {
 		return Info{}, fmt.Errorf("%s: not a png/jpeg/webp image: %w", path, err)
 	}
 	return Info{Format: format, Width: cfg.Width, Height: cfg.Height, Bytes: st.Size()}, nil
+}
+
+// InspectBytes is Inspect for an image already in memory, e.g. one a
+// service received over HTTP before storing it.
+func InspectBytes(data []byte) (Info, error) {
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return Info{}, fmt.Errorf("not a png/jpeg/webp image: %w", err)
+	}
+	return Info{Format: format, Width: cfg.Width, Height: cfg.Height, Bytes: int64(len(data))}, nil
 }

@@ -143,9 +143,17 @@ type ListingSpec struct {
 	MinScreenshots int       `json:"min_screenshots,omitempty"`
 	MaxScreenshots int       `json:"max_screenshots,omitempty"`
 	// Check adds store-specific rules the fields above can't express
-	// (e.g. oppo's "no punctuation in brief"). Optional.
-	Check func(l *Listing) []error `json:"-"`
+	// (e.g. oppo's "no punctuation in brief"). It reads image headers
+	// through inspect, never from disk directly. Optional.
+	Check func(l *Listing, inspect ImageInspector) []error `json:"-"`
 }
+
+// ImageInspector returns the format, size and byte count of the image a
+// Listing names by path. The default reads the file's header
+// (imgcheck.Inspect); services that keep images elsewhere (object
+// storage) pass one that looks up metadata they recorded at upload time,
+// so the same rules apply without fetching the images.
+type ImageInspector func(path string) (imgcheck.Info, error)
 
 // ErrListingUnsupported is returned (wrapped) by ValidateListing for a
 // store that declared no ListingSpec.
@@ -157,6 +165,13 @@ var ErrListingUnsupported = errors.New("store does not support listing updates")
 // store name and field, so a caller can show them all at once. A nil or
 // empty Listing is always valid.
 func ValidateListing(storeName string, l *Listing) []error {
+	return ValidateListingWith(storeName, l, nil)
+}
+
+// ValidateListingWith is ValidateListing with image headers read through
+// inspect instead of from disk; the listing's image paths are whatever
+// inspect understands (e.g. object keys). A nil inspect reads from disk.
+func ValidateListingWith(storeName string, l *Listing, inspect ImageInspector) []error {
 	if l.Empty() {
 		return nil
 	}
@@ -178,7 +193,7 @@ func ValidateListing(storeName string, l *Listing) []error {
 		add(ListingDescription, checkText(l.Description, spec.Description))
 	}
 	if l.Icon != "" {
-		add(ListingIcon, checkImage(l.Icon, spec.Icon))
+		add(ListingIcon, checkImage(l.Icon, spec.Icon, inspect))
 	}
 	if n := len(l.Screenshots); n > 0 {
 		if spec.MinScreenshots > 0 && n < spec.MinScreenshots {
@@ -188,11 +203,15 @@ func ValidateListing(storeName string, l *Listing) []error {
 			add(ListingScreenshots, fmt.Errorf("got %d, at most %d allowed", n, spec.MaxScreenshots))
 		}
 		for i, p := range l.Screenshots {
-			add(fmt.Sprintf("%s[%d]", ListingScreenshots, i), checkImage(p, spec.Screenshot))
+			add(fmt.Sprintf("%s[%d]", ListingScreenshots, i), checkImage(p, spec.Screenshot, inspect))
 		}
 	}
 	if spec.Check != nil {
-		for _, err := range spec.Check(l) {
+		checkInspect := inspect
+		if checkInspect == nil {
+			checkInspect = imgcheck.Inspect
+		}
+		for _, err := range spec.Check(l, checkInspect) {
 			errs = append(errs, fmt.Errorf("%s: listing: %w", storeName, err))
 		}
 	}
@@ -251,12 +270,15 @@ func checkText(s string, spec TextSpec) error {
 	return nil
 }
 
-func checkImage(path string, spec ImageSpec) error {
-	if !spec.constrained() {
-		_, err := os.Stat(path)
-		return err
+func checkImage(path string, spec ImageSpec, inspect ImageInspector) error {
+	if inspect == nil {
+		if !spec.constrained() {
+			_, err := os.Stat(path)
+			return err
+		}
+		inspect = imgcheck.Inspect
 	}
-	info, err := imgcheck.Inspect(path)
+	info, err := inspect(path)
 	if err != nil {
 		return err
 	}
