@@ -147,6 +147,9 @@ func TestListingResult(t *testing.T) {
 	if got := store.ListingResult(req, &store.UploadResult{}); got != nil {
 		t.Errorf("failure: %v", got)
 	}
+	if got := store.ListingResult(req, &store.UploadResult{Success: true, Category: store.CategoryAlreadyDone}); got != nil {
+		t.Errorf("already done: %v", got)
+	}
 	if got := store.ListingResult(&store.UploadRequest{}, ok); got != nil {
 		t.Errorf("no listing: %v", got)
 	}
