@@ -11,8 +11,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/imgcheck"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
+
+// checkSaw is set by test-listing-check-inspect's Check.
+var checkSaw string
 
 func init() {
 	store.Register("test-listing", store.ConfigSchema{
@@ -24,7 +28,7 @@ func init() {
 			Screenshot:     store.ImageSpec{Formats: []string{"png", "jpeg"}, MinEdge: 320, MaxEdge: 3840},
 			MinScreenshots: 2,
 			MaxScreenshots: 3,
-			Check: func(l *store.Listing) []error {
+			Check: func(l *store.Listing, _ store.ImageInspector) []error {
 				if strings.Contains(l.Brief, "!") {
 					return []error{errors.New("brief must not contain punctuation")}
 				}
@@ -44,6 +48,15 @@ func init() {
 		Name: "test-listing-maxaspect",
 		Listing: &store.ListingSpec{Screenshot: store.ImageSpec{
 			MaxAspect: &store.Size{Width: 2, Height: 1}, MaxBytes: 1 << 20, MaxBytesByFormat: map[string]int64{"jpeg": 100},
+		}},
+	}, func(map[string]string) (store.Store, error) { return nil, nil })
+	// Its Check records what the injected inspector answered for the icon.
+	store.Register("test-listing-check-inspect", store.ConfigSchema{
+		Name: "test-listing-check-inspect",
+		Listing: &store.ListingSpec{Check: func(l *store.Listing, in store.ImageInspector) []error {
+			info, err := in(l.Icon)
+			checkSaw = fmt.Sprintf("%v %v", info.Width, err)
+			return nil
 		}},
 	}, func(map[string]string) (store.Store, error) { return nil, nil })
 	// An unconstrained spec, like the script store's.
@@ -189,6 +202,50 @@ func TestValidateListingUnconstrainedImages(t *testing.T) {
 	errs := store.ValidateListing("test-listing-any", &store.Listing{Icon: filepath.Join(t.TempDir(), "nope.svg")})
 	if len(errs) != 1 || !errors.Is(errs[0], os.ErrNotExist) {
 		t.Errorf("errs = %v, want one not-exist error", errs)
+	}
+}
+
+// ValidateListingWith reads image headers through the inspector: paths
+// can be anything it understands (object keys here), and nothing is read
+// from disk — including by the store's Check.
+func TestValidateListingWithInspector(t *testing.T) {
+	meta := map[string]imgcheck.Info{
+		"k/icon":  {Format: "png", Width: 512, Height: 512, Bytes: 1000},
+		"k/shot1": {Format: "jpeg", Width: 1080, Height: 1920, Bytes: 1000},
+		"k/shot2": {Format: "png", Width: 1080, Height: 1920, Bytes: 1000},
+		"k/tiny":  {Format: "png", Width: 100, Height: 100, Bytes: 10},
+	}
+	var seen []string
+	inspect := func(key string) (imgcheck.Info, error) {
+		seen = append(seen, key)
+		info, ok := meta[key]
+		if !ok {
+			return imgcheck.Info{}, fmt.Errorf("%s: unknown asset", key)
+		}
+		return info, nil
+	}
+
+	ok := &store.Listing{Brief: "一句话介绍", Icon: "k/icon", Screenshots: []string{"k/shot1", "k/shot2"}}
+	if errs := store.ValidateListingWith("test-listing", ok, inspect); len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if len(seen) == 0 {
+		t.Fatal("inspector was not used")
+	}
+
+	bad := &store.Listing{Icon: "k/tiny", Screenshots: []string{"k/shot1", "k/missing"}}
+	joined := errors.Join(store.ValidateListingWith("test-listing", bad, inspect)...).Error()
+	for _, want := range []string{"size 100x100, want 512x512", "k/missing: unknown asset"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("errors missing %q:\n%s", want, joined)
+		}
+	}
+
+	// The store's Check gets the same inspector.
+	checkSaw = ""
+	store.ValidateListingWith("test-listing-check-inspect", &store.Listing{Icon: "k/icon"}, inspect)
+	if checkSaw != "512 <nil>" {
+		t.Errorf("Check saw %q, want the injected inspector's answer", checkSaw)
 	}
 }
 

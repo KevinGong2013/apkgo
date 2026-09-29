@@ -270,12 +270,12 @@ func (s *Store) listingParams(ctx context.Context, pkg, appID string, l *store.L
 // express: Tencent requires all screenshots to share one pixel size
 // (所有图片宽高一致). Unreadable files are skipped — ValidateListing
 // already reports those per screenshot.
-func checkListing(l *store.Listing) []error {
+func checkListing(l *store.Listing, inspect store.ImageInspector) []error {
 	var errs []error
 	first := -1
 	var want imgcheck.Info
 	for i, p := range l.Screenshots {
-		info, err := imgcheck.Inspect(p)
+		info, err := inspect(p)
 		if err != nil {
 			continue
 		}

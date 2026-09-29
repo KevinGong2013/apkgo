@@ -57,7 +57,7 @@ var listingSpec = &store.ListingSpec{
 
 // checkListing adds the rule ListingSpec's fields can't express: brief
 // and description must differ (AGC rejects identical briefInfo / appDesc).
-func checkListing(l *store.Listing) []error {
+func checkListing(l *store.Listing, _ store.ImageInspector) []error {
 	if l.Brief != "" && l.Brief == l.Description {
 		return []error{fmt.Errorf("%s and %s must differ, AGC rejects identical briefInfo / appDesc", store.ListingBrief, store.ListingDescription)}
 	}

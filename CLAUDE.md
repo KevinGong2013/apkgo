@@ -90,7 +90,10 @@ any upload (also in `--dry-run`) and all problems are reported at once
 `script` store receives it as `Listing` in its stdin JSON. Successful
 results list the submitted fields in `listing`. Library callers that
 drive `Store.Upload` directly set `UploadRequest.Listing` and use
-`store.ValidateListing` / `store.ListingResult` themselves.
+`store.ValidateListing` / `store.ListingResult` themselves. Services that
+keep images in object storage validate with `store.ValidateListingWith`
+and an `ImageInspector` backed by metadata recorded at upload time
+(`imgcheck.InspectBytes`), so no image has to be downloaded.
 
 ### Download mode (URL pass-through)
 

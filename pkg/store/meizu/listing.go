@@ -40,7 +40,7 @@ const descForbidden = "@#*&"
 // checkListing adds the rules ListingSpec's fields can't express: the
 // guideline's banned description characters and the upload endpoint's
 // extension check.
-func checkListing(l *store.Listing) []error {
+func checkListing(l *store.Listing, _ store.ImageInspector) []error {
 	var errs []error
 	if i := strings.IndexAny(l.Description, descForbidden); i >= 0 {
 		errs = append(errs, fmt.Errorf("%s: must not contain %q (Meizu review bans @ # * &)", store.ListingDescription, l.Description[i:i+1]))
