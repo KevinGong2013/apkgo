@@ -26,7 +26,7 @@ curl -fsSL https://apkgo.com.cn/install.sh | sh
 npx skills add KevinGong2013/apkgo
 
 # Go
-go install github.com/KevinGong2013/apkgo@latest
+go install github.com/KevinGong2013/apkgo/v3@latest
 
 # Docker
 docker pull ghcr.io/kevingong2013/apkgo:latest
@@ -52,6 +52,8 @@ curl -fsSL https://github.com/KevinGong2013/apkgo/releases/latest/download/apkgo
 # 从 https://github.com/KevinGong2013/apkgo/releases/latest 下载 apkgo_Windows_x86_64.zip
 # 解压后将 apkgo.exe 添加到 PATH
 ```
+
+> 如果 `apkgo version` 报 `unknown command` 或输出的帮助里只有 `doctor` / `upload`，说明 PATH 里优先命中了旧版 apkgo（常见于曾执行过不带 `/v3` 的 `go install`，旧版 v1 位于 `%USERPROFILE%\go\bin`）。用 `where apkgo`（macOS/Linux：`which -a apkgo`）找出所有副本，删除旧的即可。
 
 </details>
 
