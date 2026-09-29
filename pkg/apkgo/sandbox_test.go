@@ -33,6 +33,50 @@ func (s *sandboxTestStore) Upload(context.Context, *store.UploadRequest) *store.
 	return store.NewResult(s.name, time.Now())
 }
 
+// Test stores are registered once in init — store.Register panics on a
+// duplicate name, so registering per test breaks `go test -count=N`. Each
+// store counts its Upload calls in testStoreCalls (reset via resetCalls);
+// lastEnvironment records what the environment-aware factories were last
+// handed.
+var (
+	testStoreCalls  = map[string]*atomic.Int32{}
+	lastEnvironment store.Environment
+)
+
+func init() {
+	plain := func(name, displayName string) {
+		calls := new(atomic.Int32)
+		testStoreCalls[name] = calls
+		store.Register(name, store.ConfigSchema{Name: name, AcceptsAAB: true}, func(map[string]string) (store.Store, error) {
+			return &sandboxTestStore{name: displayName, calls: calls}, nil
+		})
+	}
+	sandbox := func(name string) {
+		calls := new(atomic.Int32)
+		testStoreCalls[name] = calls
+		store.RegisterWithEnvironment(name, store.ConfigSchema{Name: name, AcceptsAAB: true, SupportsSandbox: true},
+			func(_ map[string]string, environment store.Environment) (store.Store, error) {
+				lastEnvironment = environment
+				return &sandboxTestStore{name: name, calls: calls}, nil
+			})
+	}
+	sandbox("test-run-sandbox")
+	plain("test-run-production", "test-run-production")
+	plain("test-run-dry-only", "test-run-dry-only")
+	plain("test-run-plain-dry", "test-run-plain-dry")
+	sandbox("test-run-capability-name")
+	// A runtime display name must not grant another registered type's
+	// sandbox capability.
+	plain("test-run-name-collision", "test-run-capability-name")
+}
+
+// resetCalls zeroes and returns the Upload counter of a test store.
+func resetCalls(name string) *atomic.Int32 {
+	c := testStoreCalls[name]
+	c.Store(0)
+	return c
+}
+
 func TestRunRejectsDryRunAndSandbox(t *testing.T) {
 	_, err := Run(context.Background(), Job{
 		Config:  &config.Config{},
@@ -45,25 +89,10 @@ func TestRunRejectsDryRunAndSandbox(t *testing.T) {
 }
 
 func TestRunSandboxMixedModeSkipsSideEffects(t *testing.T) {
-	var sandboxCalls atomic.Int32
-	var productionCalls atomic.Int32
+	sandboxCalls := resetCalls("test-run-sandbox")
+	productionCalls := resetCalls("test-run-production")
 	var events atomic.Int32
-	var gotEnvironment store.Environment
-
-	store.RegisterWithEnvironment("test-run-sandbox", store.ConfigSchema{
-		Name:            "test-run-sandbox",
-		AcceptsAAB:      true,
-		SupportsSandbox: true,
-	}, func(_ map[string]string, environment store.Environment) (store.Store, error) {
-		gotEnvironment = environment
-		return &sandboxTestStore{name: "test-run-sandbox", calls: &sandboxCalls}, nil
-	})
-	store.Register("test-run-production", store.ConfigSchema{
-		Name:       "test-run-production",
-		AcceptsAAB: true,
-	}, func(map[string]string) (store.Store, error) {
-		return &sandboxTestStore{name: "test-run-production", calls: &productionCalls}, nil
-	})
+	lastEnvironment = ""
 
 	dir := t.TempDir()
 	aab := filepath.Join(dir, "app.aab")
@@ -95,8 +124,8 @@ func TestRunSandboxMixedModeSkipsSideEffects(t *testing.T) {
 	if !result.Sandbox || result.DryRun {
 		t.Errorf("mode = sandbox %v, dry-run %v", result.Sandbox, result.DryRun)
 	}
-	if gotEnvironment != store.EnvironmentSandbox {
-		t.Errorf("factory environment = %q", gotEnvironment)
+	if lastEnvironment != store.EnvironmentSandbox {
+		t.Errorf("factory environment = %q", lastEnvironment)
 	}
 	if sandboxCalls.Load() != 1 || productionCalls.Load() != 0 {
 		t.Errorf("calls = sandbox %d, production %d", sandboxCalls.Load(), productionCalls.Load())
@@ -124,14 +153,8 @@ func TestRunSandboxMixedModeSkipsSideEffects(t *testing.T) {
 }
 
 func TestRunSandboxWithoutSupportedStoreIsDryRun(t *testing.T) {
-	var calls atomic.Int32
+	calls := resetCalls("test-run-dry-only")
 	var logs bytes.Buffer
-	store.Register("test-run-dry-only", store.ConfigSchema{
-		Name:       "test-run-dry-only",
-		AcceptsAAB: true,
-	}, func(map[string]string) (store.Store, error) {
-		return &sandboxTestStore{name: "test-run-dry-only", calls: &calls}, nil
-	})
 
 	aab := filepath.Join(t.TempDir(), "app.aab")
 	if err := os.WriteFile(aab, []byte("test bundle"), 0o600); err != nil {
@@ -162,13 +185,7 @@ func TestRunSandboxWithoutSupportedStoreIsDryRun(t *testing.T) {
 }
 
 func TestRunDryRunMarksPerStoreResult(t *testing.T) {
-	var calls atomic.Int32
-	store.Register("test-run-plain-dry", store.ConfigSchema{
-		Name:       "test-run-plain-dry",
-		AcceptsAAB: true,
-	}, func(map[string]string) (store.Store, error) {
-		return &sandboxTestStore{name: "test-run-plain-dry", calls: &calls}, nil
-	})
+	calls := resetCalls("test-run-plain-dry")
 
 	aab := filepath.Join(t.TempDir(), "app.aab")
 	if err := os.WriteFile(aab, []byte("test bundle"), 0o600); err != nil {
@@ -205,22 +222,8 @@ func TestSandboxResultsMarksFailedUpload(t *testing.T) {
 }
 
 func TestRunSandboxUsesConfiguredStoreTypeForCapability(t *testing.T) {
-	var calls atomic.Int32
-	store.RegisterWithEnvironment("test-run-capability-name", store.ConfigSchema{
-		Name:            "test-run-capability-name",
-		AcceptsAAB:      true,
-		SupportsSandbox: true,
-	}, func(_ map[string]string, _ store.Environment) (store.Store, error) {
-		return &sandboxTestStore{name: "test-run-capability-name", calls: &calls}, nil
-	})
-	store.Register("test-run-name-collision", store.ConfigSchema{
-		Name:       "test-run-name-collision",
-		AcceptsAAB: true,
-	}, func(map[string]string) (store.Store, error) {
-		// A runtime display name must not grant another registered type's
-		// sandbox capability.
-		return &sandboxTestStore{name: "test-run-capability-name", calls: &calls}, nil
-	})
+	capabilityCalls := resetCalls("test-run-capability-name")
+	collisionCalls := resetCalls("test-run-name-collision")
 
 	aab := filepath.Join(t.TempDir(), "app.aab")
 	if err := os.WriteFile(aab, []byte("test bundle"), 0o600); err != nil {
@@ -236,8 +239,8 @@ func TestRunSandboxUsesConfiguredStoreTypeForCapability(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if calls.Load() != 0 {
-		t.Errorf("production-only store with colliding name called %d times", calls.Load())
+	if n := capabilityCalls.Load() + collisionCalls.Load(); n != 0 {
+		t.Errorf("production-only store with colliding name called %d times", n)
 	}
 	if len(result.Results) != 1 || !result.Results[0].DryRun || result.Results[0].Sandbox {
 		t.Errorf("result = %+v", result.Results)
