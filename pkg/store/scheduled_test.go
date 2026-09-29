@@ -11,6 +11,25 @@ import (
 // scheduled-release fields of oppo, vivo and samsung, whose datetime
 // strings carry no timezone of their own and must be rendered in
 // Beijing time (UTC+8) regardless of the offset the caller supplied.
+var (
+	sandboxFactoryEnv      store.Environment
+	sandboxFactoryInstance string
+)
+
+func init() {
+	nop := func(map[string]string) (store.Store, error) { return nil, nil }
+	store.Register("test-sched-yes", store.ConfigSchema{Name: "test-sched-yes", SupportsScheduledRelease: true}, nop)
+	store.Register("test-sched-no", store.ConfigSchema{Name: "test-sched-no"}, nop)
+	store.Register("test-urlpush-yes", store.ConfigSchema{Name: "test-urlpush-yes", SupportsURLPush: true}, nop)
+	store.Register("test-urlpush-no", store.ConfigSchema{Name: "test-urlpush-no"}, nop)
+	store.RegisterWithEnvironment("test-sandbox-yes", store.ConfigSchema{Name: "test-sandbox-yes", SupportsSandbox: true},
+		func(cfg map[string]string, environment store.Environment) (store.Store, error) {
+			sandboxFactoryEnv = environment
+			sandboxFactoryInstance = cfg["_name"]
+			return nil, nil
+		})
+}
+
 func TestBeijingLocalTime(t *testing.T) {
 	cases := []struct {
 		name string
@@ -39,15 +58,12 @@ func TestBeijingLocalTime(t *testing.T) {
 // the "type.instance" name resolution (e.g. "script.cdn") and the
 // unknown-name-is-false fallback that apkgo.Run relies on when deciding
 // which targeted stores to warn about.
+//
+// Test stores are registered once in init — store.Register panics on a
+// duplicate name, so registering per test breaks `go test -count=N`.
+// sandboxFactoryEnv / sandboxFactoryInstance record what test-sandbox-yes's
+// factory was last handed.
 func TestSupportsScheduledRelease(t *testing.T) {
-	store.Register("test-sched-yes", store.ConfigSchema{
-		Name:                     "test-sched-yes",
-		SupportsScheduledRelease: true,
-	}, func(map[string]string) (store.Store, error) { return nil, nil })
-	store.Register("test-sched-no", store.ConfigSchema{
-		Name: "test-sched-no",
-	}, func(map[string]string) (store.Store, error) { return nil, nil })
-
 	cases := []struct {
 		name string
 		want bool
@@ -70,14 +86,6 @@ func TestSupportsScheduledRelease(t *testing.T) {
 // decide whether a store can take a developer-hosted URL instead of an
 // uploaded binary.
 func TestSupportsURLPush(t *testing.T) {
-	store.Register("test-urlpush-yes", store.ConfigSchema{
-		Name:            "test-urlpush-yes",
-		SupportsURLPush: true,
-	}, func(map[string]string) (store.Store, error) { return nil, nil })
-	store.Register("test-urlpush-no", store.ConfigSchema{
-		Name: "test-urlpush-no",
-	}, func(map[string]string) (store.Store, error) { return nil, nil })
-
 	cases := []struct {
 		name string
 		want bool
@@ -95,32 +103,23 @@ func TestSupportsURLPush(t *testing.T) {
 }
 
 func TestEnvironmentFactoryAndSupportsSandbox(t *testing.T) {
-	var gotEnvironment store.Environment
-	var gotInstance string
-	store.RegisterWithEnvironment("test-sandbox-yes", store.ConfigSchema{
-		Name:            "test-sandbox-yes",
-		SupportsSandbox: true,
-	}, func(cfg map[string]string, environment store.Environment) (store.Store, error) {
-		gotEnvironment = environment
-		gotInstance = cfg["_name"]
-		return nil, nil
-	})
+	sandboxFactoryEnv, sandboxFactoryInstance = "", ""
 
 	cfg := map[string]string{"token": "secret"}
 	if _, err := store.Create("test-sandbox-yes", cfg); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if gotEnvironment != store.EnvironmentProduction {
-		t.Errorf("default environment = %q, want %q", gotEnvironment, store.EnvironmentProduction)
+	if sandboxFactoryEnv != store.EnvironmentProduction {
+		t.Errorf("default environment = %q, want %q", sandboxFactoryEnv, store.EnvironmentProduction)
 	}
 	if _, err := store.CreateForEnvironment("test-sandbox-yes.instance", cfg, store.EnvironmentSandbox); err != nil {
 		t.Fatalf("CreateForEnvironment: %v", err)
 	}
-	if gotEnvironment != store.EnvironmentSandbox {
-		t.Errorf("environment = %q, want %q", gotEnvironment, store.EnvironmentSandbox)
+	if sandboxFactoryEnv != store.EnvironmentSandbox {
+		t.Errorf("environment = %q, want %q", sandboxFactoryEnv, store.EnvironmentSandbox)
 	}
-	if gotInstance != "instance" {
-		t.Errorf("instance = %q, want instance", gotInstance)
+	if sandboxFactoryInstance != "instance" {
+		t.Errorf("instance = %q, want instance", sandboxFactoryInstance)
 	}
 	if _, mutated := cfg["_name"]; mutated {
 		t.Error("CreateForEnvironment mutated caller config")
