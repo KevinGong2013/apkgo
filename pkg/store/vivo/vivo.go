@@ -18,9 +18,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/ctxlog"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
@@ -38,6 +40,24 @@ func init() {
 		SupportsScheduledRelease: true,
 		SupportsURLPush:          true,
 		SupportsSandbox:          true,
+		// Listing fields ride along in the version-update request
+		// (app.sync.update.app / app.sync.update.subpackage.app, doc
+		// 343/517); images are uploaded first for serial numbers
+		// (app.upload.icon doc 329, app.upload.screenshot doc 331).
+		// Lengths follow the 审核规范 (doc 12) and subCodes 20017/20009.
+		Listing: &store.ListingSpec{
+			// 2.5.2: 5–16 个汉字（或 10–32 个英文字符）.
+			Brief: store.TextSpec{Min: 10, Max: 32, Unit: store.UnitWidth},
+			// detailDesc: 50–1000 个字符.
+			Description: store.TextSpec{Min: 50, Max: 1000},
+			// png, 长等于宽, 256*256–512*512, ≤500KB.
+			Icon: store.ImageSpec{Formats: []string{"png"}, Square: true, MinEdge: 256, MaxEdge: 512, MaxBytes: 500 << 10},
+			// 竖图 1080*1920, jpg/png, ≤2MB each.
+			Screenshot:     store.ImageSpec{Formats: []string{"png", "jpeg"}, Sizes: []store.Size{{Width: 1080, Height: 1920}}, MaxBytes: 2 << 20},
+			MinScreenshots: 3,
+			MaxScreenshots: 5,
+			Check:          checkListing,
+		},
 		Fields: []store.FieldSchema{
 			{Key: "access_key", Required: true, Desc: "vivo open platform access key"},
 			{Key: "access_secret", Required: true, Desc: "vivo open platform access secret"},
@@ -49,6 +69,24 @@ func init() {
 	})
 	store.RegisterDiagnoser("vivo", diagnose)
 	store.RegisterAuditor("vivo", audit)
+}
+
+// briefBadEndings are the punctuation marks vivo's 审核规范 2.5.3 rules
+// out at the end of the brief ("结尾仅接受使用感叹号或问号"). Kept to
+// sentence punctuation so a brief ending in e.g. "%" or a closing quote
+// isn't blocked up front.
+const briefBadEndings = "。．.，,、；;：:…"
+
+// checkListing adds the vivo rules ListingSpec can't express.
+func checkListing(l *store.Listing) []error {
+	brief := strings.TrimSpace(l.Brief)
+	if brief == "" {
+		return nil
+	}
+	if r, _ := utf8.DecodeLastRuneInString(brief); strings.ContainsRune(briefBadEndings, r) {
+		return []error{fmt.Errorf("brief must not end with %q: vivo only accepts ! or ? as its final punctuation", r)}
+	}
+	return nil
 }
 
 // audit is registered with `apkgo audit`. It reads the package's review
@@ -164,11 +202,27 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		updateReq["onlineType"] = "2"
 		updateReq["scheOnlineTime"] = store.BeijingLocalTime(*req.ReleaseTime)
 	}
+	// Listing text (商店资料) goes in the same update request, in both
+	// the upload and the URL-push interfaces.
+	if l := req.Listing; l != nil {
+		if l.Brief != "" {
+			updateReq["simpleDesc"] = l.Brief
+		}
+		if l.Description != "" {
+			updateReq["detailDesc"] = l.Description
+		}
+	}
 
 	// URL pass-through (download mode): when -f (and --file64 for split)
 	// are public URLs, hand vivo the download addresses and let it pull
 	// the APKs itself (async), instead of uploading the bytes.
 	if pushed, err := s.maybeURLPush(ctx, req, updateReq, rep); pushed {
+		return err
+	}
+
+	// Listing images go up before the APK: they're small, and a store
+	// rejection (e.g. 12010 审核中) surfaces before the big transfer.
+	if err := s.uploadListingImages(ctx, req.PackageName, req.Listing, updateReq, rep); err != nil {
 		return err
 	}
 
@@ -183,11 +237,11 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	if req.File64Path != "" {
 		// Split package upload
-		resp32, err := s.uploadAPK("app.upload.apk.app.32", req.PackageName, req.FilePath, rep)
+		resp32, err := s.uploadAPK(ctx, "app.upload.apk.app.32", req.PackageName, req.FilePath, rep)
 		if err != nil {
 			return fmt.Errorf("upload 32-bit: %w", err)
 		}
-		resp64, err := s.uploadAPK("app.upload.apk.app.64", req.PackageName, req.File64Path, rep)
+		resp64, err := s.uploadAPK(ctx, "app.upload.apk.app.64", req.PackageName, req.File64Path, rep)
 		if err != nil {
 			return fmt.Errorf("upload 64-bit: %w", err)
 		}
@@ -198,7 +252,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	}
 
 	// Single package upload
-	resp, err := s.uploadAPK("app.upload.apk.app", req.PackageName, req.FilePath, rep)
+	resp, err := s.uploadAPK(ctx, "app.upload.apk.app", req.PackageName, req.FilePath, rep)
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}
@@ -210,8 +264,57 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 // vivoTaskPollPeriod is how often we poll vivo's async task-status while it
 // downloads the APK(s) from the developer URL. vivo documents no rate
-// limit here, so a short interval is fine.
-const vivoTaskPollPeriod = 15 * time.Second
+// limit here, so a short interval is fine. A var so tests can shorten it.
+var vivoTaskPollPeriod = 15 * time.Second
+
+// uploadListingImages uploads the listing's icon (app.upload.icon) and
+// screenshots (app.upload.screenshot, in display order) and puts their
+// serial numbers into bizParams as icon / screenshot (comma-separated).
+// No-op when the listing carries no images.
+func (s *Store) uploadListingImages(ctx context.Context, packageName string, l *store.Listing, bizParams map[string]string, rep progress.Reporter) error {
+	if !hasListingImages(l) {
+		return nil
+	}
+	rep.Phase("listing")
+	if l.Icon != "" {
+		serial, err := s.uploadImage(ctx, "app.upload.icon", packageName, l.Icon)
+		if err != nil {
+			return fmt.Errorf("upload listing icon: %w", err)
+		}
+		bizParams["icon"] = serial
+	}
+	if len(l.Screenshots) > 0 {
+		serials := make([]string, len(l.Screenshots))
+		for i, p := range l.Screenshots {
+			serial, err := s.uploadImage(ctx, "app.upload.screenshot", packageName, p)
+			if err != nil {
+				return fmt.Errorf("upload listing screenshot %d: %w", i+1, err)
+			}
+			serials[i] = serial
+		}
+		bizParams["screenshot"] = strings.Join(serials, ",")
+	}
+	return nil
+}
+
+// uploadImage uploads one listing image and returns its serial number.
+// Unlike the APK methods, app.upload.icon / app.upload.screenshot take
+// only packageName + file (no fileMd5).
+func (s *Store) uploadImage(ctx context.Context, method, packageName, path string) (string, error) {
+	resp, err := s.uploadFile(ctx, method, map[string]string{"packageName": packageName}, path, progress.Safe(nil))
+	if err != nil {
+		return "", err
+	}
+	if resp.SerialNumber == "" {
+		return "", fmt.Errorf("%s: no serialnumber in response", method)
+	}
+	return resp.SerialNumber, nil
+}
+
+// hasListingImages reports whether l carries an icon or screenshots.
+func hasListingImages(l *store.Listing) bool {
+	return l != nil && (l.Icon != "" || len(l.Screenshots) > 0)
+}
 
 // maybeURLPush implements vivo's download mode. When the APK(s) came in as
 // public URLs it hands vivo the download addresses (the app.update.* async
@@ -219,6 +322,13 @@ const vivoTaskPollPeriod = 15 * time.Second
 // Returns (true, err) when it owns the publish, or (false, nil) to fall
 // through to the upload path (e.g. local file, or split with only one URL).
 func (s *Store) maybeURLPush(ctx context.Context, req *store.UploadRequest, bizParams map[string]string, rep progress.Reporter) (bool, error) {
+	// The URL interfaces take listing images only as public URLs
+	// (iconUrl / screenshotUrl); ours are local files, which need the
+	// serial numbers only the upload interfaces accept.
+	if hasListingImages(req.Listing) {
+		ctxlog.FromContext(ctx).Info("listing has images; uploading the APK instead of URL push")
+		return false, nil
+	}
 	switch {
 	case req.File64Path != "":
 		// Split arch: vivo's subpackage download needs BOTH public URLs;
@@ -336,20 +446,28 @@ func sumFileSizes(paths ...string) (int64, error) {
 	return total, nil
 }
 
-func (s *Store) uploadAPK(method, packageName, filePath string, rep progress.Reporter) (*uploadResp, error) {
+// uploadAPK uploads an APK via one of the app.upload.apk.* methods,
+// which also want the file's MD5.
+func (s *Store) uploadAPK(ctx context.Context, method, packageName, filePath string, rep progress.Reporter) (*uploadResp, error) {
 	fileMd5, err := fileMD5(filePath)
 	if err != nil {
 		return nil, err
 	}
-
-	params := s.signParams(method, map[string]string{
+	return s.uploadFile(ctx, method, map[string]string{
 		"packageName": packageName,
 		"fileMd5":     fileMd5,
-	})
+	}, filePath, rep)
+}
+
+// uploadFile POSTs filePath as the multipart "file" part of a signed
+// upload method (app.upload.apk.* / app.upload.icon /
+// app.upload.screenshot); each answers with a serialnumber.
+func (s *Store) uploadFile(ctx context.Context, method string, bizParams map[string]string, filePath string, rep progress.Reporter) (*uploadResp, error) {
+	params := s.signParams(method, bizParams)
 
 	rc, fSize, err := progress.WrapFile(filePath, rep)
 	if err != nil {
-		return nil, fmt.Errorf("open apk: %w", err)
+		return nil, fmt.Errorf("open file: %w", err)
 	}
 	defer rc.Close()
 
@@ -357,7 +475,7 @@ func (s *Store) uploadAPK(method, packageName, filePath string, rep progress.Rep
 	for k, v := range params {
 		queryVals.Set(k, v)
 	}
-	httpResp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
+	httpResp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
 		Method: http.MethodPost,
 		URL:    s.baseURL,
 		Query:  queryVals,
@@ -419,7 +537,18 @@ func truncateBody(s string) string {
 func (s *Store) updateApp(method string, bizParams map[string]string) error {
 	params := s.signParams(method, bizParams)
 
-	httpResp, err := s.client.R().SetQueryParams(params).Post("")
+	// Parameters normally ride in the query string. A listing's detailDesc
+	// can be 1000 Chinese characters (~9KB URL-encoded), past common
+	// request-line limits, so listing text goes in a form body instead —
+	// vivo's API 接入说明 accepts x-www-form-urlencoded and requires POST
+	// when the URL would be too long. Plain updates keep the query string.
+	r := s.client.R()
+	if bizParams["simpleDesc"] != "" || bizParams["detailDesc"] != "" {
+		r.SetFormData(params)
+	} else {
+		r.SetQueryParams(params)
+	}
+	httpResp, err := r.Post("")
 	if err != nil {
 		return err
 	}

@@ -104,7 +104,7 @@ func TestUploadAPKUsesStoreBaseURLAndCredentials(t *testing.T) {
 		accessKey:    "sandbox-key",
 		accessSecret: []byte("sandbox-secret"),
 	}
-	resp, err := s.uploadAPK("app.upload.apk.app", "com.example", file, progress.Nop{})
+	resp, err := s.uploadAPK(context.Background(), "app.upload.apk.app", "com.example", file, progress.Nop{})
 	if err != nil {
 		t.Fatalf("uploadAPK: %v", err)
 	}
