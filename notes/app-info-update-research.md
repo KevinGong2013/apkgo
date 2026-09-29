@@ -1,25 +1,51 @@
 # 应用基本信息（图标 / 简介 / 截图）更新调研
 
-> 调研日期：2026-07-07
+> 调研日期：2026-07-07；2026-09-29 更新（补充魅族、鸿蒙，明确应用名策略，移除蒲公英/fir）
 > 状态：**仅调研，尚未实现**。apkgo 当前 `UploadRequest` 只携带 `AppName`/`PackageName`/`VersionCode`/`VersionName`（从 APK 本身解析）+ `ReleaseNotes`（发布说明），
-> 不支持修改应用名称、icon、简介（短/长描述）、截图/宣传图。本文记录各商店在这方面的 API 支持情况，供日后实现参考。
+> 不支持修改一句话介绍、长描述、icon、截图/宣传图。本文记录各商店在这方面的 API 支持情况，供日后实现参考。
+>
+> 范围：国内商店 + Google Play。**蒲公英、fir 不在范围内**（分发平台，icon/截图由后端从安装包自动提取，无资料概念）；`script` 为用户自定义脚本，不适用。
 
 ## TL;DR
 
-| 商店 | 应用名 | 简介/描述 | icon | 截图/宣传图 | 形态 |
-|---|---|---|---|---|---|
-| vivo | ✅ | ✅ | ✅ | ✅ | 素材先上传拿 `serialNumber`，再填入 `app.update.language.info` |
-| OPPO | ➖（未见字段） | ✅ | ✅ | ✅ | `/resource/v1/app/updm`：**不产生新版本**的纯资料更新接口 |
-| Google Play | ✅ | ✅ | ✅ | ✅ | `edits.listings` + `edits.images`，与 fastlane supply 同款 |
-| 华为 huawei | ✅ | ✅ | ✅ | ✅ | `app-language-info`（按语言）+ `app-file-info`（按语言，icon/截图/宣传图） |
-| 小米 xiaomi | ❌ 名称不可改 | ✅ | ✅ | ✅ | 同一个 `/dev/push`，`appInfo.desc`/`brief` + 截图 multipart 字段 |
-| 三星 samsung | ✅ | ✅ | ✅ | ✅ | `contentUpdate`，但**仅限应用已 FOR SALE（已上架）状态**才能调 |
-| 荣耀 honor | ✅ | ✅ | ❌ 无 API | ❌ 无 API | 仅 `update-language-info` 能改名称/简介，icon/截图只能控制台换 |
-| 腾讯应用宝 tencent | ❌ | ❌ | ❌ | ❌ | `update_app` 只有包信息+发布说明，无任何资料字段；官方指南证实为控制台专属 |
-| 蒲公英 pgyer | ➖ | ➖（有未用字段） | ❌ 只读 | ❌ 只读 | icon/截图由后端从 APK 自动提取，只读返回；有个 `buildDescription` 字段 apkgo 未使用 |
-| fir.im | ➖ | ❌ | ❌ 只读 | ❌ | 上传接口只有 changelog，无任何资料字段 |
+计划支持的资料项为 **一句话介绍 / 长描述 / icon / 截图**；**应用名不做修改，只做一致性检查**（见下文「应用名」一节）。
 
-**4 家可以一站式改全部四项（vivo / OPPO / Google Play / 华为），小米/三星部分受限，荣耀只能改名称+简介，腾讯/蒲公英/fir 基本没有 API。**
+| 商店 | 一句话介绍（字段） | 长描述 | icon | 截图 | 结论 / 形态 |
+|---|---|---|---|---|---|
+| 华为 huawei | ✅ `briefInfo`（≤80字） | ✅ `appDesc` | ✅ | ✅ | 全支持。`app-language-info` + `app-file-info`，均按语言，改完需重新提审 |
+| 鸿蒙 harmony | ❓ 推测同华为 | ❓ | ❓ | ❓ | 与华为同一套 AGC，但走 v3 接口，**字段未核实** |
+| vivo | ✅ `recommendDesc` | ✅ `description` | ✅ | ✅（4–8张） | 全支持。素材先拿 `serialNumber` 再填 `app.update.language.info`；审核中不可改，改完需单独提审 |
+| OPPO | ✅ `summary`（约13–15字） | ✅ `detail_desc` | ✅ | ✅ | 全支持。`/app/updm` 是唯一「改资料不产生新版本」的接口 |
+| 魅族 meizu | ✅ `recommendDesc`（推测） | ✅ `appDesc` | ✅ | ✅ | 全支持。`publish` / `saleapp/update` 每次提交全量资料，**官方文档字段含义未核实** |
+| Google Play | ✅ `shortDescription`（≤80） | ✅ `fullDescription` | ✅ | ✅ | 全支持。`edits.listings` + `edits.images` |
+| 小米 xiaomi | ✅ `brief` | ✅ `desc` | ✅ | ✅ | 字段都有，但文档只标注「新增时必选」，**更新时是否生效未验证** |
+| 三星 samsung | ✅ `shortDescription`（≤40字节） | ✅ `longDescription` | ✅ | ✅ | 字段都有，但 `contentUpdate` **仅限已上架（FOR SALE）状态** |
+| 荣耀 honor | ✅ `briefIntro` | ✅ `intro` | ❌ | ❌ | **只能改文字**，icon/截图无 API，仅控制台 |
+| 腾讯应用宝 tencent | ❌ | ❌ | ❌ | ❌ | **完全没有 API**，仅控制台 |
+
+按资料项汇总：
+
+- **一句话介绍 / 长描述**：除腾讯外 9 家都能改。
+- **icon / 截图**：除腾讯、荣耀外 8 家能改；其中三星限已上架、鸿蒙未核实、小米更新时是否生效未验证。
+- 只有 **华为 / vivo / OPPO / 魅族 / Google Play** 可以确定「四项全支持、无额外状态前提」（vivo/华为仍需重新提审）。
+
+---
+
+## 应用名：不改，只检查一致性
+
+商店展示名在各家 API 里是独立字段（除小米外技术上都能改），但**国内实际上必须与以下几处保持一致**，审核会交叉比对，不一致是常见驳回理由：
+
+1. APK 里的 `android:label`（安装后桌面显示名）；
+2. 工信部 **APP 备案**名称（2023 年起强制备案，改名需走备案变更）；
+3. 软著名称（多数商店上架/改名时会核对）。
+
+小米官方文档更直接写明「修改应用信息不支持修改应用名称」，只能后台改。Google Play 是例外，标题（≤30字符）可与 APK 名不同。
+
+正确的改名流程是：备案变更（及软著）→ 改 APK `android:label`（默认 `values/` 和 `values-zh/` 都要改）→ 改各商店展示名（小米、腾讯仅控制台）→ 随新版本提审。这不应是上传的副作用。
+
+**apkgo 现状：上传从不改名。** 小米曾因按 APK 解析名回填，把国际化应用（默认 `values/` 为英文）的商店名改成英文（#48 → #50），修复后更新时一律沿用 `/dev/query` 返回的商店现有名称（`pkg/store/xiaomi/xiaomi.go` 的 `upload`），仅新建应用时用 APK 名；荣耀、OPPO、魅族也是把商店现有名称原样回传。
+
+**建议**：不提供自由填写的 `--app-name`；在 `doctor` / `--dry-run` 中增加一致性检查，比对各商店现有名称与 APK 解析出的简体中文名，不一致时告警。若确实需要 API 改名，做成显式开关（「将商店名同步为 APK 简体中文名」），默认关闭。
 
 ---
 
@@ -71,6 +97,22 @@ Android Publisher API v3，与现有 `androidpublisher.googleapis.com` 上传流
 - **本地化维度**：`app-language-info` 要求 `lang`；`app-file-info` 更新图片/视频类文件时**同样要求语言参数**——即 icon/截图上传也要按语言分别提交，设备类型（手机/手表/Vision 等）不同也有不同图片规格。
 - **前提**：应用需已存在于 AGC（`appid-list` 解析 appId），无迹象表明可纯 API 创建新应用。
 
+### 魅族 meizu ✅（基于现有代码，官方文档未逐字段核实）
+
+`https://developer.meizu.com`，apkgo 已接入（`pkg/store/meizu`），鉴权同现有 clientId/clientSecret → accessToken + SHA-256 签名头。详见 `notes/meizu-store-research.md`。
+
+- `POST /open/api/v1/app/publish`（新版本）/ `app/failapp/update`（审核不通过重提）/ `app/saleapp/update`（**上架应用原地修改**）：参数为**全量元数据**，包括 `appName`、`appDesc`（长描述）、`recommendDesc`（推测为一句话推荐/简介）、`keyword`、`icon`、`screenShots`（列表）、分类、资质、备案主体等。
+- **素材上传**：`POST /open/api/v1/app/image/upload`（multipart）返回 `value.destFileName`，填入 `icon` / `screenShots`。
+- **apkgo 现状**：`appDetail.publishBody` 从 `app/detail` 读现有资料原样回填，只替换 `packageUrl` 和 `verDesc`——资料字段已经在请求体里，改成可配置成本很低。
+- **待核实**：`recommendDesc` 的确切含义与长度限制、icon/截图尺寸与张数要求；`saleapp/update` 是否会重新进入审核。官方文档 `open.flyme.cn/docs?id=333` 为 SPA，正文数据接口为 `apiopen.flyme.cn/api/web/v1/doc-wiki/detail?id=333`（本次更新时云端网络无法访问，未能复核）。
+
+### 鸿蒙 harmony ❓（推测同华为，未核实）
+
+与华为共用 AGC Service Account（`huawei.CredentialFields` / `huawei.NewClient`），但鸿蒙流程走 **v3** 接口（`pkg/store/harmony/harmony.go`）：apkgo 目前只调 `PUT /api/publish/v3/app-language-info` 写 `newFeatures`（按 `lang`，缺省取 `app-info` 的 `defaultLang`）。
+
+- **推测**：v3 `app-language-info` 与 v2 一样接受 `appName` / `appDesc` / `briefInfo`；icon/截图走 `upload-url/for-obs` + v3 版文件信息接口。
+- **未核实**：v3 文字字段名是否与 v2 一致；v3 下 icon/截图对应的文件信息接口与 `fileType` 枚举；鸿蒙应用的 icon/截图规格（设备类型多，规格可能与 Android 不同）。实现前需查 AGC 鸿蒙 Publishing API 文档并用真实账号验证。
+
 ---
 
 ## 部分支持的商店
@@ -111,25 +153,16 @@ Android Publisher API v3，与现有 `androidpublisher.googleapis.com` 上传流
 
 `https://p.open.qq.com/open_file/developer_api`。已确认的接口只有 `get_file_upload_info`（拿 COS 上传地址）、`update_app`（提交版本更新，参数仅 `pkg_name`/`app_id`/`deploy_type`/`deploy_time`/apk32/64标志+`feature`发布说明）、`query_app_detail`（只读，仅返回 `app_name`/`category`/`feature`）、`query_app_update_status`（只读审核状态）。**没有任何一个接口能改 icon/简介/截图**。第三方运营指南（腾讯开放平台"基础信息修改操作指南"）明确描述这是控制台操作：打开管理中心 → 应用详情页 → 编辑 → 保存 → 提审，全程无 API。官方 wiki（wikinew.open.qq.com）为 JS 渲染 SPA 抓取受限，不能 100% 排除未公开接口，但现有实现参数列表 + 独立第三方指南互相印证。
 
-### 蒲公英 pgyer ➖
-
-`getCOSToken` 上传接口里，除了 apkgo 已用的 `buildUpdateDescription`（版本更新说明）外，还有个 apkgo 未使用的 `buildDescription`（应用介绍/应用简介）字段——可以顺手加上。**icon 和截图没有任何设置参数**，接口响应里返回的 `buildIconUrl`/`buildScreenShots` 都是后端从 APK 二进制自动提取的只读值。
-
-### fir.im ➖
-
-`POST /apps` 拿 token → multipart 上传到七牛，字段仅 `key`/`token`/`x:name`/`x:version`/`x:build`/`x:release_type`（iOS专用）/`x:changelog`（发布说明，apkgo 已用）。**没有任何 description/icon/截图字段**，icon 同样自动从二进制提取；文档未写清楚描述/截图是否有控制台编辑入口，属于文档空白而非确认的"仅控制台"。
-
 ---
 
 ## 对 apkgo 的实现考量
 
 与分阶段发布调研（`notes/phased-release-research.md`）不同，这里大部分是**一次性字段更新**，比较适合直接扩展现有 `UploadRequest`：
 
-1. **优先做这 4 家**：vivo / OPPO / Google Play / 华为——鉴权机制已就位，只是加字段+加接口调用。华为和荣耀已经有 `updateAppInfo`/`update-language-info` 调用点，扩展成本最低。
-2. **OPPO 的 `/updm`** 值得特别关注：是唯一一个"改资料不触发新版本审核"的接口，如果只是想改 icon/简介不想动版本号，这条路径更合适；其余商店改资料基本都会连带触发一次审核流程（尤其 huawei/vivo 需要显式提审）。
-3. **按语言/地区维度**：huawei、honor、vivo、samsung、Google Play 的资料字段都是**按语言/地区**设置的，不是全局一份——`UploadRequest` 如果加这些字段，需要考虑多语言输入的形态（例如只支持默认语言，或允许传 `map[lang]info`）。
-4. **小米应用名不可改**、**三星只能在已上架状态改**、**荣耀 icon/截图没有 API**——这些限制要在 CLI 报错/文档里明确说明，不能假装"全商店统一支持"。
-5. **腾讯/蒲公英/fir**：建议明确标注"不支持"，而不是尝试传参数后静默失败。
-6. **图片规格差异很大**（尺寸/格式/数量上限每家都不同），校验逻辑应该放在各 store 包内部，而不是 `pkg/store` 的通用层。
-
-> 各店确切端点/字段以本文为准；实现前建议用真实账号核实一遍，尤其小米"更新时字段是否生效"、三星"仅 FOR SALE 可改"、OPPO `updm` 完整必填字段，以及荣耀/腾讯是否存在未公开接口。
+1. **范围**：一句话介绍 / 长描述 / icon / 截图四项；应用名只做一致性检查不修改（见上文）。
+2. **优先做**：华为 / 荣耀（文字）/ 魅族——已有 `app-language-info`、`update-language-info`、`publishBody` 调用点，资料字段本来就在请求里原样回传，改成可配置成本最低；其次 vivo / OPPO / Google Play。
+3. **尽力而为，逐项上报**：每家在结果里分别报告四项的处理情况，无 API 的明确报 `not supported`（腾讯全部、荣耀 icon/截图、三星非上架状态），不静默跳过，也不因此把整次上传判为失败。
+4. **OPPO 的 `/updm`** 值得特别关注：唯一一个「改资料不触发新版本审核」的接口；其余商店改资料基本都会连带一次审核（huawei/vivo 需要显式提审）。
+5. **按语言/地区维度**：huawei、harmony、honor、vivo、samsung、Google Play 的资料都**按语言**设置——输入形态需考虑多语言（例如只支持默认语言，或允许 `map[lang]info`）。
+6. **图片规格差异很大**：icon 华为 216×216、vivo/三星/Google Play 512×512；截图 vivo/三星 4–8 张、华为/OPPO 竖版 3–5 张，尺寸格式各不相同。校验（最好加自动缩放）放在各 store 包内部，而不是 `pkg/store` 通用层。
+7. **实现前先实测**：小米更新（`synchroType=1`）时资料字段是否生效、鸿蒙 v3 字段、魅族 `recommendDesc` 含义与图片规格、三星「仅 FOR SALE 可改」、OPPO `updm` 完整必填字段，以及荣耀/腾讯是否存在未公开接口。
