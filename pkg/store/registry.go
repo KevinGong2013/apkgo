@@ -143,6 +143,24 @@ func SupportsSandbox(name string) bool {
 	return ok && e.schema.SupportsSandbox
 }
 
+// Known reports whether name is a registered store, directly or as a
+// "type.instance" name of one.
+func Known(name string) bool {
+	_, _, ok := lookup(name)
+	return ok
+}
+
+// ListingSpecFor returns the listing (商店资料) spec the named store
+// declared, or nil if it can't update its listing. Same "type.instance"
+// resolution as AcceptsAAB.
+func ListingSpecFor(name string) *ListingSpec {
+	e, _, ok := lookup(name)
+	if !ok {
+		return nil
+	}
+	return e.schema.Listing
+}
+
 func lookup(name string) (entry, string, bool) {
 	if e, ok := registry[name]; ok {
 		return e, "", true

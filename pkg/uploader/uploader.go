@@ -24,6 +24,9 @@ type StoreEntry struct {
 	Before  string
 	After   string
 	Timeout time.Duration // zero means inherit parent ctx
+	// Listing is this store's resolved listing (商店资料), or nil. It
+	// replaces UploadRequest.Listing for this store.
+	Listing *store.Listing
 }
 
 // Uploader orchestrates concurrent uploads to multiple stores.
@@ -71,10 +74,11 @@ func (u *Uploader) Run(ctx context.Context, req *store.UploadRequest, info *apk.
 			storeEnv["APKGO_STORE"] = name
 
 			// Build a per-store upload request carrying its own progress
-			// reporter. A shallow copy is enough since UploadRequest has no
-			// pointer fields the store should mutate.
+			// reporter and listing. A shallow copy is enough: stores treat
+			// the pointer fields (ReleaseTime, Listing) as read-only.
 			storeReq := *req
 			storeReq.Progress = u.Progress.ReporterFor(name)
+			storeReq.Listing = e.Listing
 
 			storeStart := time.Now()
 			u.Events.emit(Event{Type: EventStoreStart, Store: name})
@@ -116,6 +120,7 @@ func (u *Uploader) Run(ctx context.Context, req *store.UploadRequest, info *apk.
 				defer cancel()
 			}
 			result := e.Store.Upload(storeCtx, &storeReq)
+			result.Listing = store.ListingResult(&storeReq, result)
 			if result.Success {
 				log.Info("upload succeeded", "duration_ms", result.DurationMs, "category", result.Category)
 			} else {

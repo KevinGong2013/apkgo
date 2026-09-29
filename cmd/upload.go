@@ -26,6 +26,7 @@ var (
 	flagNotes          string
 	flagNotesFile      string
 	flagReleaseTime    string
+	flagListing        string
 	flagDryRun         bool
 	flagSandbox        bool
 	flagFetchHeaders   []string
@@ -39,6 +40,7 @@ func init() {
 	uploadCmd.Flags().StringVarP(&flagNotes, "notes", "n", "", "release notes (text)")
 	uploadCmd.Flags().StringVar(&flagNotesFile, "notes-file", "", "read release notes from file (overrides --notes)")
 	uploadCmd.Flags().StringVar(&flagReleaseTime, "release-time", "", "schedule a timed release (定时发布) at an RFC3339 time, e.g. 2026-06-20T10:00:00+08:00 (supported: huawei,harmony,honor,xiaomi,oppo,vivo,samsung,tencent; others release immediately)")
+	uploadCmd.Flags().StringVar(&flagListing, "listing", "", "listing file (商店资料: brief / description / icon / screenshots, with per-store overrides) to update together with this version")
 	uploadCmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "validate config and APK without uploading")
 	uploadCmd.Flags().BoolVar(&flagSandbox, "sandbox", false, "upload to supported store sandboxes; dry-run all other stores")
 	uploadCmd.Flags().StringArrayVar(&flagFetchHeaders, "fetch-header", nil, `extra HTTP header for URL fetches (repeatable; "Name: value")`)
@@ -75,6 +77,7 @@ var uploadCmd = &cobra.Command{
   apkgo upload -f app.apk --sandbox
   apkgo upload -f app.apk --notes "Bug fixes"
   apkgo upload -f app.apk --notes-file CHANGELOG.md
+  apkgo upload -f app.apk --listing listing.yaml --dry-run
   apkgo upload -f https://artifacts.example.com/app-v1.apk --store huawei
   apkgo upload -f https://private.example.com/app.apk --fetch-header "Authorization: Bearer xxx"`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -116,6 +119,7 @@ var uploadCmd = &cobra.Command{
 			Notes:        flagNotes,
 			NotesFile:    flagNotesFile,
 			ReleaseTime:  releaseTime,
+			ListingFile:  flagListing,
 			Config:       cfg,
 			FetchHeaders: fetchHeaders,
 			Progress:     pm,
