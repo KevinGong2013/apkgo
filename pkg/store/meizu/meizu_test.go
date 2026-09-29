@@ -77,7 +77,7 @@ func TestPublishBody(t *testing.T) {
 		VerDescription: "old notes",
 		Certificates:   "a.png, b.png,,",
 	}
-	body := d.publishBody("pkg-file-name", "new notes")
+	body := d.publishBody("pkg-file-name", "new notes", nil)
 	if body["verDesc"] != "new notes" {
 		t.Errorf("verDesc = %v, want new notes", body["verDesc"])
 	}
@@ -93,7 +93,7 @@ func TestPublishBody(t *testing.T) {
 	}
 
 	// Empty release notes keep the currently-listed version description.
-	if got := d.publishBody("p", "")["verDesc"]; got != "old notes" {
+	if got := d.publishBody("p", "", nil)["verDesc"]; got != "old notes" {
 		t.Errorf("verDesc fallback = %v, want old notes", got)
 	}
 }

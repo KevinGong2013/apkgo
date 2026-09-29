@@ -60,11 +60,12 @@ func (l *Listing) Fields() []string {
 }
 
 // ListingResult is the value for UploadResult.Listing: the fields that
-// were submitted with a successful upload. Callers that drive
-// Store.Upload directly (cloud workers) use it the same way pkg/uploader
-// does.
+// were submitted with a successful upload. An already-done result (the
+// version was already on the store, nothing was submitted) reports none.
+// Callers that drive Store.Upload directly (cloud workers) use it the
+// same way pkg/uploader does.
 func ListingResult(req *UploadRequest, res *UploadResult) []string {
-	if req == nil || res == nil || !res.Success {
+	if req == nil || res == nil || !res.Success || res.Category == CategoryAlreadyDone {
 		return nil
 	}
 	return req.Listing.Fields()

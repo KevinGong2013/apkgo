@@ -26,7 +26,14 @@ import (
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
-const baseURL = "https://developer.meizu.com"
+const defaultBaseURL = "https://developer.meizu.com"
+
+// Upload endpoints; both are multipart with a single `file` part and
+// return value.destFileName.
+const (
+	apkUploadURI   = "/open/api/v1/app/apk/upload"
+	imageUploadURI = "/open/api/v1/app/image/upload"
+)
 
 func init() {
 	store.Register("meizu", store.ConfigSchema{
@@ -36,6 +43,7 @@ func init() {
 			{Key: "client_id", Required: true, Desc: "Meizu open platform client ID (客户端凭证)"},
 			{Key: "client_secret", Required: true, Desc: "Meizu open platform client secret"},
 		},
+		Listing: listingSpec,
 	}, func(cfg map[string]string) (store.Store, error) {
 		return New(cfg)
 	})
@@ -82,6 +90,7 @@ func (e *envelope) errOf() error {
 }
 
 type Store struct {
+	baseURL      string // defaultBaseURL; overridden by tests
 	client       *resty.Client
 	uploadClient *http.Client // multipart uploads; shares the relaxed-handshake transport
 	clientID     string
@@ -103,7 +112,8 @@ func New(cfg map[string]string) (*Store, error) {
 	transport.TLSHandshakeTimeout = 60 * time.Second
 
 	s := &Store{
-		client:       resty.New().SetBaseURL(baseURL).SetTransport(transport),
+		baseURL:      defaultBaseURL,
+		client:       resty.New().SetBaseURL(defaultBaseURL).SetTransport(transport),
 		uploadClient: &http.Client{Timeout: 30 * time.Minute, Transport: transport},
 		clientID:     clientID,
 		clientSecret: clientSecret,
@@ -250,21 +260,35 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (int64, er
 		apkPath = req.File64Path
 	}
 	rep.Phase("uploading")
-	packageURL, err := s.uploadAPK(ctx, apkPath, rep)
+	packageURL, err := s.uploadFile(ctx, apkUploadURI, apkPath, rep)
 	if err != nil {
 		return 0, fmt.Errorf("upload apk: %w", err)
 	}
 
-	// 3. Submit for review, echoing the currently-listed metadata with
-	// the new package and release notes. A latest version sitting in
-	// "审核不通过" must go through failapp/update instead of publish
-	// (which would fail with 113042/113046).
+	// 3. Listing (商店资料): there's no separate listing endpoint — the
+	// publish body carries the full listing — so upload the new images
+	// now and override those fields below. Any failure aborts before
+	// the version is submitted.
+	var lu *listingUpdate
+	if !req.Listing.Empty() {
+		rep.Phase("listing")
+		if lu, err = s.resolveListing(ctx, req.Listing); err != nil {
+			return 0, fmt.Errorf("listing: %w", err)
+		}
+	}
+
+	// 4. Submit for review, echoing the currently-listed metadata with
+	// the new package, release notes and listing. A latest version
+	// sitting in "审核不通过" must go through failapp/update instead of
+	// publish (which would fail with 113042/113046); that endpoint takes
+	// the version id as `verisonId` (sic, official spelling in docs
+	// §3.7), not `verId`.
 	rep.Phase("publishing")
-	body := det.publishBody(packageURL, req.ReleaseNotes)
+	body := det.publishBody(packageURL, req.ReleaseNotes, lu)
 	uri := "/open/api/v1/app/publish"
 	if app.Status == statusRejected {
 		uri = "/open/api/v1/app/failapp/update"
-		body["verId"] = app.VerID
+		body["verisonId"] = app.VerID
 	}
 	verID, err := s.submit(ctx, uri, body)
 	if err != nil {
@@ -308,9 +332,10 @@ func (s *Store) detail(ctx context.Context, verID int64) (*appDetail, error) {
 	return &resp.Value, nil
 }
 
-// uploadAPK streams the APK to /app/apk/upload and returns the stored
-// file name, which publish takes as packageUrl.
-func (s *Store) uploadAPK(ctx context.Context, filePath string, rep progress.Reporter) (string, error) {
+// uploadFile streams a file to one of the multipart upload endpoints
+// (apkUploadURI / imageUploadURI) and returns the stored file name,
+// which publish takes as packageUrl / icon / screenShots.
+func (s *Store) uploadFile(ctx context.Context, uri, filePath string, rep progress.Reporter) (string, error) {
 	rc, fSize, err := progress.WrapFile(filePath, rep)
 	if err != nil {
 		return "", fmt.Errorf("open file: %w", err)
@@ -318,10 +343,9 @@ func (s *Store) uploadAPK(ctx context.Context, filePath string, rep progress.Rep
 	defer rc.Close()
 	rep.Total(fSize)
 
-	const uri = "/open/api/v1/app/apk/upload"
 	resp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
 		Method:  http.MethodPost,
-		URL:     baseURL + uri,
+		URL:     s.baseURL + uri,
 		Headers: s.signedHeaders(uri),
 		Files:   []httpx.FileField{{Field: "file", FileName: filepath.Base(filePath), Reader: rc, Size: fSize}},
 		Client:  s.uploadClient,
@@ -536,9 +560,10 @@ type appDetailResp struct {
 func (r *appDetailResp) env() *envelope { return &r.envelope }
 
 // publishBody assembles the /app/publish (or failapp/update) request from
-// the currently-listed detail, swapping in the freshly-uploaded package
-// and the new release notes.
-func (d *appDetail) publishBody(packageURL, releaseNotes string) map[string]any {
+// the currently-listed detail, swapping in the freshly-uploaded package,
+// the new release notes and, when lu is non-nil, its non-empty listing
+// fields.
+func (d *appDetail) publishBody(packageURL, releaseNotes string, lu *listingUpdate) map[string]any {
 	verDesc := releaseNotes
 	if verDesc == "" {
 		verDesc = d.VerDescription
@@ -553,7 +578,7 @@ func (d *appDetail) publishBody(packageURL, releaseNotes string) map[string]any 
 			certificates = append(certificates, c)
 		}
 	}
-	return map[string]any{
+	body := map[string]any{
 		"appName":           d.Name,
 		"appDesc":           d.AppDescription,
 		"verDesc":           verDesc,
@@ -582,4 +607,6 @@ func (d *appDetail) publishBody(packageURL, releaseNotes string) map[string]any 
 		"yylb":              d.Yylb,
 		"zbzShengId":        d.ZbzShengID,
 	}
+	lu.apply(body)
+	return body
 }
