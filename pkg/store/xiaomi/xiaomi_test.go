@@ -56,8 +56,25 @@ func newTestStore(t *testing.T, url string) (*Store, *rsa.PrivateKey) {
 	return s, key
 }
 
+// sigEntry is one decrypted SIG list item: a part name and its md5.
+type sigEntry struct {
+	Name string `json:"name"`
+	Hash string `json:"hash"`
+}
+
 // decryptSIG reverses rsaEncrypt and returns the sig entry names.
 func decryptSIG(t *testing.T, key *rsa.PrivateKey, sig string) []string {
+	t.Helper()
+	entries := decryptSIGEntries(t, key, sig)
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name)
+	}
+	return names
+}
+
+// decryptSIGEntries reverses rsaEncrypt and returns the sig list in order.
+func decryptSIGEntries(t *testing.T, key *rsa.PrivateKey, sig string) []sigEntry {
 	t.Helper()
 	raw, err := hex.DecodeString(sig)
 	if err != nil {
@@ -77,22 +94,17 @@ func decryptSIG(t *testing.T, key *rsa.PrivateKey, sig string) []string {
 		raw = raw[size:]
 	}
 	var payload struct {
-		Sig []struct {
-			Name string `json:"name"`
-			Hash string `json:"hash"`
-		} `json:"sig"`
+		Sig []sigEntry `json:"sig"`
 	}
 	if err := json.Unmarshal(plain, &payload); err != nil {
 		t.Fatalf("decode sig payload %q: %v", plain, err)
 	}
-	names := make([]string, 0, len(payload.Sig))
 	for _, e := range payload.Sig {
 		if e.Hash == "" {
 			t.Errorf("sig entry %q has an empty hash", e.Name)
 		}
-		names = append(names, e.Name)
 	}
-	return names
+	return payload.Sig
 }
 
 // TestPushDualAPKFieldNames pins the /dev/push field names for a 双包 (32/64-bit)
