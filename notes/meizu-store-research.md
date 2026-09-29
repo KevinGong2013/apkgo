@@ -21,7 +21,7 @@
   - `GET /open/api/v1/app/cats`、`/app/cat_tags` — 分类/标签
   - `POST /open/api/v1/app/image/upload`、`/app/apk/upload` — multipart 上传，返回 `value.destFileName`
   - `POST /open/api/v1/app/publish` — 新版本发布（JSON），返回 `value.verId`
-  - `POST /open/api/v1/app/failapp/update` — 审核不通过版本重新提交（publish 全参数 + `verId`）
+  - `POST /open/api/v1/app/failapp/update` — 审核不通过版本重新提交（publish 全参数 + `verisonId`——官方拼写；响应与 detail 查询用的是 `verId`）
   - `POST /open/api/v1/app/saleapp/update` — 上架应用原地修改（同上）
   - `GET /open/api/v1/app/list`（start/limit≤10 分页）、`/app/versions?appId`、`/app/detail?verId`
 - **应用状态**（3.12.6）：20 待审核 / 30 审核不通过 / 50 上架 / 70 下架 / 100 审核中。

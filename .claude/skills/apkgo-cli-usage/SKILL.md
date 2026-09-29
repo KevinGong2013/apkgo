@@ -84,6 +84,31 @@ Share a config across machines with `apkgo config export --out apkgo.enc` / `apk
 
 `-f` takes a local path or an `http(s)` URL (add `--fetch-header "Authorization: Bearer …"` for private URLs; repeatable). `.apk` goes to every store; `.aab` is **googleplay-only**; a HarmonyOS `.app` pack is **harmony-only**. `--file64` adds a separate 64-bit APK for split-arch uploads.
 
+### Listing (商店资料)
+
+`--listing listing.yaml` updates the store listing — one-line intro, long
+description, icon, screenshots — **together with the new version**, before it
+is submitted for review. There is no listing-only update and the app name is
+never changed. Only the store's default language is updated.
+
+```yaml
+brief: 一句话介绍
+description_file: desc.md          # or description: |
+icon: assets/icon-512.png
+screenshots: [assets/s1.png, assets/s2.png, assets/s3.png, assets/s4.png]
+stores:                            # per-store overrides (instances inherit their type's)
+  oppo:   { brief: 十三字以内的简介 }
+  huawei: { icon: assets/icon-216.png, screenshots: [hw1.png, hw2.png, hw3.png] }
+```
+
+Omitted fields keep the store's current value; relative paths resolve against
+the file. Specs differ a lot per store (oppo intro ≤13 chars, huawei icon
+216×216 and screenshots 450×800, tencent 4–5 screenshots, …) — read them from
+`apkgo stores` (`listing` per store) and put per-store variants under
+`stores:`. Every target is validated before any upload (also in `--dry-run`);
+all problems are listed at once, exit code 3. pgyer/fir don't support listings
+(warning, upload continues); `script` gets it as `Listing` in its stdin JSON.
+
 ### Sandbox
 
 For vivo sandbox uploads, run `apkgo upload -f app.apk --sandbox`. vivo uses
@@ -170,7 +195,7 @@ The `apk` object also carries `"platform"`: `"android"` for APK/AAB, `"harmony"`
 
 ## Upload results
 
-Each result: `store`, `success`, `error`, `duration_ms`, plus optional `category`, `external_id` (per-store submission id, e.g. honor's releaseId), `dry_run`, `sandbox`. `category` buckets the outcome: `success`, `already_done`, `auth_failed`, `network_retry`, `store_busy`, `policy_block`, `config_invalid`, `unknown` — retry only `network_retry` / `store_busy`; surface `auth_failed` / `config_invalid` / `policy_block` to the user.
+Each result: `store`, `success`, `error`, `duration_ms`, plus optional `category`, `external_id` (per-store submission id, e.g. honor's releaseId), `listing` (listing fields submitted with this version), `dry_run`, `sandbox`. `category` buckets the outcome: `success`, `already_done`, `auth_failed`, `network_retry`, `store_busy`, `policy_block`, `config_invalid`, `unknown` — retry only `network_retry` / `store_busy`; surface `auth_failed` / `config_invalid` / `policy_block` to the user.
 
 Exit code: `0` all stores succeeded, `1` some failed, `2` all failed. `--progress-stream` emits NDJSON progress events on stdout for a parent process.
 
@@ -190,14 +215,15 @@ apkgo stores --configured
 # 4. Probe credentials/permissions without uploading
 apkgo doctor -p com.example.app
 
-# 5. Dry-run to validate
+# 5. Dry-run to validate (add --listing listing.yaml to check the listing against every store's spec)
 apkgo upload -f app.apk --dry-run
 
 # Optional: real vivo sandbox upload; dry-run all other configured stores
 apkgo upload -f app.apk --sandbox
 
 # 6. Upload (optionally schedule a timed release with --release-time <RFC3339>;
-#    supported by huawei, harmony, honor, xiaomi, oppo, vivo, samsung, tencent)
+#    supported by huawei, harmony, honor, xiaomi, oppo, vivo, samsung, tencent;
+#    add --listing listing.yaml to update the store listing with this version)
 apkgo upload -f app.apk --notes "v1.0.0 release" --timeout 15m
 
 # 7. Parse JSON result from stdout, check exit code

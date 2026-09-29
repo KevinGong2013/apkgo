@@ -101,6 +101,9 @@ apkgo upload -f https://private.example.com/app.apk --fetch-header "Authorizatio
 # 定时发布（RFC3339 时间）
 apkgo upload -f app.apk --release-time 2026-06-20T10:00:00+08:00
 
+# 随新版本同步更新商店资料（一句话介绍 / 描述 / icon / 截图）
+apkgo upload -f app.apk --listing listing.yaml
+
 # Google Play 上传 AAB（.aab 只会发到 googleplay）
 apkgo upload -f app-release.aab -s googleplay
 ```
@@ -108,6 +111,47 @@ apkgo upload -f app-release.aab -s googleplay
 - `-f` 为 URL 时，huawei / honor / vivo 直接让商店从该地址拉包（honor 仅对 ≥ `url_push_min_mb`，默认 100MB 的文件），其他商店由 apkgo 下载后上传。
 - `--release-time` 支持 huawei、harmony、honor、xiaomi、oppo、vivo、samsung、tencent，其他商店立即发布。
 - 文件类型：`.apk` 发往所有安卓商店；`.aab` 仅 googleplay；鸿蒙 `.app` 仅 harmony。
+
+#### 同步更新商店资料（`--listing`）
+
+发新版本时可以顺带更新商店资料：**一句话介绍、长描述、icon、截图**。资料在传包之后、提交审核之前写入，随新版本一起审核；不支持只改资料不发版，也不会修改应用名（应用名须与 APK、APP 备案、软著一致）。只更新商店的默认语言。
+
+```bash
+apkgo upload -f app.apk --listing listing.yaml --dry-run   # 先按各商店规格校验
+apkgo upload -f app.apk --listing listing.yaml
+```
+
+```yaml
+# listing.yaml —— 通用默认值 + 按商店覆盖；相对路径以本文件所在目录为准
+brief: 一句话介绍
+description_file: desc.md        # 或 description: |
+icon: assets/icon-512.png
+screenshots: [assets/s1.png, assets/s2.png, assets/s3.png, assets/s4.png]
+stores:
+  oppo:
+    brief: 十三字以内的简介       # OPPO 限 13 字且不能有标点空格
+  huawei:
+    icon: assets/icon-216.png
+    screenshots: [assets/hw1.png, assets/hw2.png, assets/hw3.png]   # 华为截图为 450×800
+```
+
+- 每个字段都可选，没写的保持商店现有值；`stores.<商店>` 覆盖默认值，`script.cdn` 这样的实例名会继承 `script` 的覆盖。
+- 上传开始前按各商店规格逐项校验（长度、图片格式/尺寸/大小、截图张数），**一次性列出全部问题**，退出码 3；`--dry-run` 同样校验。
+- 成功的结果里 `listing` 字段列出本次提交的资料项；版本已在商店侧（`already_done`）时不列。pgyer、fir 不支持资料，会给出警告并照常上传；`script` 商店在 stdin JSON 的 `Listing` 字段收到资料。
+- 各商店规格以 `apkgo stores` 输出的 `listing` 为准，摘要如下：
+
+| 商店 | 一句话介绍 | 长描述 | icon | 截图 |
+|---|---|---|---|---|
+| huawei | ≤80 | ≤8000 | PNG 216×216，≤2MB | 450×800，3–5 张 |
+| harmony | ≤80，且与描述不同 | ≤8000 | PNG/WebP 216×216 或 1024×1024 | 1080×1920，3–10 张 |
+| honor | ≤80 | ≤8000 | PNG/JPG 512×512，≤200KB | 1080×1920，≤5MB，3–5 张 |
+| vivo | 5–16 个汉字 | 50–1000 | PNG 正方形 256–512px，≤500KB | 1080×1920，≤2MB，3–5 张 |
+| oppo | ≤13，无标点空格 | ≥20 | PNG 512×512，≤1MB | 1080×1920，≤1MB，2–5 张 |
+| xiaomi | ≤17 个汉字，句末无标点 | — | PNG 512×512 | 1080×1920 或 1920×1080（不混用），≤5MB，3–5 张 |
+| meizu | — | 100–1000 | PNG/JPG | PNG/JPG |
+| samsung | ≤40 字节 | ≤4000 字节 | PNG 512×512，≤1MB | 320–3840px，宽高比 ≤2:1，4–8 张 |
+| tencent | 5–15 | 60–500 | PNG 512×512，≤200KB | ≤1MB，宽高一致，4–5 张 |
+| googleplay | ≤80 | ≤4000 | PNG 512×512，≤1MB | 320–3840px，宽高比 ≤2:1，2–8 张 |
 
 #### 鸿蒙（HarmonyOS）上架
 
@@ -483,7 +527,7 @@ cmd.Wait()
 ```
 apkgo init          [-s store1,store2] [-c config.yaml]
 apkgo upload        -f <apk|aab|app|url> [--file64 <apk|url>] [-s stores] [-n notes] [--notes-file path]
-                    [--release-time <RFC3339>] [--fetch-header "Name: value"] [--dry-run | --sandbox]
+                    [--release-time <RFC3339>] [--listing <file>] [--fetch-header "Name: value"] [--dry-run | --sandbox]
                     [--progress-stream] [-t timeout]
 apkgo audit         [-s stores] (-f <apk> | -p <package>) [--watch] [--interval 30s]
 apkgo doctor        [-s stores] [-f <apk> | -p <package>]
