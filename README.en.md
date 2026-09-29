@@ -101,6 +101,9 @@ apkgo upload -f https://private.example.com/app.apk --fetch-header "Authorizatio
 # Scheduled release (RFC3339 time)
 apkgo upload -f app.apk --release-time 2026-06-20T10:00:00+08:00
 
+# Update the store listing (intro / description / icon / screenshots) with this version
+apkgo upload -f app.apk --listing listing.yaml
+
 # Google Play AAB (.aab only goes to googleplay)
 apkgo upload -f app-release.aab -s googleplay
 ```
@@ -112,6 +115,46 @@ apkgo upload -f app-release.aab -s googleplay
 `--sandbox` and `--dry-run` are mutually exclusive. vivo is currently the only sandbox-capable store: it makes real sandbox API calls, while every other target receives the same local validation as `--dry-run`. Sandbox runs skip all hooks, upload history, lifecycle event callbacks, and upload telemetry. The top-level result contains `"sandbox": true`; the vivo result contains `"sandbox": true`; other stores contain `"dry_run": true`.
 
 The vivo [sandbox environment](https://dev.vivo.com.cn/documentCenter/doc/327#s-l67kfh1m) has separate application data, `access_key`, and secrets from production. Follow the [online test environment instructions](https://dev.vivo.com.cn/documentCenter/doc/327#s-b9qi52f4) to create the application and request separate sandbox credentials first. Each sandbox API is limited to 100 calls per day.
+
+#### Update the store listing (`--listing`)
+
+A release can also update the store listing — **one-line intro, long description, icon and screenshots**. The listing is written after the package upload and before submission, so it is reviewed together with the new version. There is no listing-only update, and the app name is never changed (it must match the APK label, APP 备案 and 软著). Only the store's default language is updated.
+
+```bash
+apkgo upload -f app.apk --listing listing.yaml --dry-run   # validate against every store's spec first
+apkgo upload -f app.apk --listing listing.yaml
+```
+
+```yaml
+# listing.yaml — defaults plus per-store overrides; relative paths resolve against this file
+brief: One-line intro
+description_file: desc.md        # or description: |
+icon: assets/icon-512.png
+screenshots: [assets/s1.png, assets/s2.png, assets/s3.png, assets/s4.png]
+stores:
+  oppo:
+    brief: 十三字以内的简介       # OPPO: ≤13 chars, no punctuation or spaces
+  huawei:
+    icon: assets/icon-216.png    # Huawei wants a 216×216 icon
+```
+
+- Every field is optional; omitted fields keep the store's current value. `stores.<store>` overrides the defaults; an instance such as `script.cdn` inherits the `script` override.
+- Before any upload each target store's listing is validated (lengths, image format/size/bytes, screenshot count) and **all problems are reported at once** with exit code 3; `--dry-run` validates too.
+- Successful results list the submitted fields in `listing` (not for `already_done` results). pgyer and fir don't support listings — apkgo warns and uploads without it; `script` receives it as `Listing` in its stdin JSON.
+- `apkgo stores` prints each store's authoritative `listing` spec. Summary:
+
+| Store | Intro | Description | Icon | Screenshots |
+|---|---|---|---|---|
+| huawei | ≤80 | ≤8000 | PNG 216×216, ≤500KB (WebP ≤100KB) | 9:16 (450×800 suggested), ≤2MB (WebP ≤100KB), 3–5 |
+| harmony | ≤80, must differ from description | ≤8000 | PNG/WebP 216×216 or 1024×1024 | ≥1080×1920 at 9:16, 3–10 |
+| honor | ≤80 | ≤8000 | PNG/JPG 512×512, ≤200KB | 1080×1920, ≤5MB, 3–5 |
+| vivo | 5–16 CJK chars | 50–1000 | square PNG 256–512px, ≤500KB | 1080×1920, ≤2MB, 3–5 |
+| oppo | ≤13, no punctuation/spaces | ≥20 | PNG 512×512, ≤1MB | 1080×1920, ≤1MB, 2–5 |
+| xiaomi | ≤17 CJK chars, no trailing punctuation | — | PNG 512×512 | 1080×1920 or 1920×1080 (not mixed), ≤5MB, 3–5 |
+| meizu | — | 100–1000 | PNG/JPG | PNG/JPG |
+| samsung | ≤40 bytes | ≤4000 bytes | PNG 512×512, ≤1MB | 320–3840px, aspect ≤2:1, 4–8 |
+| tencent | 5–15 | 60–500 | PNG 512×512, ≤200KB | ≤1MB, same size, 4–5 |
+| googleplay | ≤80 | ≤4000 | PNG 512×512, ≤1MB | 320–3840px, aspect ≤2:1, 2–8 |
 
 #### HarmonyOS (鸿蒙) release
 
@@ -816,7 +859,7 @@ Encryption: AES-256-GCM with scrypt key derivation; a wrong password produces a 
 ```
 apkgo init          [-s store1,store2] [-c config.yaml]
 apkgo upload        -f <apk|aab|app|url> [--file64 <apk|url>] [-s stores] [-n notes] [--notes-file path]
-                    [--release-time <RFC3339>] [--fetch-header "Name: value"] [--dry-run | --sandbox]
+                    [--release-time <RFC3339>] [--listing <file>] [--fetch-header "Name: value"] [--dry-run | --sandbox]
                     [--progress-stream] [-t timeout]
 apkgo audit         [-s stores] (-f <apk> | -p <package>) [--watch] [--interval 30s]
 apkgo doctor        [-s stores] [-f <apk> | -p <package>]
