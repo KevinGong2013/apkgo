@@ -2,7 +2,9 @@ package huawei
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -341,5 +343,61 @@ func TestUploadListingFailureSkipsSubmit(t *testing.T) {
 		if c == "POST app-submit" {
 			t.Fatalf("app-submit called after listing failure; calls = %q", agc.calls)
 		}
+	}
+}
+
+// writeWebP writes a minimal lossless WEBP header of the given size
+// (enough for image.DecodeConfig), padded to size bytes.
+func writeWebP(t *testing.T, dir, name string, w, h, size int) string {
+	t.Helper()
+	n := size - 20 // RIFF header (12) + VP8L chunk header (8)
+	data := make([]byte, n)
+	data[0] = 0x2f // VP8L signature
+	binary.LittleEndian.PutUint32(data[1:], uint32(w-1)|uint32(h-1)<<14)
+	b := append([]byte("RIFF"), binary.LittleEndian.AppendUint32(nil, uint32(4+8+n))...)
+	b = append(b, "WEBPVP8L"...)
+	b = binary.LittleEndian.AppendUint32(b, uint32(n))
+	b = append(b, data...)
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestListingSpec pins the console's Android phone rules: 3–5 screenshots
+// at 9:16 (450×800 is only the suggested size), PNG/JPEG ≤2MB, WEBP ≤100KB.
+func TestListingSpec(t *testing.T) {
+	dir := t.TempDir()
+	shot := func(name string, w, h int) string { return writePNG(t, dir, name, w, h) }
+	three := func(first string) []string {
+		return []string{first, shot("b.png", 450, 800), shot("c.png", 450, 800)}
+	}
+	cases := []struct {
+		name    string
+		listing store.Listing
+		want    string // "" = valid
+	}{
+		{"suggested size", store.Listing{Icon: shot("icon.png", 216, 216), Screenshots: three(shot("a.png", 450, 800))}, ""},
+		{"larger 9:16", store.Listing{Screenshots: three(shot("big.png", 1080, 1920))}, ""},
+		{"small webp", store.Listing{Icon: writeWebP(t, dir, "i.webp", 216, 216, 50<<10), Screenshots: three(writeWebP(t, dir, "s.webp", 450, 800, 90<<10))}, ""},
+		{"landscape", store.Listing{Screenshots: three(shot("l.png", 800, 450))}, "aspect ratio must be 9:16"},
+		{"too few", store.Listing{Screenshots: three(shot("a.png", 450, 800))[:2]}, "need at least 3"},
+		{"too many", store.Listing{Screenshots: append(three(shot("a.png", 450, 800)), shot("d.png", 450, 800), shot("e.png", 450, 800), shot("f.png", 450, 800))}, "at most 5 allowed"},
+		{"large webp screenshot", store.Listing{Screenshots: three(writeWebP(t, dir, "big.webp", 450, 800, 100<<10+1))}, "webp 102401 bytes"},
+		{"large webp icon", store.Listing{Icon: writeWebP(t, dir, "big-icon.webp", 216, 216, 100<<10+1)}, "icon: "},
+		{"wrong icon size", store.Listing{Icon: shot("icon512.png", 512, 512)}, "want 216x216"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			errs := store.ValidateListing("huawei", &c.listing)
+			got := errors.Join(errs...)
+			switch {
+			case c.want == "" && got != nil:
+				t.Errorf("unexpected errors: %v", got)
+			case c.want != "" && (got == nil || !strings.Contains(got.Error(), c.want)):
+				t.Errorf("errors = %v, want one containing %q", got, c.want)
+			}
+		})
 	}
 }

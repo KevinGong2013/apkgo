@@ -23,32 +23,55 @@ const fallbackLang = "zh-CN"
 
 // listingSpec is what AGC accepts for an Android app's listing (商店资料).
 // Sources: Publishing API v2 更新语言描述信息 (app-language-info), the
-// Connect API 附录「应用文件要求」→ Android应用 (agcapi-file-requirement,
-// 2026-03) and the current AGC console, which is newer than the appendix
-// for phone screenshots (appendix: 720×1280, 3–5; console: 3–10, at least
-// 1080×1920 at 9:16):
+// Connect API 附录「应用文件要求」→ Android应用 (icon), and the AGC console's
+// Android asset page for phone screenshots, which disagrees with the
+// appendix (720×1280, ≤5MB) and is what AGC enforces:
 //
 //   - briefInfo (一句话简介) ≤80, appDesc (应用介绍) ≤8000 characters;
-//   - icon: exactly one, 216×216, PNG ≤500KB;
-//   - phone screenshots: 3–10, portrait, at least 1080×1920 and 9:16,
-//     PNG/JPG/JPEG ≤5MB each.
+//   - icon: exactly one, 216×216, PNG ≤500KB or WEBP ≤100KB;
+//   - phone screenshots: 3–5, 9:16 (450×800 suggested), PNG/JPG/JPEG
+//     ≤2MB or WEBP ≤100KB each.
+//
+// HarmonyOS apps have a different, stricter screenshot spec (see
+// pkg/store/harmony).
 var listingSpec = &store.ListingSpec{
 	Brief:       store.TextSpec{Max: 80},
 	Description: store.TextSpec{Max: 8000},
 	Icon: store.ImageSpec{
-		Formats:  []string{"png"},
+		Formats:  []string{"png", "webp"},
 		Sizes:    []store.Size{{Width: 216, Height: 216}},
 		MaxBytes: 500 << 10,
 	},
 	Screenshot: store.ImageSpec{
-		Formats:   []string{"png", "jpeg"},
-		MinWidth:  1080,
-		MinHeight: 1920,
-		Aspect:    &store.Size{Width: 9, Height: 16},
-		MaxBytes:  5 << 20,
+		Formats:  []string{"png", "jpeg", "webp"},
+		Aspect:   &store.Size{Width: 9, Height: 16},
+		MaxBytes: 2 << 20,
 	},
 	MinScreenshots: 3,
-	MaxScreenshots: 10,
+	MaxScreenshots: 5,
+	Check:          checkListing,
+}
+
+// webpMaxBytes caps WEBP icons and screenshots; PNG/JPEG get the larger
+// ImageSpec.MaxBytes.
+const webpMaxBytes = 100 << 10
+
+func checkListing(l *store.Listing) []error {
+	var errs []error
+	check := func(field, path string) {
+		info, err := imgcheck.Inspect(path)
+		if err != nil || info.Format != "webp" || info.Bytes <= webpMaxBytes {
+			return // unreadable files are already reported by ValidateListing
+		}
+		errs = append(errs, fmt.Errorf("%s: %s: webp %d bytes, at most %d allowed", field, path, info.Bytes, webpMaxBytes))
+	}
+	if l.Icon != "" {
+		check(store.ListingIcon, l.Icon)
+	}
+	for i, p := range l.Screenshots {
+		check(fmt.Sprintf("%s[%d]", store.ListingScreenshots, i), p)
+	}
+	return errs
 }
 
 // updateListing submits l's non-empty fields for the app's default
