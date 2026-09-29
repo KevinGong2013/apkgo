@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/config"
+	"github.com/KevinGong2013/apkgo/v4/pkg/telemetry"
 	"github.com/KevinGong2013/apkgo/v4/pkg/update"
 )
 
@@ -62,6 +63,9 @@ func init() {
 
 // Execute runs the root command and returns an exit code.
 func Execute() int {
+	// main calls os.Exit right after this returns, which would kill any
+	// telemetry request still in flight.
+	defer telemetry.Flush(2 * time.Second)
 	if err := rootCmd.Execute(); err != nil {
 		writeError(err)
 		return 3

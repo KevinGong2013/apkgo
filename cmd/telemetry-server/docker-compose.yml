@@ -6,3 +6,7 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data
+    # GET /v1/stats and /v1/events require "Authorization: Bearer <token>".
+    # Without ADMIN_TOKEN a token is generated into ./data/admin_token.
+    # environment:
+    #   ADMIN_TOKEN: change-me
