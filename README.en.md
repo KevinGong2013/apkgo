@@ -6,7 +6,7 @@
 
 One command to publish an APK to every major Chinese Android app store.
 
-> **Don't want to run CI or touch a terminal?** Try the hosted [**apkgo cloud**](https://apkgo.baici.tech) — release from a browser, with credentials stored server-side, multi-user collaboration, and full release history. No install, no ops, friendly enough for ops and PM teammates. Beyond the Android stores the CLI covers, the cloud also publishes to **iOS (App Store)** and **HarmonyOS**.
+> **Don't want to run CI or touch a terminal?** Try the hosted [**apkgo cloud**](https://apkgo.baici.tech) — release from a browser, with credentials stored server-side, multi-user collaboration, and full release history. No install, no ops, friendly enough for ops and PM teammates. Beyond the Android stores the CLI covers, the cloud also publishes to **iOS (App Store)** and **HarmonyOS**, and **monitors app review and on-shelf (live) status in real time**.
 
 ## Install
 
