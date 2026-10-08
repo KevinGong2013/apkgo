@@ -83,6 +83,10 @@ paths resolve against the file. Only the store's default language is
 updated. Supported: **huawei, harmony, honor, vivo, oppo, xiaomi, meizu,
 samsung, tencent, googleplay** (pgyer/fir: no).
 
+Real-account status: huawei, honor, oppo, vivo, xiaomi and tencent have
+been submitted end to end; harmony, meizu, samsung and googleplay follow
+the official docs but are unverified.
+
 Each store declares a `store.ListingSpec` (length limits, image
 formats/sizes, screenshot count; see `listing` in `apkgo stores`). Every
 target's resolved listing is validated by `store.ValidateListing` before
