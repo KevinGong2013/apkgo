@@ -6,6 +6,10 @@ import (
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/apkgo"
 	"github.com/KevinGong2013/apkgo/v4/pkg/config"
+
+	// TestDiagnose_RealProbe needs pgyer's diagnoser registered; without
+	// it the store reports "unsupported" and no probe ever runs.
+	_ "github.com/KevinGong2013/apkgo/v4/pkg/store/pgyer"
 )
 
 // TestDiagnose_NoStores verifies Diagnose surfaces a clear error
