@@ -16,6 +16,7 @@ apkgo init [-s store1,store2] [-c config.yaml]   # Generate config file
 apkgo upload -f <apk> [flags]                     # Upload APK to stores
 apkgo doctor [-s stores] [-f apk | -p package]    # Diagnose store credentials/permissions
 apkgo audit [-f apk | -p package] [-s stores] [--watch]  # Query review (审核) status
+apkgo listing [-f apk | -p package] [-s stores] [--out dir]  # Read each store's current listing (商店资料)
 apkgo stores                                      # List stores and config schema (JSON)
 apkgo stores --configured                         # List configured store names (JSON)
 apkgo version                                     # Version info (JSON)
@@ -94,6 +95,25 @@ drive `Store.Upload` directly set `UploadRequest.Listing` and use
 keep images in object storage validate with `store.ValidateListingWith`
 and an `ImageInspector` backed by metadata recorded at upload time
 (`imgcheck.InspectBytes`), so no image has to be downloaded.
+
+#### Reading the current listing (`apkgo listing`)
+
+`apkgo listing -p <package>` reads the listing each store currently holds
+(read-only, like `audit`), so a listing file can start from what's already
+there. `--out <dir>` downloads the images into `<dir>/assets` (one file
+per distinct content) and writes `<dir>/listing.yaml` with every store
+under `stores:` and **no shared defaults** — a store that couldn't be read
+then has no entry and an upload leaves it unchanged instead of giving it
+another store's values. It refuses to overwrite an existing listing.yaml.
+What a store returns isn't always what it accepts back (honor serves
+re-encoded WEBP previews, not the originals), so images failing the
+store's own `ListingSpec` are left out of the file and text that wouldn't
+pass is written with a warning — both reported in the store's `notes`.
+Stores opt in with `store.RegisterListingFetcher`: **oppo, vivo, huawei,
+honor** report all four fields (honor's images are the previews just
+mentioned), **tencent** text only (`unavailable` lists the rest); xiaomi
+has no query API for it. Library callers use
+`apkgo.FetchListing` / `store.FetchListing`.
 
 ### Download mode (URL pass-through)
 

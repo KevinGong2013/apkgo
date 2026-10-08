@@ -69,6 +69,7 @@ func init() {
 	})
 	store.RegisterDiagnoser("vivo", diagnose)
 	store.RegisterAuditor("vivo", audit)
+	store.RegisterListingFetcher("vivo", fetchListing)
 }
 
 // briefBadEndings are the punctuation marks vivo's 审核规范 2.5.3 rules
@@ -719,13 +720,19 @@ func (n *lenientInt) UnmarshalJSON(b []byte) error {
 
 // appDetails is the slice of fields apkgo needs from `app.query.details`.
 // vivo returns more (app name in zh, online state, etc.) but we only
-// surface what the doctor / audit paths report.
+// surface what the doctor / audit / listing paths report.
 type appDetails struct {
 	PackageName string     `json:"packageName"`
 	AppName     string     `json:"appName"`
 	VersionName string     `json:"versionName"`
 	VersionCode string     `json:"versionCode"`
 	Status      lenientInt `json:"status"` // 审核状态: 1草稿/2待审核/3通过/4不通过/5撤销
+
+	// Listing (商店资料), read by `apkgo listing`.
+	SimpleDesc string `json:"simpleDesc"` // 一句话简介
+	DetailDesc string `json:"detailDesc"` // 应用简介
+	Icon       string `json:"icon"`       // icon 图片查看地址
+	Screenshot string `json:"screenshot"` // 截图查看地址，多个用逗号分隔
 }
 
 // queryApp calls the read-only `app.query.details` method. Used by the

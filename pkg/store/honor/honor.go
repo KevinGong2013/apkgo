@@ -60,6 +60,7 @@ func init() {
 	})
 	store.RegisterDiagnoser("honor", diagnose)
 	store.RegisterAuditor("honor", audit)
+	store.RegisterListingFetcher("honor", fetchListing)
 }
 
 // audit is registered with `apkgo audit`. get-app-current-release (the
@@ -483,7 +484,10 @@ type languageInfo struct {
 
 // pubFileInfo is one entry of get-app-detail's fileInfo (应用绑定文件列表).
 type pubFileInfo struct {
-	FileType int `json:"fileType"`
+	FileType   int    `json:"fileType"`
+	FileURL    string `json:"fileUrl"`    // viewable/downloadable URL
+	LanguageID string `json:"languageId"` // empty for files not tied to a language
+	Order      int    `json:"order"`      // display order among files of one type
 }
 
 func (s *Store) getAppLanguage(appID string) (*languageInfo, error) {

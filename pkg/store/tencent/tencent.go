@@ -71,6 +71,7 @@ func init() {
 	})
 	store.RegisterDiagnoser("tencent", diagnose)
 	store.RegisterAuditor("tencent", audit)
+	store.RegisterListingFetcher("tencent", fetchListing)
 }
 
 // tencentResp is the standard response envelope. Some endpoints use

@@ -109,6 +109,15 @@ the file. Specs differ a lot per store (oppo intro ≤13 chars, huawei icon
 all problems are listed at once, exit code 3. pgyer/fir don't support listings
 (warning, upload continues); `script` gets it as `Listing` in its stdin JSON.
 
+To start from the stores' current listing instead of a blank file:
+`apkgo listing -p <package> --out ./listing` (read-only) downloads the
+images and writes `./listing/listing.yaml` with each store under `stores:`
+(oppo/vivo/huawei: all fields; honor: text, its images are previews that
+fail its own spec and are left out; tencent: text only; others: not
+readable, so absent from the file and left unchanged on upload). Check each
+store's `notes` in the output for what was left out or needs editing.
+Without `--out` it just prints what each store reports as JSON.
+
 ### Sandbox
 
 For vivo sandbox uploads, run `apkgo upload -f app.apk --sandbox`. vivo uses
