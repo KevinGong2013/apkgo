@@ -326,7 +326,10 @@ func (s *Store) maybeURLPush(ctx context.Context, req *store.UploadRequest, bizP
 	// (iconUrl / screenshotUrl); ours are local files, which need the
 	// serial numbers only the upload interfaces accept.
 	if hasListingImages(req.Listing) {
-		ctxlog.FromContext(ctx).Info("listing has images; uploading the APK instead of URL push")
+		// Only worth a log line when a URL push would otherwise have run.
+		if req.SourceURL != "" {
+			ctxlog.FromContext(ctx).Info("listing has images; uploading the APK instead of URL push")
+		}
 		return false, nil
 	}
 	switch {

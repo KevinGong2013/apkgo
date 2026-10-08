@@ -89,9 +89,13 @@ func (f *fakeAGC) handle(w http.ResponseWriter, r *http.Request) {
 		f.uploads++
 		n := f.uploads
 		f.mu.Unlock()
+		// Like the real file server: the resolution and its signature
+		// come back only when the client asked for the image to be parsed.
 		extra := ""
-		if strings.HasSuffix(hdr.Filename, ".png") {
-			extra = fmt.Sprintf(`,"imageResolution":"res-%d","imageResolutionSingature":"sig-%d"`, n, n)
+		if r.FormValue("parseType") == "1" {
+			extra = fmt.Sprintf(`,"size":%d,"imageResolution":"res-%d","imageResolutionSingature":"sig-%d"`, 1000+n, n, n)
+		} else if strings.HasSuffix(hdr.Filename, ".png") {
+			f.t.Errorf("upload: image %s sent with parseType=%q, want 1", hdr.Filename, r.FormValue("parseType"))
 		}
 		fmt.Fprintf(w, `{"result":{"UploadFileRsp":{"ifSuccess":1,"fileInfoList":[{"fileDestUlr":"dest-%d"%s}]},"resultCode":"0"}}`, n, extra)
 
@@ -101,6 +105,22 @@ func (f *fakeAGC) handle(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.fileInfo = append(f.fileInfo, body)
 		f.mu.Unlock()
+		// Like AGC: an image must come back with its resolution signature,
+		// and with the size that signature covers.
+		if ft, _ := body["fileType"].(float64); int(ft) == fileTypeIcon || int(ft) == fileTypeScreenshot {
+			files, _ := body["files"].([]any)
+			for _, raw := range files {
+				file, _ := raw.(map[string]any)
+				switch {
+				case file["imageResolutionSingature"] == nil:
+					io.WriteString(w, `{"ret":{"code":204144641,"msg":"[AppGalleryConnectPublishService]input fileUrls format error, sign is empty"}}`)
+					return
+				case file["size"] == nil:
+					io.WriteString(w, `{"ret":{"code":204144641,"msg":"[AppGalleryConnectPublishService]Failed to verifySignature"}}`)
+					return
+				}
+			}
+		}
 		io.WriteString(w, ok)
 
 	case "PUT app-info":
@@ -237,8 +257,8 @@ func TestUploadWithListing(t *testing.T) {
 		"fileType":   0,
 		"lang":       "en-US",
 		"deviceType": 4,
-		"files": []map[string]string{
-			{"fileName": "icon.png", "fileDestUrl": "dest-2", "imageResolution": "res-2", "imageResolutionSingature": "sig-2"},
+		"files": []map[string]any{
+			{"fileName": "icon.png", "fileDestUrl": "dest-2", "size": 1002, "imageResolution": "res-2", "imageResolutionSingature": "sig-2"},
 		},
 	})
 	if got := jsonValue(t, agc.fileInfo[1]); !reflect.DeepEqual(got, wantIcon) {
@@ -249,10 +269,10 @@ func TestUploadWithListing(t *testing.T) {
 		"lang":        "en-US",
 		"deviceType":  4,
 		"imgShowType": 0,
-		"files": []map[string]string{
-			{"fileName": "s1.png", "fileDestUrl": "dest-3", "imageResolution": "res-3", "imageResolutionSingature": "sig-3"},
-			{"fileName": "s2.png", "fileDestUrl": "dest-4", "imageResolution": "res-4", "imageResolutionSingature": "sig-4"},
-			{"fileName": "s3.png", "fileDestUrl": "dest-5", "imageResolution": "res-5", "imageResolutionSingature": "sig-5"},
+		"files": []map[string]any{
+			{"fileName": "s1.png", "fileDestUrl": "dest-3", "size": 1003, "imageResolution": "res-3", "imageResolutionSingature": "sig-3"},
+			{"fileName": "s2.png", "fileDestUrl": "dest-4", "size": 1004, "imageResolution": "res-4", "imageResolutionSingature": "sig-4"},
+			{"fileName": "s3.png", "fileDestUrl": "dest-5", "size": 1005, "imageResolution": "res-5", "imageResolutionSingature": "sig-5"},
 		},
 	})
 	if got := jsonValue(t, agc.fileInfo[2]); !reflect.DeepEqual(got, wantShots) {

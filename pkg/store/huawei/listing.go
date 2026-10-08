@@ -171,7 +171,7 @@ func (s *Store) uploadImage(ctx context.Context, appID, path string) (uploadedFi
 	if suffix == "jpeg" {
 		suffix = "jpg"
 	}
-	return s.uploadFile(ctx, appID, path, suffix, progress.Safe(nil))
+	return s.uploadFile(ctx, appID, path, suffix, true, progress.Safe(nil))
 }
 
 // bindImages binds uploaded images to lang's phone assets via

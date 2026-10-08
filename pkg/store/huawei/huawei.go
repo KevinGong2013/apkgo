@@ -401,7 +401,7 @@ const (
 // its package: upload-url → upload → app-file-info (fileType 5).
 func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progress.Reporter) error {
 	rep.Phase("uploading")
-	f, err := s.uploadFile(ctx, appID, apkPath, "apk", rep)
+	f, err := s.uploadFile(ctx, appID, apkPath, "apk", false, rep)
 	if err != nil {
 		return err
 	}
@@ -425,7 +425,10 @@ type uploadedFile struct {
 	FileName    string `json:"fileName,omitempty"`
 	FileDestURL string `json:"fileDestUrl"`
 	// Returned for images only; FileInfo takes them back verbatim
-	// (Huawei's spelling: "imageResolutionSingature").
+	// (Huawei's spelling: "imageResolutionSingature"). The signature
+	// covers the size too: leave it out and the bind fails with 204144641
+	// "Failed to verifySignature".
+	Size                     int64  `json:"size,omitempty"`
 	ImageResolution          string `json:"imageResolution,omitempty"`
 	ImageResolutionSignature string `json:"imageResolutionSingature,omitempty"`
 }
@@ -433,7 +436,13 @@ type uploadedFile struct {
 // uploadFile puts one local file on Huawei's file server: upload-url for
 // the given suffix (apk, png, jpg, …) → multipart POST. The returned file
 // still has to be bound to the app with updateFileInfo.
-func (s *Store) uploadFile(ctx context.Context, appID, path, suffix string, rep progress.Reporter) (uploadedFile, error) {
+//
+// parseImage asks the file server to parse the upload as an image
+// (parseType=1). Only then does it return the imageResolution /
+// imageResolutionSingature pair app-file-info demands for icons and
+// screenshots; with parseType=0 they come back empty and the bind fails
+// with 204144641 "input fileUrls format error, sign is empty".
+func (s *Store) uploadFile(ctx context.Context, appID, path, suffix string, parseImage bool, rep progress.Reporter) (uploadedFile, error) {
 	url, authCode, err := s.getUploadURL(ctx, appID, suffix)
 	if err != nil {
 		return uploadedFile{}, err
@@ -445,6 +454,7 @@ func (s *Store) uploadFile(ctx context.Context, appID, path, suffix string, rep 
 				IfSuccess    int `json:"ifSuccess"`
 				FileInfoList []struct {
 					FileDestUlr              string `json:"fileDestUlr"`
+					Size                     int64  `json:"size"`
 					ImageResolution          string `json:"imageResolution"`
 					ImageResolutionSingature string `json:"imageResolutionSingature"`
 				} `json:"fileInfoList"`
@@ -453,6 +463,10 @@ func (s *Store) uploadFile(ctx context.Context, appID, path, suffix string, rep 
 		} `json:"result"`
 	}
 	filename := filepath.Base(path)
+	parseType := "0"
+	if parseImage {
+		parseType = "1"
+	}
 	rc, fSize, err := progress.OpenFile(path, rep)
 	if err != nil {
 		return uploadedFile{}, fmt.Errorf("open %s: %w", suffix, err)
@@ -465,7 +479,7 @@ func (s *Store) uploadFile(ctx context.Context, appID, path, suffix string, rep 
 			"authCode":  authCode,
 			"fileCount": "1",
 			"name":      filename,
-			"parseType": "0",
+			"parseType": parseType,
 		},
 		Files: []httpx.FileField{{Field: "file", FileName: filename, Reader: rc, Size: fSize}},
 	})
@@ -488,12 +502,16 @@ func (s *Store) uploadFile(ctx context.Context, appID, path, suffix string, rep 
 		return uploadedFile{}, fmt.Errorf("no file info returned after upload")
 	}
 	info := fileResp.Result.UploadFileRsp.FileInfoList[0]
-	return uploadedFile{
-		FileName:                 filename,
-		FileDestURL:              info.FileDestUlr,
-		ImageResolution:          info.ImageResolution,
-		ImageResolutionSignature: info.ImageResolutionSingature,
-	}, nil
+	if parseImage && info.ImageResolutionSingature == "" {
+		return uploadedFile{}, fmt.Errorf("file server returned no image resolution signature for %s: %s", filename, strings.TrimSpace(string(body)))
+	}
+	out := uploadedFile{FileName: filename, FileDestURL: info.FileDestUlr}
+	if parseImage {
+		out.Size = info.Size
+		out.ImageResolution = info.ImageResolution
+		out.ImageResolutionSignature = info.ImageResolutionSingature
+	}
+	return out, nil
 }
 
 // updateFileInfo binds uploaded files to the app's draft version
