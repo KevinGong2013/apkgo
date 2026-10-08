@@ -39,6 +39,7 @@ func init() {
 	})
 	store.RegisterDiagnoser("oppo", diagnose)
 	store.RegisterAuditor("oppo", audit)
+	store.RegisterListingFetcher("oppo", fetchListing)
 }
 
 // audit is registered with `apkgo audit`. It reads the latest version's

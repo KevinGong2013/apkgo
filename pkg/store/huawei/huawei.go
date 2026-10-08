@@ -33,6 +33,7 @@ func init() {
 	})
 	store.RegisterDiagnoser("huawei", diagnose)
 	store.RegisterAuditor("huawei", audit)
+	store.RegisterListingFetcher("huawei", fetchListing)
 }
 
 // audit is registered with `apkgo audit`. It reads the app's releaseState

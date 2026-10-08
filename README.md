@@ -137,6 +137,7 @@ stores:
 - 每个字段都可选，没写的保持商店现有值；`stores.<商店>` 覆盖默认值，`script.cdn` 这样的实例名会继承 `script` 的覆盖。
 - 上传开始前按各商店规格逐项校验（长度、图片格式/尺寸/大小、截图张数），**一次性列出全部问题**，退出码 3；`--dry-run` 同样校验。
 - 成功的结果里 `listing` 字段列出本次提交的资料项；版本已在商店侧（`already_done`）时不列。pgyer、fir 不支持资料，会给出警告并照常上传；`script` 商店在 stdin JSON 的 `Listing` 字段收到资料。
+- 想从商店现有资料改起：`apkgo listing -p <包名> --out ./listing` 会把各商店当前的资料读下来（只读，不改动商店），图片存到 `./listing/assets`，并生成 `./listing/listing.yaml`，改完直接用于 `--listing`。每家商店的值各自写在 `stores` 下、不合并成默认值，所以读不到的商店不会出现在文件里，上传时保持原样。目前 OPPO、vivo、华为四项都能读回；荣耀能读文字，但它返回的图片是转码后的预览图、不符合自己的上传规格，会被自动排除（商店保留原图）；腾讯只能读文字；小米没有查询接口。商店里现有的文字如果过不了该商店的规格校验，照样写入并在输出的 `notes` 里提示。
 - 各商店规格以 `apkgo stores` 输出的 `listing` 为准，摘要如下：
 
 | 商店 | 一句话介绍 | 长描述 | icon | 截图 |
@@ -529,6 +530,7 @@ apkgo upload        -f <apk|aab|app|url> [--file64 <apk|url>] [-s stores] [-n no
                     [--release-time <RFC3339>] [--listing <file>] [--fetch-header "Name: value"] [--dry-run | --sandbox]
                     [--progress-stream] [-t timeout]
 apkgo audit         [-s stores] (-f <apk> | -p <package>) [--watch] [--interval 30s]
+apkgo listing       [-s stores] (-f <apk> | -p <package>) [--out <dir>]
 apkgo doctor        [-s stores] [-f <apk> | -p <package>]
 apkgo config export --out <file>
 apkgo config import <file>

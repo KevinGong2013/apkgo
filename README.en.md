@@ -141,6 +141,7 @@ stores:
 - Every field is optional; omitted fields keep the store's current value. `stores.<store>` overrides the defaults; an instance such as `script.cdn` inherits the `script` override.
 - Before any upload each target store's listing is validated (lengths, image format/size/bytes, screenshot count) and **all problems are reported at once** with exit code 3; `--dry-run` validates too.
 - Successful results list the submitted fields in `listing` (not for `already_done` results). pgyer and fir don't support listings — apkgo warns and uploads without it; `script` receives it as `Listing` in its stdin JSON.
+- To start from what the stores already have, `apkgo listing -p <package> --out ./listing` reads every store's current listing (read-only), saves the images under `./listing/assets` and writes `./listing/listing.yaml`, ready to edit and pass to `--listing`. Each store's values go under its own `stores:` entry with no shared defaults, so a store that can't be read is absent from the file and left unchanged on upload. OPPO, vivo and Huawei return all four fields. Honor returns the text, but its images are re-encoded previews that fail its own upload spec, so they are left out (the store keeps its originals). Tencent returns text only; Xiaomi has no query API. Existing text that wouldn't pass the store's spec is still written, with a warning in the output's `notes`.
 - `apkgo stores` prints each store's authoritative `listing` spec. Summary:
 
 | Store | Intro | Description | Icon | Screenshots |
@@ -862,6 +863,7 @@ apkgo upload        -f <apk|aab|app|url> [--file64 <apk|url>] [-s stores] [-n no
                     [--release-time <RFC3339>] [--listing <file>] [--fetch-header "Name: value"] [--dry-run | --sandbox]
                     [--progress-stream] [-t timeout]
 apkgo audit         [-s stores] (-f <apk> | -p <package>) [--watch] [--interval 30s]
+apkgo listing       [-s stores] (-f <apk> | -p <package>) [--out <dir>]
 apkgo doctor        [-s stores] [-f <apk> | -p <package>]
 apkgo config export --out <file>
 apkgo config import <file>
