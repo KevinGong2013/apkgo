@@ -26,6 +26,8 @@ package httptrace
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"io"
 	"mime"
@@ -105,18 +107,41 @@ var (
 	handleSeq atomic.Uint64
 )
 
+// newHandle returns a handle nobody can guess: store configs come from
+// users, and one naming a live handle would send its store's exchanges to
+// somebody else's recorder.
+func newHandle() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// No entropy: fall back to uniqueness alone.
+		return "n" + strconv.FormatUint(handleSeq.Add(1), 36)
+	}
+	return hex.EncodeToString(b[:])
+}
+
 // Carry returns a copy of cfg holding a handle to ctx's recorder (and
 // replayer), for a store constructor to pick up with ForStore; name is the
 // store's configured name, used to label its exchanges. Call release once
 // the store has been constructed. When ctx carries neither, cfg is
-// returned unchanged.
+// returned as it is (minus a ConfigKey entry of its own, if it had one).
 func Carry(ctx context.Context, name string, cfg map[string]string) (out map[string]string, release func()) {
 	rec := FromContext(ctx)
 	rp, _ := ctx.Value(replayKey{}).(*Replayer)
 	if rec == nil && rp == nil {
-		return cfg, func() {}
+		if _, present := cfg[ConfigKey]; !present {
+			return cfg, func() {}
+		}
+		// The key is reserved: a value that came in with the config is
+		// dropped rather than handed to the constructor.
+		out = make(map[string]string, len(cfg))
+		for k, v := range cfg {
+			if k != ConfigKey {
+				out[k] = v
+			}
+		}
+		return out, func() {}
 	}
-	handle := strconv.FormatUint(handleSeq.Add(1), 36)
+	handle := newHandle()
 	handles.Store(handle, binding{rec: rec, replay: rp, name: name})
 	out = make(map[string]string, len(cfg)+1)
 	for k, v := range cfg {

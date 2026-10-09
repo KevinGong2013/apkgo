@@ -308,6 +308,19 @@ func TestNoRecorderMeansNoTracing(t *testing.T) {
 	if _, touched := cfg[ConfigKey]; touched {
 		t.Error("Carry wrote into the caller's config")
 	}
+
+	// The key is reserved: a config can't name somebody else's handle.
+	live, releaseLive := Carry(WithRecorder(context.Background(), &memRecorder{}), "victim", cfg)
+	defer releaseLive()
+	forged := map[string]string{"client_id": "id", ConfigKey: live[ConfigKey]}
+	out, release = Carry(context.Background(), "attacker", forged)
+	release()
+	if _, kept := out[ConfigKey]; kept || ForStore("attacker", out) != nil {
+		t.Error("a handle supplied in the config reached the constructor")
+	}
+	if len(live[ConfigKey]) < 32 {
+		t.Errorf("handle %q is guessable", live[ConfigKey])
+	}
 }
 
 func TestIsSensitive(t *testing.T) {
