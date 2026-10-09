@@ -3,6 +3,7 @@ package oppo
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg" // register jpeg decoder for in-APK icons
@@ -90,23 +91,26 @@ func iconURLCompliant(ctx context.Context, url string) bool {
 	return format == "png" && cfg.Width == oppoIconSize && cfg.Height == oppoIconSize
 }
 
+// iconDensities lists the launcher-icon densities to request, densest
+// first. androidbinary resolves the icon resource for the requested
+// config, and a zero density means mdpi — the 48px variant, which scaled
+// up to 512×512 is the blurry icon OPPO used to get. 0xFFFE (anydpi) is
+// deliberately not in the list: it resolves to the adaptive-icon XML,
+// which image.Decode can't read. Lower densities are fallbacks for APKs
+// that only ship an adaptive XML at the top end.
+var iconDensities = []uint16{640, 480, 320, 240, 160}
+
 // extractCompliantIcon pulls the launcher icon from the APK and writes it as a
-// 512×512 PNG to a temp file, returning the path. The in-APK icon is whatever
-// density is closest to 512 (often smaller, e.g. xxxhdpi 192px), so it is
-// always rescaled to exactly 512×512 with a high-quality kernel.
+// 512×512 PNG to a temp file, returning the path. Even the densest in-APK icon
+// is usually smaller than that (xxxhdpi is 192px), so it is rescaled to exactly
+// 512×512 with a high-quality kernel.
 func extractCompliantIcon(apkPath string) (string, error) {
-	pkg, err := apk.OpenFile(apkPath)
+	src, err := readIcon(apkPath)
 	if err != nil {
-		return "", fmt.Errorf("open apk: %w", err)
-	}
-	defer pkg.Close()
-
-	src, err := pkg.Icon(&androidbinary.ResTableConfig{Size: oppoIconSize})
-	if err != nil {
-		return "", fmt.Errorf("read icon: %w", err)
+		return "", err
 	}
 
-	var img image.Image = src
+	img := src
 	if b := src.Bounds(); b.Dx() != oppoIconSize || b.Dy() != oppoIconSize {
 		dst := image.NewRGBA(image.Rect(0, 0, oppoIconSize, oppoIconSize))
 		draw.CatmullRom.Scale(dst, dst.Bounds(), src, b, draw.Over, nil)
@@ -135,4 +139,23 @@ func extractCompliantIcon(apkPath string) (string, error) {
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+// readIcon decodes the densest launcher icon the APK ships as an image.
+func readIcon(apkPath string) (image.Image, error) {
+	pkg, err := apk.OpenFile(apkPath)
+	if err != nil {
+		return nil, fmt.Errorf("open apk: %w", err)
+	}
+	defer pkg.Close()
+
+	var errs []error
+	for _, d := range iconDensities {
+		img, err := pkg.Icon(&androidbinary.ResTableConfig{Density: d})
+		if err == nil {
+			return img, nil
+		}
+		errs = append(errs, fmt.Errorf("density %d: %w", d, err))
+	}
+	return nil, fmt.Errorf("read icon: %w", errors.Join(errs...))
 }
