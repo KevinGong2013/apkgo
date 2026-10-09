@@ -132,8 +132,14 @@ others always upload. apkgo still fetches the APK once locally for metadata.
   URL through.
 - These flows are **asynchronous**: the store downloads in the background
   and apkgo polls until it finishes. Each store has its own download
-  interface (huawei `app-package-file/by-url`, honor `upload-by-url`, vivo
+  interface (huawei `app-submit-with-file`, honor `upload-by-url`, vivo
   `app.update.app` + `app.query.task.status`).
+- **huawei** must go through `app-submit-with-file` (download + attach +
+  submit in one async call) and is only done once `app-info` shows the new
+  versionCode under review. `app-package-file/by-url` merely stores the
+  package without attaching it to the version (不会关联版本): following it
+  with `app-submit` sends the *previous* package to review and still
+  answers success.
 - **honor** throttles its status poll to ~once/3min, so it only URL-pushes
   when the APK is at least `url_push_min_mb` MB (default 100); smaller APKs
   upload directly. huawei and vivo URL-push whenever the source is a URL.
