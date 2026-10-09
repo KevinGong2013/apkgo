@@ -67,10 +67,23 @@ func WithRecorder(ctx context.Context, rec Recorder) context.Context {
 	return context.WithValue(ctx, recorderKey{}, rec)
 }
 
-// FromContext returns the recorder WithRecorder put in ctx, or nil.
+// FromContext returns the recorder WithRecorder put in ctx, or nil. A nil
+// ctx carries none: the store dispatchers used to tolerate one, and still
+// must.
 func FromContext(ctx context.Context) Recorder {
+	if ctx == nil {
+		return nil
+	}
 	rec, _ := ctx.Value(recorderKey{}).(Recorder)
 	return rec
+}
+
+func replayFrom(ctx context.Context) *Replayer {
+	if ctx == nil {
+		return nil
+	}
+	rp, _ := ctx.Value(replayKey{}).(*Replayer)
+	return rp
 }
 
 // ConfigKey is the reserved store-config key under which Carry hands a
@@ -125,8 +138,7 @@ func newHandle() string {
 // the store has been constructed. When ctx carries neither, cfg is
 // returned as it is (minus a ConfigKey entry of its own, if it had one).
 func Carry(ctx context.Context, name string, cfg map[string]string) (out map[string]string, release func()) {
-	rec := FromContext(ctx)
-	rp, _ := ctx.Value(replayKey{}).(*Replayer)
+	rec, rp := FromContext(ctx), replayFrom(ctx)
 	if rec == nil && rp == nil {
 		if _, present := cfg[ConfigKey]; !present {
 			return cfg, func() {}
@@ -217,6 +229,10 @@ type multipartKey struct{}
 // of, so it can be recorded without reading the stream: the form fields,
 // and each file's field name, file name and size.
 func WithMultipart(ctx context.Context, fields map[string]string, files []FilePart) context.Context {
+	if ctx == nil {
+		// Left for the caller's request constructor to reject, as before.
+		return nil
+	}
 	return context.WithValue(ctx, multipartKey{}, &Multipart{Fields: fields, Files: files})
 }
 

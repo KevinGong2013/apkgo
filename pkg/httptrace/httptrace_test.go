@@ -323,6 +323,25 @@ func TestNoRecorderMeansNoTracing(t *testing.T) {
 	}
 }
 
+// Callers that pass a nil context (the store dispatchers never required
+// one) get no tracing — not a panic.
+func TestNilContext(t *testing.T) {
+	//nolint:staticcheck // nil contexts are the point
+	var ctx context.Context
+	if FromContext(ctx) != nil {
+		t.Error("recorder from a nil context")
+	}
+	cfg := map[string]string{"client_id": "id"}
+	out, release := Carry(ctx, "demo", cfg)
+	release()
+	if len(out) != 1 || ForStore("demo", out) != nil {
+		t.Errorf("Carry(nil ctx) = %v", out)
+	}
+	if WithMultipart(ctx, nil, nil) != nil {
+		t.Error("WithMultipart made a context out of nil")
+	}
+}
+
 func TestIsSensitive(t *testing.T) {
 	for _, name := range []string{
 		"client_secret", "access_token", "accessToken", "Authorization", "api_sign", "sign", "SIG",
