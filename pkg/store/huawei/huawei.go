@@ -54,49 +54,10 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 			return res
 		}
 	}
-	// The app-info response carries two version triplets: the unprefixed
-	// versionNumber/versionCode is the latest submitted (in-review) iteration,
-	// while onShelfVersion* is the version currently live to users. Huawei is
-	// the one store that reports both at once, so when an upgrade is mid-review
-	// the dashboard can show "线上 X / 在审 Y" without a second call.
-	//
-	// releaseState shipped here read from the top level and works in
-	// production; the version fields are documented under an appInfo object.
-	// Decode both shapes and prefer whichever is populated so the mapping is
-	// robust to the exact nesting (version fields simply stay empty if absent).
-	type appInfoFields struct {
-		ReleaseState         int    `json:"releaseState"`
-		VersionNumber        string `json:"versionNumber"`
-		VersionCode          int64  `json:"versionCode"`
-		OnShelfVersionNumber string `json:"onShelfVersionNumber"`
-		OnShelfVersionCode   int64  `json:"onShelfVersionCode"`
-	}
-	var resp struct {
-		Ret     retInfo       `json:"ret"`
-		AppInfo appInfoFields `json:"appInfo"`
-		appInfoFields
-	}
-	httpResp, err := s.client.R().
-		SetContext(ctx).
-		SetQueryParams(map[string]string{"appId": appID, "releaseType": "1"}).
-		SetResult(&resp).
-		Get("/api/publish/v2/app-info")
+	af, err := s.releaseInfo(ctx, appID)
 	if err != nil {
 		res.Error = err.Error()
 		return res
-	}
-	if httpResp.IsError() {
-		res.Error = fmt.Sprintf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
-		return res
-	}
-	if resp.Ret.Code != 0 {
-		res.Error = fmt.Sprintf("[%d] %s", resp.Ret.Code, resp.Ret.text())
-		return res
-	}
-	// Prefer the appInfo object; fall back to top-level fields.
-	af := resp.AppInfo
-	if af.ReleaseState == 0 && af.VersionNumber == "" && af.OnShelfVersionNumber == "" {
-		af = resp.appInfoFields
 	}
 	res.State, res.Detail = mapHuaweiReleaseState(af.ReleaseState)
 	res.VersionName = af.VersionNumber
@@ -104,6 +65,53 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 	res.LiveVersionName = af.OnShelfVersionNumber
 	res.LiveVersionCode = int32(af.OnShelfVersionCode)
 	return res
+}
+
+// appReleaseInfo is what app-info (releaseType=1) says about an app's
+// versions. It carries two version triplets: the unprefixed
+// versionNumber/versionCode is the latest submitted (in-review) iteration,
+// while onShelfVersion* is the version currently live to users. Huawei is
+// the one store that reports both at once, so when an upgrade is mid-review
+// the dashboard can show "线上 X / 在审 Y" without a second call.
+type appReleaseInfo struct {
+	ReleaseState         int    `json:"releaseState"`
+	VersionNumber        string `json:"versionNumber"`
+	VersionCode          int64  `json:"versionCode"`
+	OnShelfVersionNumber string `json:"onShelfVersionNumber"`
+	OnShelfVersionCode   int64  `json:"onShelfVersionCode"`
+}
+
+// releaseInfo reads app-info. releaseState shipped read from the top level
+// and works in production; the version fields are documented under an
+// appInfo object. Both shapes are decoded and whichever is populated wins,
+// so the result is robust to the exact nesting (version fields simply stay
+// empty if absent).
+func (s *Store) releaseInfo(ctx context.Context, appID string) (appReleaseInfo, error) {
+	var resp struct {
+		Ret     retInfo        `json:"ret"`
+		AppInfo appReleaseInfo `json:"appInfo"`
+		appReleaseInfo
+	}
+	httpResp, err := s.client.R().
+		SetContext(ctx).
+		SetQueryParams(map[string]string{"appId": appID, "releaseType": "1"}).
+		SetResult(&resp).
+		Get("/api/publish/v2/app-info")
+	if err != nil {
+		return appReleaseInfo{}, err
+	}
+	if httpResp.IsError() {
+		return appReleaseInfo{}, fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+	}
+	if resp.Ret.Code != 0 {
+		return appReleaseInfo{}, fmt.Errorf("[%d] %s", resp.Ret.Code, resp.Ret.text())
+	}
+	// Prefer the appInfo object; fall back to top-level fields.
+	af := resp.AppInfo
+	if af.ReleaseState == 0 && af.VersionNumber == "" && af.OnShelfVersionNumber == "" {
+		af = resp.appReleaseInfo
+	}
+	return af, nil
 }
 
 // mapHuaweiReleaseState maps app-info releaseState (releaseType=1) to the
@@ -254,17 +262,13 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		}
 	}
 
-	// Get the APK to Huawei. When -f was a public URL, hand Huawei the URL
-	// and let it download the package itself (skips re-uploading the
-	// bytes); otherwise upload the local file. The by-url path is async —
-	// pollAndSubmit below already retries while Huawei is still parsing,
-	// which absorbs the download wait.
+	// When -f was a public URL, Huawei downloads the package itself
+	// (download-mode publishing) — a different, asynchronous flow.
 	if req.SourceURL != "" {
-		rep.Phase("submitting url")
-		if err := s.submitPackageByURL(appID, req.SourceURL, req); err != nil {
-			return fmt.Errorf("submit package by url: %w", err)
-		}
-	} else if err := s.uploadAPK(ctx, appID, req.FilePath, rep); err != nil {
+		return s.publishByURL(ctx, appID, req, rep)
+	}
+
+	if err := s.uploadAPK(ctx, appID, req.FilePath, rep); err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
 
@@ -391,12 +395,12 @@ func (s *Store) fetchAppID(packageName string) (string, error) {
 	return resp.AppIds[0].Value, nil
 }
 
-// maxDownloadFileName is AGC's limit on by-url's downloadFileName; a longer
+// maxDownloadFileName is AGC's limit on downloadFileName; a longer
 // one is refused with 203489281 "downloadFileName: size must be between 0
 // and 64".
 const maxDownloadFileName = 64
 
-// byURLFileName picks the downloadFileName for a by-url submission. It
+// byURLFileName picks the downloadFileName for download-mode publishing. It
 // must carry the package's real suffix. The URL's own file name is used
 // when it fits; object-storage keys (a sha256 or uuid plus the original
 // name) often don't, so the fallbacks are "<package><suffix>" and, last,
@@ -609,31 +613,76 @@ func classifyHuawei(ret retInfo) store.Category {
 	return store.CategoryUnknown
 }
 
-// submitPackageByURL hands Huawei a developer-hosted download URL
-// (POST /publish/v2/app-package-file/by-url) instead of uploading the APK
-// bytes. Huawei downloads the package from the URL on its own side and
-// associates it with the app's draft version — no fileDestUrl is returned
-// to bind, so unlike the upload path there is no app-file-info step. The
-// download is asynchronous: this call only enqueues it (ret.code 0), and
-// the subsequent pollAndSubmit absorbs the wait via its parsing-retry.
-// The URL must be publicly GET-able (Huawei fetches it unauthenticated).
-func (s *Store) submitPackageByURL(appID, sourceURL string, req *store.UploadRequest) error {
-	name := byURLFileName(sourceURL, req.PackageName)
-	requestID := fmt.Sprintf("apkgo-%s-%d-%d", req.PackageName, req.VersionCode, time.Now().UnixNano())
+// Download-mode publishing is asynchronous on Huawei's side: once
+// app-submit-with-file has answered, Huawei still has to fetch the package,
+// parse it and start the review. These bound how long apkgo watches
+// app-info for that. Vars so tests can shorten them.
+var (
+	urlPublishPoll    = 15 * time.Second
+	urlPublishMaxWait = 20 * time.Minute
+)
 
+// publishByURL is download-mode publishing: Huawei fetches the package from
+// req.SourceURL instead of receiving the bytes.
+//
+// It uses app-submit-with-file (通过下载方式提交发布), the one interface
+// that downloads the package, attaches it to the version AND submits it for
+// review. app-package-file/by-url (通过下载方式提交软件包), used before,
+// only stores the package — the doc says 不会关联版本 — so the app-submit
+// that followed sent the PREVIOUS package to review and still reported
+// success (an 11.0.9 release went to review as 11.0.8).
+//
+// Release notes and listing are written first: they belong to the draft
+// the downloaded package is attached to. The call itself only queues the
+// work, so the outcome is read back from app-info.
+func (s *Store) publishByURL(ctx context.Context, appID string, req *store.UploadRequest, rep progress.Reporter) error {
+	if req.ReleaseNotes != "" {
+		rep.Phase("release notes")
+		if err := s.updateAppInfo(appID, req.ReleaseNotes); err != nil {
+			return fmt.Errorf("update release notes: %w", err)
+		}
+	}
+	if !req.Listing.Empty() {
+		rep.Phase("listing")
+		if err := s.updateListing(ctx, appID, req.Listing); err != nil {
+			return fmt.Errorf("update listing: %w", err)
+		}
+	}
+
+	rep.Phase("submitting url")
+	if err := s.submitWithFile(ctx, appID, req); err != nil {
+		return fmt.Errorf("submit with file: %w", err)
+	}
+
+	rep.Phase("waiting for huawei")
+	return s.waitUnderReview(ctx, appID, req.VersionCode)
+}
+
+// submitWithFile asks Huawei to download the package from req.SourceURL
+// and release it (POST app-submit-with-file). A zero ret only means the
+// request was queued.
+func (s *Store) submitWithFile(ctx context.Context, appID string, req *store.UploadRequest) error {
+	body := map[string]any{
+		"downloadUrl":      req.SourceURL,
+		"downloadFileName": byURLFileName(req.SourceURL, req.PackageName),
+		// Unique per request, at most 64 characters.
+		"requestId":   fmt.Sprintf("apkgo-%d-%d", req.VersionCode, time.Now().UnixNano()),
+		"releaseType": 1, // 全网
+	}
+	if req.ReleaseTime != nil {
+		// Scheduled release (定时发布), same format as app-submit:
+		// 2026-06-20T10:00:00+0800.
+		body["releaseTime"] = req.ReleaseTime.Format("2006-01-02T15:04:05Z0700")
+	}
 	var resp struct {
 		Ret retInfo `json:"ret"`
 	}
 	httpResp, err := s.client.R().
+		SetContext(ctx).
 		SetQueryParams(map[string]string{"appId": appID}).
-		SetBody(map[string]any{
-			"downloadUrl":      sourceURL,
-			"downloadFileName": name,
-			"requestId":        requestID,
-			"packageType":      1, // 1 = APK
-		}).
+		SetBody(body).
 		SetResult(&resp).
-		Post("/api/publish/v2/app-package-file/by-url")
+		Post("/api/publish/v2/app-submit-with-file")
 	if err != nil {
 		return err
 	}
@@ -641,9 +690,45 @@ func (s *Store) submitPackageByURL(appID, sourceURL string, req *store.UploadReq
 		return fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
 	}
 	if resp.Ret.Code != 0 {
-		return fmt.Errorf("[%d] %s", resp.Ret.Code, resp.Ret.text())
+		return store.Categorize(classifyHuawei(resp.Ret),
+			fmt.Errorf("[%d] %s%s", resp.Ret.Code, resp.Ret.text(), packageLimitHint(resp.Ret)))
 	}
 	return nil
+}
+
+// waitUnderReview polls app-info until the version Huawei has under review
+// (or already approved) carries versionCode — the only proof that the
+// downloaded package, not an older one, is what got submitted. It gives up
+// after urlPublishMaxWait: Huawei reports a failed download only through a
+// callback URL, which apkgo doesn't have.
+func (s *Store) waitUnderReview(ctx context.Context, appID string, versionCode int32) error {
+	deadline := time.Now().Add(urlPublishMaxWait)
+	var last appReleaseInfo
+	for {
+		// A failed query is retried on the next tick like a not-yet state.
+		if info, err := s.releaseInfo(ctx, appID); err == nil {
+			last = info
+			if info.VersionCode == int64(versionCode) {
+				switch state, _ := mapHuaweiReleaseState(info.ReleaseState); state {
+				case store.AuditReviewing, store.AuditApproved:
+					return nil
+				case store.AuditRejected:
+					return fmt.Errorf("huawei rejected versionCode %d on submission (releaseState=%d), check AGC: %s",
+						versionCode, info.ReleaseState, hwConsoleURL)
+				}
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("huawei has not put versionCode %d under review after %s (app-info still reports versionCode %d, releaseState=%d): its download from the link may be slow or have failed — check AGC before retrying: %s",
+				versionCode, urlPublishMaxWait, last.VersionCode, last.ReleaseState, hwConsoleURL)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("stopped waiting for huawei to put versionCode %d under review: %w (the request was accepted; check AGC: %s)",
+				versionCode, ctx.Err(), hwConsoleURL)
+		case <-time.After(urlPublishPoll):
+		}
+	}
 }
 
 // hwConsoleURL is the AGC release console — by the time pollAndSubmit
