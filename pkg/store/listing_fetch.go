@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"strings"
+
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 )
 
 // ListingQuery identifies the app whose current listing to read.
@@ -52,6 +54,8 @@ func FetchListing(ctx context.Context, name string, cfg map[string]string, q Lis
 	if !ok {
 		return RemoteListing{}, false
 	}
+	cfg, release := httptrace.Carry(ctx, name, cfg)
+	defer release()
 	return fn(ctx, cfg, q), true
 }
 

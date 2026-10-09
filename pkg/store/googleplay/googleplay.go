@@ -18,6 +18,7 @@ import (
 	"github.com/go-resty/resty/v2"
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
@@ -83,7 +84,8 @@ func New(cfg map[string]string) (*Store, error) {
 	}
 
 	// Get OAuth token
-	token, err := getOAuthToken(key)
+	trace := httptrace.ForStore("googleplay", cfg)
+	token, err := getOAuthToken(trace, key)
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
@@ -92,6 +94,7 @@ func New(cfg map[string]string) (*Store, error) {
 		SetBaseURL(apiHost+"/androidpublisher/v3/applications/"+packageName).
 		SetAuthToken(token).
 		SetHeader("Content-Type", "application/json")
+	trace.Client(client.GetClient())
 
 	return &Store{
 		client:      client,
@@ -217,7 +220,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	return nil
 }
 
-func getOAuthToken(key serviceAccountKey) (string, error) {
+func getOAuthToken(trace *httptrace.Tracer, key serviceAccountKey) (string, error) {
 	// Parse private key
 	block, _ := pem.Decode([]byte(key.PrivateKey))
 	if block == nil {
@@ -261,7 +264,9 @@ func getOAuthToken(key serviceAccountKey) (string, error) {
 		AccessToken string `json:"access_token"`
 		Error       string `json:"error,omitempty"`
 	}
-	_, err = resty.New().R().
+	tokenClient := resty.New()
+	trace.Client(tokenClient.GetClient())
+	_, err = tokenClient.R().
 		SetFormData(map[string]string{
 			"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
 			"assertion":  jwt,

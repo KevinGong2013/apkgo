@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/config"
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/telemetry"
 	"github.com/KevinGong2013/apkgo/v4/pkg/update"
 )
@@ -21,12 +22,16 @@ var (
 	flagOutput    string
 	flagVerbose   bool
 	flagTimeout   time.Duration
+	flagHTTPTrace string
 )
+
+// httpTrace is the open --http-trace file, closed when Execute returns.
+var httpTrace *httptrace.FileRecorder
 
 var rootCmd = &cobra.Command{
 	Use:   "apkgo",
 	Short: "Upload APKs to multiple Android app stores",
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Configure slog to stderr so stdout stays clean for structured output
 		level := slog.LevelWarn
 		if flagVerbose {
@@ -36,7 +41,22 @@ var rootCmd = &cobra.Command{
 
 		// Config introspection must remain local and side-effect free.
 		if cmd.Name() == "stores" && flagStoresConfigured {
-			return
+			return nil
+		}
+
+		// --http-trace (or APKGO_HTTP_TRACE): record this command's HTTP
+		// exchanges with the stores. The commands pass cmd.Context() on.
+		path := flagHTTPTrace
+		if path == "" {
+			path = os.Getenv("APKGO_HTTP_TRACE")
+		}
+		if path != "" {
+			rec, err := httptrace.NewFileRecorder(path)
+			if err != nil {
+				return fmt.Errorf("--http-trace: %w", err)
+			}
+			httpTrace = rec
+			cmd.SetContext(httptrace.WithRecorder(cmd.Context(), rec))
 		}
 
 		// Non-blocking update check (skipped for upgrade command itself)
@@ -44,6 +64,7 @@ var rootCmd = &cobra.Command{
 			cfg := config.LoadOrEmpty(flagConfig)
 			update.CheckAndRemind(Version, cfg.UpdateCheckInterval(update.DefaultCheck))
 		}
+		return nil
 	},
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -59,6 +80,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagOutput, "output", "o", "json", "output format: json or text")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "verbose logging to stderr")
 	rootCmd.PersistentFlags().DurationVarP(&flagTimeout, "timeout", "t", 10*time.Minute, "global timeout for upload operations")
+	rootCmd.PersistentFlags().StringVar(&flagHTTPTrace, "http-trace", "", "record every HTTP exchange with the stores to this file (JSON Lines, appended; credentials redacted, uploaded files described by name and size only). Env: APKGO_HTTP_TRACE")
 }
 
 // Execute runs the root command and returns an exit code.
@@ -66,6 +88,11 @@ func Execute() int {
 	// main calls os.Exit right after this returns, which would kill any
 	// telemetry request still in flight.
 	defer telemetry.Flush(2 * time.Second)
+	defer func() {
+		if httpTrace != nil {
+			httpTrace.Close()
+		}
+	}()
 	if err := rootCmd.Execute(); err != nil {
 		writeError(err)
 		return 3

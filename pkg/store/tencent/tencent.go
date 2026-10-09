@@ -22,6 +22,7 @@ import (
 	"github.com/go-resty/resty/v2"
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/imgcheck"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
@@ -94,6 +95,7 @@ const baseURL = "https://p.open.qq.com/open_file/developer_api"
 
 type Store struct {
 	client       *resty.Client
+	cos          *http.Client // the COS PUT when recording; nil = cosClient
 	userID       string
 	accessSecret string
 	appID        string            // single-app default; used when no app_id_map entry matches
@@ -126,9 +128,12 @@ func New(cfg map[string]string) (*Store, error) {
 		SetBaseURL(baseURL).
 		SetHeader("Content-Type", "application/x-www-form-urlencoded").
 		SetTimeout(60 * time.Second)
+	trace := httptrace.ForStore("tencent", cfg)
+	trace.Client(client.GetClient())
 
 	return &Store{
 		client:       client,
+		cos:          trace.NewClient(0), // no timeout, like cosClient
 		userID:       userID,
 		accessSecret: accessSecret,
 		appID:        appID,
@@ -369,7 +374,11 @@ func (s *Store) uploadFile(ctx context.Context, pkg, appID, filePath, fileType s
 	// large-APK uploads on slow uplinks (a 60MB APK over a ~200KB/s line
 	// needs >5 min). Cancellation comes from ctx, which the CLI bounds
 	// with the job timeout and apkgo-cloud bounds with its per-store cap.
-	httpResp, err := cosClient.Do(httpReq)
+	cos := s.cos
+	if cos == nil {
+		cos = cosClient
+	}
+	httpResp, err := cos.Do(httpReq)
 	if err != nil {
 		return "", "", fmt.Errorf("upload to cos: %w", httpx.RedactURLError(err))
 	}

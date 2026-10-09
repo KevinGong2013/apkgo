@@ -18,6 +18,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/imgcheck"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
@@ -250,6 +251,7 @@ const (
 
 type Store struct {
 	client          *resty.Client // bound to publishBase with Bearer auth
+	uploadClient    *http.Client  // streamed file uploads; nil = httpx's default
 	accessToken     string        // kept separately so we can pass it on the signed upload URL, which belongs to a different host
 	configAppID     string        // optional; when set, skips the get-app-id lookup
 	urlPushMinBytes int64         // APK must be at least this big to pull from -f URL; 0 = default
@@ -262,7 +264,8 @@ func New(cfg map[string]string) (*Store, error) {
 		return nil, fmt.Errorf("client_id and client_secret are required")
 	}
 
-	token, err := fetchToken(clientID, clientSecret)
+	trace := httptrace.ForStore("honor", cfg)
+	token, err := fetchToken(trace, clientID, clientSecret)
 	if err != nil {
 		return nil, store.Categorize(store.CategoryAuthFailed, fmt.Errorf("auth: %w", err))
 	}
@@ -271,6 +274,7 @@ func New(cfg map[string]string) (*Store, error) {
 		SetBaseURL(publishBase).
 		SetAuthToken(token).
 		SetHeader("Content-Type", "application/json")
+	trace.Client(client.GetClient())
 
 	minMB := honorURLPushDefaultMB
 	if v := strings.TrimSpace(cfg["url_push_min_mb"]); v != "" {
@@ -281,6 +285,7 @@ func New(cfg map[string]string) (*Store, error) {
 
 	return &Store{
 		client:          client,
+		uploadClient:    trace.NewClient(30 * time.Minute),
 		accessToken:     token,
 		configAppID:     cfg["app_id"],
 		urlPushMinBytes: int64(minMB) << 20,
@@ -382,8 +387,10 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (string, e
 
 // ---- auth ----
 
-func fetchToken(clientID, clientSecret string) (string, error) {
-	httpResp, err := resty.New().R().
+func fetchToken(trace *httptrace.Tracer, clientID, clientSecret string) (string, error) {
+	client := resty.New()
+	trace.Client(client.GetClient())
+	httpResp, err := client.R().
 		SetFormData(map[string]string{
 			"client_id":     clientID,
 			"client_secret": clientSecret,
@@ -637,6 +644,7 @@ func (s *Store) uploadFile(ctx context.Context, appID, path, fileName string, fi
 		URL:     upload.UploadURL,
 		Headers: map[string]string{"Authorization": "Bearer " + s.accessToken},
 		Files:   []httpx.FileField{{Field: "file", FileName: fileName, Reader: rc, Size: fSize}},
+		Client:  s.uploadClient,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("upload: %w", err)

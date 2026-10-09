@@ -32,6 +32,7 @@ import (
 	// with "image: unknown format" when extracting the launcher icon.
 	_ "golang.org/x/image/webp"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
@@ -113,11 +114,12 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 }
 
 type Store struct {
-	client     *resty.Client
-	baseURL    string
-	email      string
-	privateKey string
-	pubKey     *rsa.PublicKey
+	client       *resty.Client
+	uploadClient *http.Client // streamed file uploads; nil = httpx's default
+	baseURL      string
+	email        string
+	privateKey   string
+	pubKey       *rsa.PublicKey
 }
 
 func New(cfg map[string]string) (*Store, error) {
@@ -144,13 +146,16 @@ func New(cfg map[string]string) (*Store, error) {
 
 	client := resty.New().
 		SetBaseURL(xiaomiBaseURL)
+	trace := httptrace.ForStore("xiaomi", cfg)
+	trace.Client(client.GetClient())
 
 	return &Store{
-		client:     client,
-		baseURL:    xiaomiBaseURL,
-		email:      email,
-		privateKey: privateKey,
-		pubKey:     pubKey,
+		client:       client,
+		uploadClient: trace.NewClient(30 * time.Minute),
+		baseURL:      xiaomiBaseURL,
+		email:        email,
+		privateKey:   privateKey,
+		pubKey:       pubKey,
 	}, nil
 }
 
@@ -353,6 +358,7 @@ func (s *Store) push(ctx context.Context, synchroType int, req *store.UploadRequ
 		URL:    s.baseURL + "/dev/push",
 		Fields: fields,
 		Files:  parts,
+		Client: s.uploadClient,
 	})
 	if err != nil {
 		return err

@@ -23,6 +23,7 @@ import (
 	"github.com/go-resty/resty/v2"
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/ctxlog"
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
@@ -137,6 +138,7 @@ func mapVivoAuditState(status int) (store.AuditState, string) {
 
 type Store struct {
 	client       *resty.Client
+	uploadClient *http.Client // streamed file uploads; nil = httpx's default
 	baseURL      string
 	accessKey    string
 	accessSecret []byte
@@ -168,9 +170,12 @@ func NewForEnvironment(cfg map[string]string, environment store.Environment) (*S
 
 	client := resty.New().
 		SetBaseURL(baseURL)
+	trace := httptrace.ForStore("vivo", cfg)
+	trace.Client(client.GetClient())
 
 	return &Store{
 		client:       client,
+		uploadClient: trace.NewClient(30 * time.Minute),
 		baseURL:      baseURL,
 		accessKey:    accessKey,
 		accessSecret: []byte(accessSecret),
@@ -484,6 +489,7 @@ func (s *Store) uploadFile(ctx context.Context, method string, bizParams map[str
 		URL:    s.baseURL,
 		Query:  queryVals,
 		Files:  []httpx.FileField{{Field: "file", FileName: filepath.Base(filePath), Reader: rc, Size: fSize}},
+		Client: s.uploadClient,
 	})
 	if err != nil {
 		return nil, err

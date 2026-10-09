@@ -1,9 +1,12 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 )
 
 type entry struct {
@@ -39,10 +42,24 @@ func Create(name string, cfg map[string]string) (Store, error) {
 	return CreateForEnvironment(name, cfg, EnvironmentProduction)
 }
 
+// CreateContext is Create under ctx. What ctx carries for a store's
+// lifetime is picked up here — today the HTTP recorder of
+// httptrace.WithRecorder: every request the store then makes, including
+// the sign-in its constructor performs, is recorded under name.
+func CreateContext(ctx context.Context, name string, cfg map[string]string) (Store, error) {
+	return CreateForEnvironmentContext(ctx, name, cfg, EnvironmentProduction)
+}
+
 // CreateForEnvironment instantiates a store for the requested environment.
 // Regular factories remain production-configured; the caller is responsible
 // for not executing them in sandbox mode.
 func CreateForEnvironment(name string, cfg map[string]string, environment Environment) (Store, error) {
+	return CreateForEnvironmentContext(context.Background(), name, cfg, environment)
+}
+
+// CreateForEnvironmentContext is CreateForEnvironment under ctx; see
+// CreateContext.
+func CreateForEnvironmentContext(ctx context.Context, name string, cfg map[string]string, environment Environment) (Store, error) {
 	e, instance, ok := lookup(name)
 	if !ok {
 		return nil, fmt.Errorf("unknown store: %q", name)
@@ -55,6 +72,8 @@ func CreateForEnvironment(name string, cfg map[string]string, environment Enviro
 	if instance != "" {
 		storeCfg["_name"] = instance
 	}
+	storeCfg, release := httptrace.Carry(ctx, name, storeCfg)
+	defer release()
 
 	if e.environmentFactory != nil {
 		return e.environmentFactory(storeCfg, environment)

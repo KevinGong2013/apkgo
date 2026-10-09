@@ -1,1 +1,3 @@
 Adding a new store: create `pkg/store/<name>/<name>.go`, implement `store.Store` interface, call `store.Register()` in `init()`. Zero changes to existing code.
+
+HTTP clients: in the constructor, `trace := httptrace.ForStore("<name>", cfg)` and pass every client through `trace.Client(...)` (a resty client as `trace.Client(client.GetClient())`, after any proxy/TLS setup and before the first request; `trace.NewClient(timeout)` for the `Client` of `httpx.DoMultipart`). That is what makes `--http-trace` record the store and lets tests replay a recording into it; with no recorder `trace` is nil and all of this is a no-op.

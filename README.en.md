@@ -882,7 +882,17 @@ apkgo version       [-o json|text]
 -o, --output        output format: json or text (default: json)
 -t, --timeout       global timeout (default: 10m)
 -v, --verbose       verbose logs to stderr
+    --http-trace    record every HTTP request/response with the stores to this file (env: APKGO_HTTP_TRACE)
 ```
+
+### Troubleshooting: recording the exchanges with the stores
+
+When a publish doesn't turn out as expected, run it again with `--http-trace trace.jsonl` (works with `upload` / `audit` / `doctor` / `listing`). apkgo appends every request to and response from the stores to that file, one JSON object per line: method, URL, request headers and body, status, response headers and body, duration, transport errors.
+
+- Credentials are masked: `client_secret`, `access_token`, `sign`, `Authorization`, the signatures in signed URLs and the like are written as `[REDACTED <length>]` (an empty value stays empty, so "the signature was empty" remains visible). Masking goes by field name and account identifiers (client ids, the Xiaomi account e-mail) are left as they are, so still treat the file as sensitive and keep it on your machine.
+- File contents are never recorded: an APK or image upload is recorded as its form fields plus each file's field name, file name and size.
+- Text request and response bodies are kept up to 256 KB.
+- Off by default; without the flag nothing changes.
 
 ## License
 

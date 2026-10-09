@@ -36,6 +36,7 @@ import (
 	"github.com/go-resty/resty/v2"
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/apk"
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
@@ -92,7 +93,7 @@ func New(cfg map[string]string) (*Store, error) {
 	}
 	return &Store{
 		client:         client,
-		upload:         &http.Client{Timeout: 30 * time.Minute},
+		upload:         httptrace.ForStore(StoreName, cfg).Client(&http.Client{Timeout: 30 * time.Minute}),
 		mode:           mode,
 		configAppID:    strings.TrimSpace(cfg["app_id"]),
 		lang:           strings.TrimSpace(cfg["lang"]),

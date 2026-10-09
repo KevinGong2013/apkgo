@@ -1,6 +1,10 @@
 package store
 
-import "context"
+import (
+	"context"
+
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
+)
 
 // Probe is one credential / permission check result.
 //
@@ -75,5 +79,7 @@ func Diagnose(ctx context.Context, name string, cfg map[string]string, hint Diag
 	if !ok {
 		return nil, false
 	}
+	cfg, release := httptrace.Carry(ctx, name, cfg)
+	defer release()
 	return fn(ctx, cfg, hint), true
 }

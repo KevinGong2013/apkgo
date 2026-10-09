@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -206,6 +207,13 @@ func (c *Config) CreateStores(filter []string) ([]StoreWithHooks, error) {
 // endpoints; regular stores retain production configuration so callers can
 // still perform the same validation as a dry-run.
 func (c *Config) CreateStoresForEnvironment(filter []string, environment store.Environment) ([]StoreWithHooks, error) {
+	return c.CreateStoresContext(context.Background(), filter, environment)
+}
+
+// CreateStoresContext is CreateStoresForEnvironment under ctx: the stores
+// are created with store.CreateForEnvironmentContext, so an HTTP recorder
+// in ctx (httptrace.WithRecorder) records everything they do.
+func (c *Config) CreateStoresContext(ctx context.Context, filter []string, environment store.Environment) ([]StoreWithHooks, error) {
 	wanted := make(map[string]bool)
 	for _, name := range filter {
 		wanted[name] = true
@@ -241,7 +249,7 @@ func (c *Config) CreateStoresForEnvironment(filter []string, environment store.E
 		if environment == store.EnvironmentSandbox && !store.SupportsSandbox(name) {
 			storeEnvironment = store.EnvironmentProduction
 		}
-		s, err := store.CreateForEnvironment(name, storeCfg, storeEnvironment)
+		s, err := store.CreateForEnvironmentContext(ctx, name, storeCfg, storeEnvironment)
 		if err != nil {
 			return nil, fmt.Errorf("store %q: %w", name, err)
 		}
