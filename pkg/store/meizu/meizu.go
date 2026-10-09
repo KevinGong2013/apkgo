@@ -252,20 +252,32 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (int64, er
 		return 0, fmt.Errorf("query app detail: %w", err)
 	}
 
-	// 2. Upload the APK. Meizu accepts a single 64-bit package (32-bit
-	// uploads are rejected with code 113030), so a split-arch invocation
-	// sends the 64-bit artifact.
+	// Meizu accepts a single 64-bit package (32-bit uploads are rejected
+	// with code 113030), so a split-arch invocation sends the 64-bit
+	// artifact.
 	apkPath := req.FilePath
 	if req.File64Path != "" {
 		apkPath = req.File64Path
 	}
+
+	// 2. Icon. When app/detail has none to echo, submit the APK's
+	// launcher icon (see icon.go) unless the listing brings its own.
+	// This runs ahead of the APK upload so an APK without a usable icon
+	// fails before the slow part.
+	if det.Icon == "" && (req.Listing == nil || req.Listing.Icon == "") {
+		if det.Icon, err = s.launcherIcon(ctx, apkPath); err != nil {
+			return 0, fmt.Errorf("icon: %w", err)
+		}
+	}
+
+	// 3. Upload the APK.
 	rep.Phase("uploading")
 	packageURL, err := s.uploadFile(ctx, apkUploadURI, apkPath, rep)
 	if err != nil {
 		return 0, fmt.Errorf("upload apk: %w", err)
 	}
 
-	// 3. Listing (商店资料): there's no separate listing endpoint — the
+	// 4. Listing (商店资料): there's no separate listing endpoint — the
 	// publish body carries the full listing — so upload the new images
 	// now and override those fields below. Any failure aborts before
 	// the version is submitted.
@@ -277,7 +289,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (int64, er
 		}
 	}
 
-	// 4. Submit for review, echoing the currently-listed metadata with
+	// 5. Submit for review, echoing the currently-listed metadata with
 	// the new package, release notes and listing. A latest version
 	// sitting in "审核不通过" must go through failapp/update instead of
 	// publish (which would fail with 113042/113046). The docs (§3.7) spell

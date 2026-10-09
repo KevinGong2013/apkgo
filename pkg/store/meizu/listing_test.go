@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -68,9 +69,11 @@ type fakeMeizu struct {
 	t         *testing.T
 	status    int  // latest version status reported by app/list
 	failImage bool // app/image/upload answers 113007
+	noIcon    bool // app/detail returns an empty icon
 
 	mu         sync.Mutex
 	calls      []string
+	images     [][]byte // app/image/upload bodies, in upload order
 	submitURI  string
 	submitBody map[string]any
 }
@@ -98,7 +101,11 @@ func (f *fakeMeizu) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("verId"); got != "42" {
 			f.t.Errorf("detail verId = %q, want 42", got)
 		}
-		fmt.Fprintf(w, `{"code":200,"value":%s}`, detailFixture)
+		detail := detailFixture
+		if f.noIcon {
+			detail = strings.Replace(detail, `"icon": "old/icon.png"`, `"icon": ""`, 1)
+		}
+		fmt.Fprintf(w, `{"code":200,"value":%s}`, detail)
 	case apkUploadURI, imageUploadURI:
 		file, hdr, err := r.FormFile("file")
 		if err != nil {
@@ -106,13 +113,17 @@ func (f *fakeMeizu) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		file.Close()
+		defer file.Close()
 		prefix := "apk/"
 		if r.URL.Path == imageUploadURI {
 			if f.failImage {
 				fmt.Fprint(w, `{"code":113007,"message":"文件格式不支持"}`)
 				return
 			}
+			data, _ := io.ReadAll(file)
+			f.mu.Lock()
+			f.images = append(f.images, data)
+			f.mu.Unlock()
 			prefix = "img/"
 		}
 		fmt.Fprintf(w, `{"code":200,"value":{"destFileName":%q}}`, prefix+hdr.Filename)
@@ -157,17 +168,23 @@ func writePNG(t *testing.T, dir, name string) string {
 	return path
 }
 
-// runUpload runs Upload against a fake server and returns it for
-// inspection.
+// runUpload runs Upload of a placeholder APK against a fake server and
+// returns the result for inspection.
 func runUpload(t *testing.T, f *fakeMeizu, dir string, l *store.Listing) *store.UploadResult {
 	t.Helper()
-	srv := httptest.NewServer(f)
-	t.Cleanup(srv.Close)
-
 	apk := filepath.Join(dir, "app.apk")
 	if err := os.WriteFile(apk, []byte("PK\x03\x04 fake apk"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return runUploadAPK(t, f, apk, l)
+}
+
+// runUploadAPK is runUpload for a given APK file.
+func runUploadAPK(t *testing.T, f *fakeMeizu, apk string, l *store.Listing) *store.UploadResult {
+	t.Helper()
+	srv := httptest.NewServer(f)
+	t.Cleanup(srv.Close)
+
 	return newTestStore(srv).Upload(context.Background(), &store.UploadRequest{
 		FilePath:     apk,
 		PackageName:  "com.example",

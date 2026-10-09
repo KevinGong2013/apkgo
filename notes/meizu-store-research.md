@@ -32,6 +32,11 @@
 ## 实现要点（pkg/store/meizu）
 
 - 流程：`app/list` 按包名找应用 → `app/detail` 回填元数据 → `apk/upload` → 最新版本状态为 30（审核不通过）走 `failapp/update`，否则 `publish`。返回的 `verId` 存入 `UploadResult.ExternalID`。
+- **icon 为空时自动补**（`icon.go`）：部分应用的 `app/detail` 不返回 `icon`，原样回填后 publish 报
+  `[113001] 应用ICON不能为空`（线上真实出现，2026-10）。此时从 APK 取最高密度的启动图标，缩放成
+  512×512 PNG 走 `image/upload`，用返回的 `destFileName` 提交；商店资料里带了 icon 则以资料为准。
+  在传包之前做——APK 里读不出图标（只有自适应图标 XML）就直接失败，不白传一遍包。
+  接口文档没写 icon 尺寸，512×512 PNG 取自常见问题（id=27）里魅族收图标时的要求。
 - 首次上架（资质、备案、截图）仍需控制台人工完成；API 只做版本更新。找不到包名时报错提示。
 - 仅支持 64 位包（32 位报 113029/113030），split-arch 上传取 `--file64`。
 - 无定时发布、无 URL 拉包、不支持 AAB。
