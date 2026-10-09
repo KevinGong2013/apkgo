@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
@@ -36,8 +37,9 @@ type pgyerResp struct {
 }
 
 type Store struct {
-	client *resty.Client
-	apiKey string
+	client       *resty.Client
+	uploadClient *http.Client // streamed file uploads; nil = httpx's default
+	apiKey       string
 }
 
 func New(cfg map[string]string) (*Store, error) {
@@ -48,8 +50,10 @@ func New(cfg map[string]string) (*Store, error) {
 
 	client := resty.New().
 		SetBaseURL("https://www.pgyer.com/apiv2")
+	trace := httptrace.ForStore("pgyer", cfg)
+	trace.Client(client.GetClient())
 
-	return &Store{client: client, apiKey: apiKey}, nil
+	return &Store{client: client, uploadClient: trace.NewClient(30 * time.Minute), apiKey: apiKey}, nil
 }
 
 func (s *Store) Name() string { return "pgyer" }
@@ -112,6 +116,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		URL:    tokenResp.Data.Endpoint,
 		Fields: tokenResp.Data.Params,
 		Files:  []httpx.FileField{{Field: "file", FileName: filepath.Base(req.FilePath), Reader: rc, Size: size}},
+		Client: s.uploadClient,
 	})
 	if err != nil {
 		return fmt.Errorf("upload to cos: %w", err)
@@ -184,9 +189,9 @@ func truncateBody(s string) string {
 
 // diagnose is registered with `apkgo doctor`. Single probe:
 //
-//   app-list — POSTs to /app/listMy with the api_key and reports the
-//              number of apps under the account. Validates the key
-//              without creating any draft uploads.
+//	app-list — POSTs to /app/listMy with the api_key and reports the
+//	           number of apps under the account. Validates the key
+//	           without creating any draft uploads.
 //
 // Pgyer doesn't expose a `/user/info`-style endpoint (returns
 // "Unknown method"); /app/listMy is the lightest read-only call that
@@ -204,10 +209,10 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 		pgyerResp
 		Data struct {
 			List []struct {
-				BuildName        string `json:"buildName"`
-				BuildIdentifier  string `json:"buildIdentifier"`
-				BuildVersion     string `json:"buildVersion"`
-				BuildVersionNo   string `json:"buildVersionNo"`
+				BuildName       string `json:"buildName"`
+				BuildIdentifier string `json:"buildIdentifier"`
+				BuildVersion    string `json:"buildVersion"`
+				BuildVersionNo  string `json:"buildVersionNo"`
 			} `json:"list"`
 		} `json:"data"`
 	}

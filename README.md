@@ -549,7 +549,17 @@ apkgo version       [-o json|text]
 -o, --output        输出格式: json 或 text (默认: json)
 -t, --timeout       全局超时 (默认: 10m)
 -v, --verbose       详细日志输出到 stderr
+    --http-trace    把本次命令与各商店的每一次 HTTP 请求/响应记录到该文件（环境变量 APKGO_HTTP_TRACE）
 ```
+
+### 排查问题：记录与商店的请求和响应
+
+发布结果和预期不符时，加上 `--http-trace trace.jsonl` 重跑一次（`upload` / `audit` / `doctor` / `listing` 都支持），apkgo 会把与各商店的每一次请求和响应追加写入该文件，一行一条 JSON：方法、地址、请求头和请求体、状态码、响应头和响应体、耗时、网络错误。
+
+- 凭证会被遮盖：`client_secret`、`access_token`、`sign`、`Authorization`、签名链接里的签名等，一律写成 `[REDACTED <长度>]`（空值保持为空，方便看出「签名为空」这类问题）。遮盖按字段名判断，账号标识（client id、小米账号邮箱等）不会遮盖，所以这个文件仍应当作敏感文件，只留在本机。
+- 不记录文件内容：上传安装包、图片时只记录表单字段，以及每个文件的字段名、文件名和大小。
+- 文本类的请求体和响应体最多保留 256 KB。
+- 默认关闭；不加这个参数时行为与之前完全一致。
 
 ## License
 

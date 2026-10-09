@@ -1,6 +1,10 @@
 package store
 
-import "context"
+import (
+	"context"
+
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
+)
 
 // AuditState is the unified review state of a submitted version,
 // normalised from each store's own status codes so callers don't have to
@@ -85,5 +89,7 @@ func QueryAudit(ctx context.Context, name string, cfg map[string]string, q Audit
 	if !ok {
 		return AuditResult{}, false
 	}
+	cfg, release := httptrace.Carry(ctx, name, cfg)
+	defer release()
 	return fn(ctx, cfg, q), true
 }

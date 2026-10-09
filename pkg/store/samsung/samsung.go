@@ -23,6 +23,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
@@ -267,6 +268,15 @@ func New(cfg map[string]string) (*Store, error) {
 		}
 	}
 
+	// Recording wraps the transport, so it goes on after the proxy is set.
+	trace := httptrace.ForStore("samsung", cfg)
+	trace.Client(client.GetClient())
+	if uploadClient == nil {
+		uploadClient = trace.NewClient(30 * time.Minute) // nil when not recording
+	} else {
+		trace.Client(uploadClient)
+	}
+
 	// resty does not treat a non-2xx as an error, so without this every call
 	// would sail past a 4xx/5xx with an empty result — how the auth failure
 	// hid as "empty access token", and how a failed contentSubmit would
@@ -482,7 +492,7 @@ func (s *Store) uploadFile(ctx context.Context, session uploadSession, path stri
 		Headers: samsungAuthHeaders(s),
 		Fields:  map[string]string{"sessionId": session.SessionID},
 		Files:   []httpx.FileField{{Field: "file", FileName: name, Reader: rc, Size: fSize}},
-		Client:  s.uploadClient, // nil unless APKGO_SAMSUNG_HTTPS_PROXY is set
+		Client:  s.uploadClient, // nil → httpx's default (no proxy, not recorded)
 	})
 	if err != nil {
 		return "", fmt.Errorf("upload %s: %w", name, err)

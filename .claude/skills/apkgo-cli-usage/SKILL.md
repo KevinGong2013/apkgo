@@ -243,3 +243,5 @@ apkgo audit -p com.example.app --watch --interval 1m -t 1h
 # Local record of past uploads
 apkgo history -n 10
 ```
+
+**When a store's answer is the question.** Add `--http-trace trace.jsonl` to `upload` / `audit` / `doctor` / `listing` (or set `APKGO_HTTP_TRACE`) to append every HTTP request and response exchanged with the stores to that file, one JSON object per line — method, URL, headers, bodies, status, duration, transport errors. Credentials are written as `[REDACTED <length>]` and uploaded files only as field, name and size, but account identifiers stay readable: keep the file local and don't paste it into an issue unreviewed.

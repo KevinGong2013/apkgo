@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
@@ -76,6 +77,11 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 func mapOppoAudit(name, refuse string) (store.AuditState, string) {
 	switch {
 	case containsAny(name, "拒绝", "不通过", "驳回", "失败", "打回"):
+		// A submission the developer withdrew in the console comes back as
+		// "审核不通过" with the reason "开发者申请撤销审核" — not a rejection.
+		if containsAny(refuse, "撤销审核", "撤回审核") {
+			return store.AuditWithdrawn, name + ": " + refuse
+		}
 		if refuse != "" {
 			return store.AuditRejected, name + ": " + refuse
 		}
@@ -146,6 +152,7 @@ func parseError(body []byte) string {
 
 type Store struct {
 	client       *resty.Client
+	uploadClient *http.Client // streamed file uploads; nil = httpx's default
 	accessToken  string
 	clientSecret string
 }
@@ -160,6 +167,8 @@ func New(cfg map[string]string) (*Store, error) {
 	client := resty.New().
 		SetBaseURL("https://oop-openapi-cn.heytapmobi.com").
 		SetHeader("Content-Type", "application/json")
+	trace := httptrace.ForStore("oppo", cfg)
+	trace.Client(client.GetClient())
 
 	token, err := fetchToken(client, clientID, clientSecret)
 	if err != nil {
@@ -168,6 +177,7 @@ func New(cfg map[string]string) (*Store, error) {
 
 	return &Store{
 		client:       client,
+		uploadClient: trace.NewClient(30 * time.Minute),
 		accessToken:  token,
 		clientSecret: clientSecret,
 	}, nil
@@ -428,7 +438,8 @@ func (s *Store) uploadFile(ctx context.Context, filePath, fileType string, rep p
 			"sign": urlResp.Data.Sign,
 			"type": fileType,
 		},
-		Files: []httpx.FileField{{Field: "file", FileName: filepath.Base(filePath), Reader: rc, Size: fSize}},
+		Files:  []httpx.FileField{{Field: "file", FileName: filepath.Base(filePath), Reader: rc, Size: fSize}},
+		Client: s.uploadClient,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("upload: %w", err)

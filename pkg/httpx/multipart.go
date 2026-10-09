@@ -20,6 +20,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 )
 
 // FileField is a multipart file part.
@@ -87,6 +89,14 @@ func DoMultipart(ctx context.Context, mr MultipartRequest) (*http.Response, erro
 		}
 		pw.CloseWithError(err)
 	}()
+
+	// The body is a one-way stream of file bytes: tell a recording
+	// transport what it is made of instead of having it read along.
+	parts := make([]httptrace.FilePart, len(mr.Files))
+	for i, f := range mr.Files {
+		parts[i] = httptrace.FilePart{Field: f.Field, Name: f.FileName, Size: f.Size}
+	}
+	ctx = httptrace.WithMultipart(ctx, mr.Fields, parts)
 
 	req, err := http.NewRequestWithContext(ctx, mr.Method, urlStr, pr)
 	if err != nil {

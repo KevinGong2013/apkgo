@@ -303,7 +303,7 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		ctxlog.FromContext(ctx).Warn("listing updates not supported by some stores; they will upload without it", "stores", listingUnsupported)
 	}
 
-	storesWithHooks, err := job.Config.CreateStoresForEnvironment(requested, environment)
+	storesWithHooks, err := job.Config.CreateStoresContext(ctx, requested, environment)
 	if err != nil {
 		return nil, err
 	}

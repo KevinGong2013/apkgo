@@ -21,6 +21,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/google/uuid"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
@@ -118,6 +119,9 @@ func New(cfg map[string]string) (*Store, error) {
 		clientID:     clientID,
 		clientSecret: clientSecret,
 	}
+	trace := httptrace.ForStore("meizu", cfg)
+	trace.Client(s.client.GetClient())
+	trace.Client(s.uploadClient)
 	if err := s.fetchToken(); err != nil {
 		return nil, store.Categorize(store.CategoryAuthFailed, fmt.Errorf("auth: %w", err))
 	}

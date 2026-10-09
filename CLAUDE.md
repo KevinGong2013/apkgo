@@ -160,6 +160,36 @@ a `Platform` (`store.Platform(name)`); the `harmony` store is the only
 with `config_invalid`. Without `-s`, the default store set is narrowed to the
 file's platform; an explicit cross-platform target fails before any upload.
 
+### HTTP trace (`--http-trace`)
+
+`--http-trace <file>` (global flag, or env `APKGO_HTTP_TRACE`) records every
+HTTP exchange with the stores during `upload` / `audit` / `doctor` /
+`listing` to a JSON Lines file (appended, mode 0600): method, URL, headers
+and bodies of both directions, status, timing, transport errors. It is off
+by default and changes nothing when off.
+
+- **Redaction**: values travelling under credential-like names (JSON keys,
+  form fields, query parameters, headers: `client_secret`, `access_token`,
+  `sign`, `Authorization`, signed-URL signatures, …) become
+  `[REDACTED <length>]`; an empty one stays empty. It goes by name and is
+  best-effort — account identifiers (client ids, the xiaomi e-mail) stay in
+  clear — so treat a trace as sensitive and keep it local.
+- **Files are never read**: an upload is recorded as its form fields plus
+  each file's field, name and size; other binary bodies as their size.
+  Text bodies are kept up to 256 KB.
+- **Library callers**: `ctx = httptrace.WithRecorder(ctx, rec)` and create
+  stores with `store.CreateContext(ctx, …)` (the `store.QueryAudit` /
+  `FetchListing` / `Diagnose` dispatchers and `apkgo.Run` pick it up from
+  ctx). The recorder reaches the store constructor as an opaque handle in
+  the config map (`httptrace.ConfigKey`), so the sign-in a constructor
+  performs is recorded too.
+- **Tests from recordings**: `httptrace.WithReplay(ctx, rp)` makes the
+  stores answer from a recording instead of the network. Cut the exchanges
+  of one flow out of a trace, replace the account's data, save it under the
+  store's `testdata/*.trace.jsonl`, and drive the store's code through the
+  registry (see `pkg/store/*/replay_test.go`). The repo is public: a
+  fixture must not contain anything from a real account.
+
 ## Supported stores
 
 huawei, harmony (HarmonyOS), xiaomi, oppo, vivo, honor, meizu, tencent, googleplay, samsung, pgyer, fir, script
@@ -193,6 +223,7 @@ pkg/store/     Store interface + implementations (self-registering via init())
 pkg/config/    YAML config + env var loading
 pkg/apk/       APK metadata parser
 pkg/listing/   Listing file (商店资料) parser + per-store resolution
+pkg/httptrace/ Recording (and replay, for tests) of the HTTP exchanges with stores
 pkg/uploader/  Concurrent upload orchestrator
 ```
 

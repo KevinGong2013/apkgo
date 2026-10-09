@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
@@ -33,11 +34,11 @@ func init() {
 
 // firErr covers the two error shapes fir.im uses across endpoints:
 //
-//   /user (auth failures):
-//     {"errors":{"exception":["Authentication failed"]},"code":100020}
+//	/user (auth failures):
+//	  {"errors":{"exception":["Authentication failed"]},"code":100020}
 //
-//   /apps (account-state failures, e.g. not real-name verified):
-//     {"msg":"没有实名认证不能上传app"}
+//	/apps (account-state failures, e.g. not real-name verified):
+//	  {"msg":"没有实名认证不能上传app"}
 //
 // parseFirErr tries the structured shape first and falls back to msg /
 // raw body so callers always print something readable instead of a
@@ -73,8 +74,9 @@ func truncateBody(s string) string {
 }
 
 type Store struct {
-	client   *resty.Client
-	apiToken string
+	client       *resty.Client
+	uploadClient *http.Client // streamed file uploads; nil = httpx's default
+	apiToken     string
 }
 
 func New(cfg map[string]string) (*Store, error) {
@@ -87,8 +89,10 @@ func New(cfg map[string]string) (*Store, error) {
 	// previous http base would silently get redirected.
 	client := resty.New().
 		SetBaseURL("https://api.bq04.com")
+	trace := httptrace.ForStore("fir", cfg)
+	trace.Client(client.GetClient())
 
-	return &Store{client: client, apiToken: apiToken}, nil
+	return &Store{client: client, uploadClient: trace.NewClient(30 * time.Minute), apiToken: apiToken}, nil
 }
 
 func (s *Store) Name() string { return "fir" }
@@ -159,7 +163,8 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 			"x:build":     strconv.Itoa(int(req.VersionCode)),
 			"x:changelog": req.ReleaseNotes,
 		},
-		Files: []httpx.FileField{{Field: "file", FileName: filepath.Base(req.FilePath), Reader: rc, Size: size}},
+		Files:  []httpx.FileField{{Field: "file", FileName: filepath.Base(req.FilePath), Reader: rc, Size: size}},
+		Client: s.uploadClient,
 	})
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
@@ -181,9 +186,9 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 
 // diagnose is registered with `apkgo doctor`. Single probe:
 //
-//   user — GET /user with the api_token validates the credential
-//          without creating an app shell on fir's side. Reports the
-//          account name + email on success.
+//	user — GET /user with the api_token validates the credential
+//	       without creating an app shell on fir's side. Reports the
+//	       account name + email on success.
 func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
 	probes := make([]store.Probe, 0, 1)
 

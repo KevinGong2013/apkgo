@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
@@ -184,6 +185,7 @@ func NewClient(cfg map[string]string) (*resty.Client, AuthMode, error) {
 	client := resty.New().
 		SetBaseURL(APIBase).
 		SetHeader("Content-Type", "application/json")
+	httptrace.ForStore("huawei", cfg).Client(client.GetClient())
 
 	switch {
 	case saInline != "" || saFile != "":
@@ -218,10 +220,11 @@ func NewClient(cfg map[string]string) (*resty.Client, AuthMode, error) {
 }
 
 type Store struct {
-	client      *resty.Client
-	clientID    string // for client_credentials mode; empty under service_account
-	configAppID string
-	mode        AuthMode
+	client       *resty.Client
+	uploadClient *http.Client // streamed file uploads; nil = httpx's default
+	clientID     string       // for client_credentials mode; empty under service_account
+	configAppID  string
+	mode         AuthMode
 }
 
 func New(cfg map[string]string) (*Store, error) {
@@ -230,10 +233,11 @@ func New(cfg map[string]string) (*Store, error) {
 		return nil, fmt.Errorf("huawei: %w", err)
 	}
 	return &Store{
-		client:      client,
-		clientID:    strings.TrimSpace(cfg["client_id"]),
-		configAppID: cfg["app_id"],
-		mode:        mode,
+		client:       client,
+		uploadClient: httptrace.ForStore("huawei", cfg).NewClient(30 * time.Minute),
+		clientID:     strings.TrimSpace(cfg["client_id"]),
+		configAppID:  cfg["app_id"],
+		mode:         mode,
 	}, nil
 }
 
@@ -522,7 +526,8 @@ func (s *Store) uploadFile(ctx context.Context, appID, path, suffix string, pars
 			"name":      filename,
 			"parseType": parseType,
 		},
-		Files: []httpx.FileField{{Field: "file", FileName: filename, Reader: rc, Size: fSize}},
+		Files:  []httpx.FileField{{Field: "file", FileName: filename, Reader: rc, Size: fSize}},
+		Client: s.uploadClient,
 	})
 	if err != nil {
 		return uploadedFile{}, err
