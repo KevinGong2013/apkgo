@@ -391,6 +391,42 @@ func (s *Store) fetchAppID(packageName string) (string, error) {
 	return resp.AppIds[0].Value, nil
 }
 
+// maxDownloadFileName is AGC's limit on by-url's downloadFileName; a longer
+// one is refused with 203489281 "downloadFileName: size must be between 0
+// and 64".
+const maxDownloadFileName = 64
+
+// byURLFileName picks the downloadFileName for a by-url submission. It
+// must carry the package's real suffix. The URL's own file name is used
+// when it fits; object-storage keys (a sha256 or uuid plus the original
+// name) often don't, so the fallbacks are "<package><suffix>" and, last,
+// the tail of the URL's name cut to the limit.
+func byURLFileName(sourceURL, packageName string) string {
+	name := sourceURL
+	if i := strings.IndexAny(name, "?#"); i >= 0 {
+		name = name[:i]
+	}
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
+	ext := filepath.Ext(name)
+	if ext == "" || len(ext) > 8 {
+		// No usable suffix in the link (or no name at all): name it after
+		// the package, as an APK.
+		ext = ".apk"
+		name = packageName + ext
+	}
+	if n := []rune(name); len(n) <= maxDownloadFileName {
+		return name
+	}
+	if byPackage := packageName + ext; packageName != "" && len([]rune(byPackage)) <= maxDownloadFileName {
+		return byPackage
+	}
+	stem := []rune(strings.TrimSuffix(name, ext))
+	keep := maxDownloadFileName - len([]rune(ext))
+	return string(stem[len(stem)-keep:]) + ext
+}
+
 // app-file-info fileType values (Publishing API v2 更新应用文件信息).
 const (
 	fileTypeIcon       = 0 // 应用图标
@@ -582,18 +618,7 @@ func classifyHuawei(ret retInfo) store.Category {
 // the subsequent pollAndSubmit absorbs the wait via its parsing-retry.
 // The URL must be publicly GET-able (Huawei fetches it unauthenticated).
 func (s *Store) submitPackageByURL(appID, sourceURL string, req *store.UploadRequest) error {
-	// downloadFileName must carry the real suffix; derive it from the URL
-	// path, falling back to "<package>.apk".
-	name := sourceURL
-	if i := strings.IndexAny(name, "?#"); i >= 0 {
-		name = name[:i]
-	}
-	if i := strings.LastIndexByte(name, '/'); i >= 0 {
-		name = name[i+1:]
-	}
-	if name == "" {
-		name = req.PackageName + ".apk"
-	}
+	name := byURLFileName(sourceURL, req.PackageName)
 	requestID := fmt.Sprintf("apkgo-%s-%d-%d", req.PackageName, req.VersionCode, time.Now().UnixNano())
 
 	var resp struct {
