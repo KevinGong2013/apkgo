@@ -37,3 +37,22 @@ func TestAuditFromRecording(t *testing.T) {
 		}
 	}
 }
+
+// The dispatchers take a context only to hand it on: a nil one must keep
+// working (callers that only probe whether a store is registered pass it).
+func TestDispatchersAcceptNilContext(t *testing.T) {
+	//nolint:staticcheck // nil contexts are the point
+	var ctx context.Context
+	if res, ok := store.QueryAudit(ctx, "vivo", map[string]string{}, store.AuditQuery{}); !ok || res.Error == "" {
+		t.Errorf("QueryAudit(nil ctx) = %+v, %v; want the missing-credentials error", res, ok)
+	}
+	if _, ok := store.Diagnose(ctx, "vivo", map[string]string{}, store.DiagnoseHint{}); !ok {
+		t.Error("Diagnose(nil ctx): not dispatched")
+	}
+	if res, ok := store.FetchListing(ctx, "vivo", map[string]string{}, store.ListingQuery{}); !ok || res.Error == "" {
+		t.Errorf("FetchListing(nil ctx) = %+v, %v", res, ok)
+	}
+	if _, err := store.CreateContext(ctx, "vivo", map[string]string{}); err == nil {
+		t.Error("CreateContext(nil ctx) with no credentials succeeded")
+	}
+}
