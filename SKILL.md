@@ -1,6 +1,6 @@
 ---
 name: apkgo
-version: "2026.09.24"
+version: "2026.10.15"
 description: The apkgo-cloud CLI and distribution skill. Install the apkgo-cloud CLI (one-line installer, browser login, no local store secrets), then `preview` an APK to get a public 内测 download link (share it, anyone can install), `release` to distribute to Android app stores (Huawei, Xiaomi, OPPO, vivo, Honor, Meizu, Tencent, Google Play, Samsung, Pgyer, fir.im), the Apple App Store (.ipa) and HarmonyOS 鸿蒙 AppGallery (.app). Use this when the user wants to share a build or ship a release. To prepare store listing materials and create the app entries in each store before the first release, use the `apkgo-app-listing` skill. A REST Open API (X-API-Key, curl) is available as a fallback for CI/CD.
 ---
 
@@ -66,7 +66,7 @@ apkgo-cloud release ./app-release.apk --no-wait            # create job, don't w
 ```
 
 - Prerequisite: the org has at least one store account (商店账号) added in the dashboard. Any store with exactly one account publishes automatically — there is no separate "bind" step. Only when a store has several accounts must the user pick one under 应用 → 发布商店 (the app page); a store can also be switched off there. If no store resolves, `release` fails with a message saying which account is missing. Use `preview` until stores are set up.
-- Without `--no-wait`, the CLI polls until every store finishes and prints a `✓/✗` per-store summary; it exits non-zero if the job fails (usable in CI).
+- Without `--no-wait`, the CLI polls until every store finishes and prints a `✓/✗` per-store summary; it exits non-zero if any store failed (usable in CI). When some stores succeeded and others failed it reports 部分成功 (partial success): the successful stores are already in review — retry only the failed ones (dashboard 发布记录 → 重试失败的商店, or `POST /openapi/v1/uploads/{jobId}/retry`), don't re-release to every store.
 - The worker re-parses the binary after download; its metadata wins. A package mismatch fails the job before any store upload.
 
 ## Before the first release — hand off
@@ -163,7 +163,7 @@ Create-job fields (`POST /uploads`, JSON):
 | `package_name` / `app_id` | one of the two | app resolution; auto-created by package name if new |
 | `version_code`, `version_name`, `app_name` | no | display metadata; the worker re-parses the binary and its values win |
 | `sha256` | no | integrity check performed by the worker after download |
-| `release_notes` | no | release notes for the store listings |
+| `release_notes` | yes when publishing to stores | release notes for the store listings; an empty value is rejected with `400` unless `target_stores` is `[]` |
 | `release_time` | no | RFC3339 future instant for scheduled release (e.g. `2026-06-15T10:00:00+08:00`) |
 | `target_stores` | no | array like `["huawei","oppo"]`; omitted = every store the app has bound |
 
@@ -175,7 +175,7 @@ The legacy multipart upload (`-F "apk=@..."` straight to `/uploads`) has been **
 curl -sH "X-API-Key: $KEY" $BASE/uploads/{jobId}
 ```
 
-Status flow: `pending` → `processing` → `completed` | `failed`. Per-store outcomes in `.data.results[]` (`store_name`, `success`, `error`, `duration_ms`) as each store finishes; `.data.progress` carries live per-store byte progress.
+Status flow: `pending` → `processing` → `completed` | `failed`. Once finished, `.data.outcome` is `success` | `partial` | `failed` with `.data.stores_succeeded` / `.data.stores_failed`: a job where some stores succeeded and some failed has `status: failed` but `outcome: partial` (部分成功) — describe it as partial, not as a failure. Per-store outcomes in `.data.results[]` (`store_name`, `success`, `error`, `duration_ms`) as each store finishes; `.data.progress` carries live per-store byte progress.
 
 ### Webhook callbacks (alternative to polling)
 
@@ -185,8 +185,8 @@ Events (all `POST`, `Content-Type: application/json`):
 
 | `event` | When | Body |
 |---|---|---|
-| `upload.completed` | A job finished and every store succeeded | `job_id`, `app_name`, `package_name`, `version_name`, `version_code`, `status`, `results[]` (`store_name`, `success`, `error`, `duration_ms`), `timestamp` |
-| `upload.failed` | A job finished with at least one store failed | same as above |
+| `upload.completed` | A job finished and every store succeeded | `job_id`, `app_name`, `package_name`, `version_name`, `version_code`, `status`, `outcome` (`success`), `results[]` (`store_name`, `success`, `error`, `duration_ms`), `timestamp` |
+| `upload.failed` | A job finished with at least one store failed | same as above; `outcome` is `partial` when some stores succeeded (部分成功), `failed` when none did |
 | `review.changed` | A store's review verdict came in — one request **per store** | `app_id`, `app_name`, `package_name`, `store`, `version_name`, `version_code`, `review_state` (`approved` \| `rejected` \| `withdrawn`), `previous_state` (usually `reviewing`), `review_detail` (store's reason, when rejected), `timestamp` |
 | `webhook.test` | Sent once when the URL is saved | `org_name`, `message`, `timestamp` — just answer 200 |
 
