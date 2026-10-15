@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/ctxlog"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
@@ -530,31 +531,41 @@ func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkIn
 // so a polling timeout means "task is in flight, finish in the console".
 const oppoConsoleURL = "https://open.oppomobile.com"
 
-// taskPollInterval is pollTaskState's delay between task-state queries.
-// A var so tests can shorten it.
-var taskPollInterval = 10 * time.Second
+// taskPollInterval is pollTaskState's delay between task-state queries and
+// taskPollBudget how long it keeps querying. Vars so tests can shorten them.
+var (
+	taskPollInterval = 10 * time.Second
+	taskPollBudget   = 10 * time.Minute
+)
 
-// pollTaskState waits for OPPO's async publish task to finish. Empirically
-// the task can take anywhere from ~30s for a clean update to several
-// minutes for a fresh review, so we poll for ~5 minutes (30 × 10s) before
-// giving up. A timeout is reported as success-with-pending-review, not as
-// a hard failure, since the package is already on OPPO's side at that
-// point and the operator's recovery action is to finish in the console.
+// taskFinalCheckReserve is kept back from ctx's deadline so that the
+// app/info check after the last poll still runs when the caller's timeout
+// is shorter than taskPollBudget.
+const taskFinalCheckReserve = 15 * time.Second
+
+// pollTaskState waits for OPPO's async publish task to finish. The task
+// usually takes 2–3 minutes but has run past 5 (2026-10-15: task_state
+// still 1 待处理 after 30 polls), so we poll for up to taskPollBudget,
+// cut short by ctx's deadline. If it's still pending then, app/info
+// decides: this version already in review (or live) is a success;
+// anything else is store_busy — OPPO has the APK and the task, and a
+// retry either waits on the same task (911216) or finds the version in
+// review (911215).
 func (s *Store) pollTaskState(ctx context.Context, pkgName, versionCode string) error {
-	const attempts = 30
 	interval := taskPollInterval
-
-	wrap := func(format string, args ...any) error {
-		return fmt.Errorf(format+" (APK 已上传，发布任务已创建；可在 OPPO 后台查看进度：%s)", append(args, oppoConsoleURL)...)
+	start := time.Now()
+	stop := start.Add(taskPollBudget)
+	if d, ok := ctx.Deadline(); ok && d.Add(-taskFinalCheckReserve).Before(stop) {
+		stop = d.Add(-taskFinalCheckReserve)
 	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for attempt := 0; attempt < attempts; attempt++ {
+	for time.Until(stop) >= interval {
 		select {
 		case <-ctx.Done():
-			return wrap("polling cancelled: %v", ctx.Err())
+			return fmt.Errorf("polling cancelled: %v (APK 已上传，发布任务已创建；可在 OPPO 后台查看进度：%s)", ctx.Err(), oppoConsoleURL)
 		case <-ticker.C:
 		}
 
@@ -569,6 +580,7 @@ func (s *Store) pollTaskState(ctx context.Context, pkgName, versionCode string) 
 			} `json:"data"`
 		}
 		httpResp, err := s.client.R().
+			SetContext(ctx).
 			SetResult(&resp).
 			SetFormDataFromValues(s.sign(data)).
 			Post("/resource/v1/app/task-state")
@@ -591,7 +603,34 @@ func (s *Store) pollTaskState(ctx context.Context, pkgName, versionCode string) 
 			return fmt.Errorf("task failed: %s", resp.Data.ErrMsg)
 		}
 	}
-	return wrap("publish task still pending after %d × %s", attempts, interval)
+
+	waited := time.Since(start).Round(time.Second)
+	if s.versionInReview(ctx, pkgName, versionCode) {
+		ctxlog.FromContext(ctx).Info("oppo publish task still pending but the version is already in review", "waited", waited)
+		return nil
+	}
+	return store.Categorize(store.CategoryStoreBusy, fmt.Errorf(
+		"publish task still pending after %s (APK 已上传，发布任务已创建；稍后重试即可，重试会接着等这个任务；也可在 OPPO 后台查看进度：%s)",
+		waited, oppoConsoleURL))
+}
+
+// versionInReview reports whether app/info already shows versionCode in
+// review or live, i.e. the publish task got through even though
+// task-state didn't report it in time. Only reviewing/approved count: an
+// earlier rejection of the same version (a resubmission, as on
+// 2026-10-15) says nothing about this task. A failed query counts as not
+// in review.
+func (s *Store) versionInReview(ctx context.Context, pkgName, versionCode string) bool {
+	app, err := s.queryApp(ctx, pkgName)
+	if err != nil {
+		ctxlog.FromContext(ctx).Warn("oppo app/info check after task-state polling failed", "error", err)
+		return false
+	}
+	if app == nil || strings.TrimSpace(app.VersionCode) != versionCode {
+		return false
+	}
+	state, _ := mapOppoAudit(app.AuditStatusName, app.RefuseReason)
+	return state == store.AuditReviewing || state == store.AuditApproved
 }
 
 // sign adds common params and HMAC-SHA256 signature.
