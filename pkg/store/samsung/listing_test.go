@@ -31,6 +31,36 @@ type fakeSamsung struct {
 	update    map[string]any // decoded contentUpdate body
 	failFile  string         // fileUpload of this filename answers 500
 	submitted bool
+
+	info   string   // contentInfo body; "" = a live app with versionCode 5
+	binary []string // scripted Add Binary answers, in call order (see answer)
+	submit []string // scripted contentSubmit answers, in call order
+}
+
+// answer writes the scripted reply: "drop" closes the connection without an
+// answer, "inuse" is Add Binary's 400 for an already attached versionCode,
+// any other non-empty string is a 200 body, and nothing left = ok. It
+// returns the reply it used.
+func answer(t *testing.T, w http.ResponseWriter, script *[]string, ok string) string {
+	reply := ok
+	if len(*script) > 0 {
+		reply, *script = (*script)[0], (*script)[1:]
+	}
+	switch reply {
+	case "drop":
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return reply
+		}
+		conn.Close()
+	case "inuse":
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"body":{"resultCode":"5021","resultMessage":"This binary is already in use."},"from":"seller","message":"Request failed with status code 400"}`)
+	default:
+		io.WriteString(w, reply)
+	}
+	return reply
 }
 
 func newFakeSamsung(t *testing.T) *fakeSamsung {
@@ -63,6 +93,10 @@ func newFakeSamsung(t *testing.T) *fakeSamsung {
 			fmt.Fprintf(w, `{"fileKey":"key-%s","fileName":%q}`, hdr.Filename, hdr.Filename)
 		case "/seller/contentInfo":
 			f.calls = append(f.calls, r.URL.Path)
+			if f.info != "" {
+				io.WriteString(w, f.info)
+				return
+			}
 			io.WriteString(w, `[{"contentStatus":"FOR_SALE","defaultLanguageCode":"CHI","paid":"N",`+
 				`"binaryList":[{"versionCode":"5","versionName":"1.0","gms":"N","binarySeq":"3"}]}]`)
 		case "/seller/contentUpdate":
@@ -73,11 +107,12 @@ func newFakeSamsung(t *testing.T) *fakeSamsung {
 			io.WriteString(w, `{"resultCode":"0000"}`)
 		case "/seller/v2/content/binary":
 			f.calls = append(f.calls, r.URL.Path)
-			io.WriteString(w, `{"resultCode":"0000"}`)
+			answer(t, w, &f.binary, `{"resultCode":"0000"}`)
 		case "/seller/contentSubmit":
 			f.calls = append(f.calls, r.URL.Path)
-			f.submitted = true
-			io.WriteString(w, `{}`)
+			if answer(t, w, &f.submit, `{}`) == `{}` {
+				f.submitted = true
+			}
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -89,7 +124,7 @@ func newFakeSamsung(t *testing.T) *fakeSamsung {
 
 func (f *fakeSamsung) store() *Store {
 	return &Store{
-		client:           resty.New().SetBaseURL(f.srv.URL).SetHeader("Content-Type", "application/json"),
+		client:           resty.New().SetBaseURL(f.srv.URL).SetHeader("Content-Type", "application/json").OnAfterResponse(errorOnHTTPStatus),
 		serviceAccountID: "svc-acct",
 		contentID:        "000001",
 		accessToken:      "tok",
