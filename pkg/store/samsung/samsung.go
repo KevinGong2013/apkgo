@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -218,7 +219,51 @@ type Store struct {
 	// multipart upload path; resty's proxy doesn't cover httpx.DoMultipart.
 	// nil → httpx uses its default client.
 	uploadClient *http.Client
+
+	// binaries remembers the Add Binary calls this instance made, so that
+	// a retried Upload (orchestrators retry network_retry on the same
+	// Store) carries on from there. Add Binary isn't idempotent: once a
+	// versionCode is attached to the update, adding it again answers 5021
+	// "This binary is already in use" — on every retry, after a failure
+	// that happened later (e.g. contentSubmit).
+	mu       sync.Mutex
+	binaries map[binaryKey]binaryState
 }
+
+// binaryKey identifies one package handed to Upload.
+type binaryKey struct {
+	path        string
+	versionCode int32
+}
+
+type binaryState int
+
+const (
+	// binarySent: Add Binary went out without an answer from Samsung, so
+	// it may or may not have been attached.
+	binarySent binaryState = iota + 1
+	// binaryAdded: Samsung accepted Add Binary.
+	binaryAdded
+)
+
+func (s *Store) binaryState(k binaryKey) binaryState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.binaries[k]
+}
+
+func (s *Store) setBinaryState(k binaryKey, st binaryState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.binaries == nil {
+		s.binaries = map[binaryKey]binaryState{}
+	}
+	s.binaries[k] = st
+}
+
+// errBinaryInUse is Add Binary's answer when the update already holds a
+// binary of this versionCode.
+const errBinaryInUse = "5021"
 
 const samsungBaseURL = "https://devapi.samsungapps.com"
 
@@ -282,16 +327,7 @@ func New(cfg map[string]string) (*Store, error) {
 	// hid as "empty access token", and how a failed contentSubmit would
 	// otherwise be reported as a successful upload. Fail loudly with the
 	// server's status and body instead.
-	client.OnAfterResponse(func(_ *resty.Client, r *resty.Response) error {
-		if r.IsError() {
-			body := strings.TrimSpace(r.String())
-			if len(body) > 500 {
-				body = body[:500]
-			}
-			return fmt.Errorf("http %d: %s", r.StatusCode(), body)
-		}
-		return nil
-	})
+	client.OnAfterResponse(errorOnHTTPStatus)
 	// The China→Samsung link is intermittently flaky (TLS handshake timeouts,
 	// EOF before any response). Retry genuine transport failures a few times
 	// with backoff. A 4xx/5xx carries a response and is surfaced by the hook
@@ -338,6 +374,19 @@ func New(cfg map[string]string) (*Store, error) {
 	return s, nil
 }
 
+// errorOnHTTPStatus turns a non-2xx answer into an error carrying the
+// status and (truncated) body.
+func errorOnHTTPStatus(_ *resty.Client, r *resty.Response) error {
+	if r.IsError() {
+		body := strings.TrimSpace(r.String())
+		if len(body) > 500 {
+			body = body[:500]
+		}
+		return fmt.Errorf("http %d: %s", r.StatusCode(), body)
+	}
+	return nil
+}
+
 func (s *Store) Name() string { return "samsung" }
 
 func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.UploadResult {
@@ -363,11 +412,19 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		return fmt.Errorf("create session: response missing url/sessionId")
 	}
 
-	// 2. Upload the APK to the session URL.
-	rep.Phase("uploading")
-	fileKey, err := s.uploadFile(ctx, session, req.FilePath, rep)
-	if err != nil {
-		return err
+	// 2. Upload the APK to the session URL — unless an earlier attempt of
+	//    this instance already attached it to the update (see binaries).
+	key := binaryKey{path: req.FilePath, versionCode: req.VersionCode}
+	attached := s.binaryState(key) == binaryAdded
+	var (
+		fileKey string
+		err     error
+	)
+	if !attached {
+		rep.Phase("uploading")
+		if fileKey, err = s.uploadFile(ctx, session, req.FilePath, rep); err != nil {
+			return err
+		}
 	}
 
 	// 2b. Upload the listing images (same session) and collect the listing
@@ -438,32 +495,110 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	//    `gms` (not `gmsYn`) and the field is `filekey` (lower-case k).
 	//    binarySeqForDeviceInfo copies the device-group configuration from the
 	//    newest existing binary so the update keeps its device coverage.
-	add := map[string]any{
-		"contentId": s.contentID,
-		"gms":       gms,
-		"filekey":   fileKey,
+	if !attached {
+		add := map[string]any{
+			"contentId": s.contentID,
+			"gms":       gms,
+			"filekey":   fileKey,
+		}
+		if binarySeq != "" {
+			add["binarySeqForDeviceInfo"] = binarySeq
+		}
+		if err := s.addBinary(ctx, key, add, cur); err != nil {
+			return err
+		}
 	}
-	if binarySeq != "" {
-		add["binarySeqForDeviceInfo"] = binarySeq
+
+	// 6. Submit for review. Like contentUpdate it may answer 200 with a
+	//    non-zero resultCode, which would otherwise pass for a submission.
+	rep.Phase("submitting")
+	var submitResp struct {
+		ResultCode    string `json:"resultCode"`
+		ResultMessage string `json:"resultMessage"`
 	}
+	if _, err := s.client.R().SetContext(ctx).SetBody(map[string]string{"contentId": s.contentID}).SetResult(&submitResp).Post("/seller/contentSubmit"); err != nil {
+		return fmt.Errorf("submit: %w", err)
+	}
+	if submitResp.ResultCode != "" && submitResp.ResultCode != "0000" {
+		return fmt.Errorf("submit failed: %s %s", submitResp.ResultCode, strings.TrimSpace(submitResp.ResultMessage))
+	}
+
+	return nil
+}
+
+// addBinary attaches the uploaded file to the update (Add Binary) and
+// records the outcome under key; cur is the contentInfo read before the
+// update was created.
+func (s *Store) addBinary(ctx context.Context, key binaryKey, body map[string]any, cur map[string]any) error {
 	var addResp struct {
 		ResultCode    string `json:"resultCode"`
 		ResultMessage string `json:"resultMessage"`
 	}
-	if _, err := s.client.R().SetBody(add).SetResult(&addResp).Post("/seller/v2/content/binary"); err != nil {
-		return fmt.Errorf("add binary: %w", err)
+	resp, err := s.client.R().SetContext(ctx).SetBody(body).SetResult(&addResp).Post("/seller/v2/content/binary")
+	inUse := addResp.ResultCode == errBinaryInUse
+	if err != nil {
+		if resp == nil || resp.RawResponse == nil {
+			// No answer: the binary may well have been attached.
+			s.setBinaryState(key, binarySent)
+			return fmt.Errorf("add binary: %w", err)
+		}
+		inUse = resultCode(resp.Body()) == errBinaryInUse
 	}
-	if addResp.ResultCode != "" && addResp.ResultCode != "0000" {
+	switch {
+	case inUse && s.binaryState(key) == binarySent:
+		// An earlier attempt's Add Binary did get through: this file is
+		// the one attached. Carry on to the submission.
+	case inUse && key.versionCode > 0 && hasBinary(cur, key.versionCode):
+		msg := strings.TrimSpace(addResp.ResultCode + " " + addResp.ResultMessage)
+		if err != nil {
+			msg = err.Error()
+		}
+		return store.Categorize(store.CategoryConfigInvalid, fmt.Errorf(
+			"add binary: Galaxy Store already holds a binary with versionCode %d for this app (%s). "+
+				"If that version is already live, raise the versionCode; otherwise an earlier upload attached it "+
+				"to the pending update without submitting it — submit that update in Seller Portal, or delete the "+
+				"binary there, then upload again", key.versionCode, msg))
+	case err != nil:
+		return fmt.Errorf("add binary: %w", err)
+	case addResp.ResultCode != "" && addResp.ResultCode != "0000":
 		return fmt.Errorf("add binary failed: %s %s", addResp.ResultCode, strings.TrimSpace(addResp.ResultMessage))
 	}
-
-	// 6. Submit for review.
-	rep.Phase("submitting")
-	if _, err := s.client.R().SetBody(map[string]string{"contentId": s.contentID}).Post("/seller/contentSubmit"); err != nil {
-		return fmt.Errorf("submit: %w", err)
-	}
-
+	s.setBinaryState(key, binaryAdded)
 	return nil
+}
+
+// resultCode extracts the resultCode of a Content Publish error body, which
+// arrives either flat or wrapped as {"body":{"resultCode":…},"from":…}.
+func resultCode(body []byte) string {
+	var r struct {
+		ResultCode string `json:"resultCode"`
+		Body       struct {
+			ResultCode string `json:"resultCode"`
+		} `json:"body"`
+	}
+	if json.Unmarshal(body, &r) != nil {
+		return ""
+	}
+	if r.ResultCode != "" {
+		return r.ResultCode
+	}
+	return r.Body.ResultCode
+}
+
+// hasBinary reports whether a contentInfo binaryList holds a binary with
+// versionCode vc.
+func hasBinary(info map[string]any, vc int32) bool {
+	list, _ := info["binaryList"].([]any)
+	for _, b := range list {
+		m, ok := b.(map[string]any)
+		if !ok {
+			continue
+		}
+		if v, err := strconv.ParseInt(strings.TrimSpace(fmt.Sprint(m["versionCode"])), 10, 32); err == nil && int32(v) == vc {
+			return true
+		}
+	}
+	return false
 }
 
 // uploadSession is a createUploadSessionId response: the absolute upload URL
