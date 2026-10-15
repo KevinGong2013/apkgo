@@ -4,9 +4,14 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-resty/resty/v2"
+
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 func TestParseError(t *testing.T) {
@@ -127,5 +132,68 @@ func TestQueryApp_Success(t *testing.T) {
 	}
 	if app.AppName != "Test App" || app.VersionName != "1.0.0" || app.VersionCode != "100" {
 		t.Errorf("app data mismatch: %+v", app)
+	}
+}
+
+func TestUpload_TaskStillPending(t *testing.T) {
+	// task-state can stay 1 (待处理) past the polling budget (2026-10-15).
+	// app/info then decides: this version in review or live is a success;
+	// anything else — such as the same version rejected earlier, which
+	// app/info keeps showing while the resubmission's task runs — is
+	// store_busy, since a retry waits on the same task (911216).
+	for _, tc := range []struct {
+		name           string
+		version, audit string
+		wantCat        store.Category
+	}{
+		{"in review", "2", "审核中", store.CategorySuccess},
+		{"live", "2", "上线", store.CategorySuccess},
+		{"same version rejected earlier", "2", "审核不通过", store.CategoryStoreBusy},
+		{"previous version in review", "1", "审核中", store.CategoryStoreBusy},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeOppo(t)
+			old := taskPollBudget
+			taskPollBudget = 20 * time.Millisecond
+			t.Cleanup(func() { taskPollBudget = old })
+			f.taskState = "1"
+			f.infoVersion, f.infoAudit = tc.version, tc.audit
+
+			res := f.store().Upload(context.Background(), uploadRequest(t, nil))
+			if res.Category != tc.wantCat {
+				t.Fatalf("category = %q (error %q), want %q", res.Category, res.Error, tc.wantCat)
+			}
+			if want := tc.wantCat == store.CategorySuccess; res.Success != want {
+				t.Errorf("success = %v, want %v", res.Success, want)
+			}
+			if !res.Success && !strings.Contains(res.Error, "still pending") {
+				t.Errorf("error = %q, want the still-pending message", res.Error)
+			}
+			calls, _ := f.seen()
+			if !slices.Contains(calls, "task-state") || calls[len(calls)-1] != "info" {
+				t.Errorf("calls = %v, want task-state polls then a closing app/info", calls)
+			}
+		})
+	}
+}
+
+func TestPollTaskState_LeavesRoomBeforeDeadline(t *testing.T) {
+	// A caller timeout shorter than taskPollBudget (the CLI's default -t is
+	// 10m, same as the budget) must still leave time for the closing
+	// app/info check instead of ending in "polling cancelled".
+	f := newFakeOppo(t)
+	f.taskState = "1"
+	f.infoVersion, f.infoAudit = "2", "审核中"
+	ctx, cancel := context.WithTimeout(context.Background(), taskFinalCheckReserve+50*time.Millisecond)
+	defer cancel()
+
+	if err := f.store().pollTaskState(ctx, "com.example.app", "2"); err != nil {
+		t.Fatalf("pollTaskState: %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("polled until the caller's deadline")
+	}
+	if calls, _ := f.seen(); !slices.Contains(calls, "task-state") || calls[len(calls)-1] != "info" {
+		t.Errorf("calls = %v, want task-state polls then a closing app/info", calls)
 	}
 }

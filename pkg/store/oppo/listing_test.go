@@ -34,8 +34,11 @@ const (
 type fakeOppo struct {
 	srv *httptest.Server
 
-	updErrno  int  // errno /app/upd answers with
-	failPhoto bool // photo uploads answer with an errno
+	updErrno  int    // errno /app/upd answers with
+	failPhoto bool   // photo uploads answer with an errno
+	taskState string // task_state /app/task-state answers with; "" = "2" (done)
+	// latest version /app/info reports and its review label
+	infoVersion, infoAudit string
 
 	mu    sync.Mutex
 	calls []string // "info", "upload-url", "upload:<type>:<file>", "icon-check", "upd", "task-state"
@@ -64,6 +67,9 @@ func newFakeOppo(t *testing.T) *fakeOppo {
 				"detail_desc": oldDesc,
 				"icon_url":    f.srv.URL + "/old/icon.png", // compliant, so kept
 				"pic_url":     oldPicURL,
+
+				"version_code":      f.infoVersion,
+				"audit_status_name": f.infoAudit,
 			}})
 		case "/resource/v1/upload/get-upload-url":
 			f.record("upload-url")
@@ -105,7 +111,11 @@ func newFakeOppo(t *testing.T) *fakeOppo {
 			writeJSON(w, map[string]any{"errno": f.updErrno, "message": "应用审核中"})
 		case "/resource/v1/app/task-state":
 			f.record("task-state")
-			writeJSON(w, map[string]any{"errno": 0, "data": map[string]any{"task_state": "2"}})
+			state := f.taskState
+			if state == "" {
+				state = "2"
+			}
+			writeJSON(w, map[string]any{"errno": 0, "data": map[string]any{"task_state": state}})
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
