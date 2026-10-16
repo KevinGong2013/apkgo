@@ -573,32 +573,44 @@ type packageInfo struct {
 	VersionName string `json:"versionName"`
 }
 
+// probePackage is what diagnose queries when it has no package hint. Nobody
+// owns it, so /dev/query answers 「not uploaded」 (result 0, no packageInfo) —
+// but only after it has checked the SIG, which is the part that matters.
+const probePackage = "tech.baici.apkgo.doctorprobe"
+
 // diagnose is registered with `apkgo doctor`. It runs two layered probes:
 //
 //  1. cert  — public-key certificate is loadable, RSA, and not expired
 //  2. query — /dev/query accepts the SIG (proves email + private_key + cert
 //     all line up) and returns the stored package info if any
 //
-// Probe 2 needs a package-name hint and is reported as skipped without it,
-// since /dev/query requires `packageName`.
+// cert never leaves the process, so probe 2 is the only one that checks the
+// email / private_key pair. It always runs: without a package hint it queries
+// probePackage. (It used to be skipped, which let a wrong private key pass as
+// verified on cert alone and fail only at publish time with -20014 密码错误.)
 func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHint) []store.Probe {
-	probes := make([]store.Probe, 0, 2)
-
 	s, err := New(cfg)
 	if err != nil {
-		probes = append(probes, store.Probe{Name: "cert", Status: "fail", Error: err.Error()})
-		return probes
+		return []store.Probe{{Name: "cert", Status: "fail", Error: err.Error()}}
 	}
+	return s.diagnose(ctx, hint)
+}
+
+func (s *Store) diagnose(ctx context.Context, hint store.DiagnoseHint) []store.Probe {
+	probes := make([]store.Probe, 0, 2)
 	probes = append(probes, store.Probe{Name: "cert", Status: "ok", Detail: fmt.Sprintf("RSA-%d public key loaded", s.pubKey.N.BitLen())})
 
-	if hint.Package == "" {
-		probes = append(probes, store.Probe{Name: "query", Status: "skip", Detail: "needs --package or --file"})
-		return probes
+	pkg := hint.Package
+	if pkg == "" {
+		pkg = probePackage
 	}
-
-	info, err := s.query(ctx, hint.Package)
+	info, err := s.query(ctx, pkg)
 	if err != nil {
 		probes = append(probes, store.Probe{Name: "query", Status: "fail", Error: err.Error()})
+		return probes
+	}
+	if hint.Package == "" {
+		probes = append(probes, store.Probe{Name: "query", Status: "ok", Detail: "email + private_key accepted (pass --package or --file to also look up an app)"})
 		return probes
 	}
 	detail := fmt.Sprintf("%s not yet uploaded under this account", hint.Package)
