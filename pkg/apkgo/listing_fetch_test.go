@@ -81,6 +81,18 @@ func init() {
 	store.RegisterListingFetcher("lst-spec-shots", func(context.Context, map[string]string, store.ListingQuery) store.RemoteListing {
 		return store.RemoteListing{Screenshots: []string{lstImages + "/s1.png", lstImages + "/preview.png"}}
 	})
+
+	// lst-webp serves WEBP but takes only PNG/JPEG back, like oppo.
+	store.Register("lst-webp", store.ConfigSchema{Name: "lst-webp", Listing: &store.ListingSpec{
+		Icon:       store.ImageSpec{Formats: []string{"png"}, Sizes: []store.Size{{Width: 16, Height: 16}}},
+		Screenshot: store.ImageSpec{Formats: []string{"jpeg", "png"}, Sizes: []store.Size{{Width: 16, Height: 16}}},
+	}}, func(map[string]string) (store.Store, error) { return nil, nil })
+	store.RegisterListingFetcher("lst-webp", func(context.Context, map[string]string, store.ListingQuery) store.RemoteListing {
+		return store.RemoteListing{
+			Icon:        lstImages + "/w.webp",
+			Screenshots: []string{lstImages + "/a.webp", lstImages + "/a-copy.webp"},
+		}
+	})
 }
 
 func lstPNG(t *testing.T, w, h int, c color.Color) []byte {
@@ -96,7 +108,17 @@ func lstPNG(t *testing.T, w, h int, c color.Color) []byte {
 
 func lstServe(t *testing.T) {
 	t.Helper()
+	webp := func(name string) []byte {
+		data, err := os.ReadFile("../store/testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
 	files := map[string][]byte{
+		"/w.webp":        webp("opaque-16x16.webp"),
+		"/a.webp":        webp("alpha-16x16.webp"),
+		"/a-copy.webp":   webp("alpha-16x16.webp"),
 		"/icon.png":      lstPNG(t, 512, 512, color.White),
 		"/icon-copy.png": lstPNG(t, 512, 512, color.White),
 		"/s1.png":        lstPNG(t, 108, 192, color.RGBA{R: 1, A: 255}),
@@ -302,6 +324,40 @@ func TestFetchListingSaveUnfitScreenshots(t *testing.T) {
 		t.Errorf("stores = %v, want none: the only field was unfit", f.Stores)
 	}
 	if notes := rep.Stores[0].Notes; len(notes) != 1 || !strings.HasPrefix(notes[0], "screenshots left out") {
+		t.Errorf("notes = %q", notes)
+	}
+}
+
+// Images in a format the store doesn't take back are converted into one it
+// does, rather than left out.
+func TestFetchListingSaveConvertsFormat(t *testing.T) {
+	lstServe(t)
+	rep, err := apkgo.FetchListing(context.Background(), apkgo.ListingJob{
+		Config: lstConfig("lst-webp"), Package: "p", OutDir: filepath.Join(t.TempDir(), "out"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := listing.Load(rep.File)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(rep.File)
+	got := f.Stores["lst-webp"]
+	if want := filepath.Join(dir, "assets", "icon-1.png"); got.Icon != want {
+		t.Errorf("icon = %q, want %q", got.Icon, want)
+	}
+	// Same picture twice: one file, listed twice.
+	shot := filepath.Join(dir, "assets", "screenshot-1.png")
+	if want := []string{shot, shot}; !reflect.DeepEqual(got.Screenshots, want) {
+		t.Errorf("screenshots = %v, want %v", got.Screenshots, want)
+	}
+	if errs := store.ValidateListing("lst-webp", f.Resolve("lst-webp")); len(errs) != 0 {
+		t.Errorf("written listing fails the store's spec: %v", errs)
+	}
+	notes := rep.Stores[0].Notes
+	if len(notes) != 2 || notes[0] != "icon converted from webp to png — the store serves it in a format it doesn't take back" ||
+		!strings.HasSuffix(notes[1], ": 1 (webp to png), 2 (webp to png)") {
 		t.Errorf("notes = %q", notes)
 	}
 }

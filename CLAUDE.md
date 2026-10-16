@@ -109,10 +109,15 @@ per distinct content) and writes `<dir>/listing.yaml` with every store
 under `stores:` and **no shared defaults** — a store that couldn't be read
 then has no entry and an upload leaves it unchanged instead of giving it
 another store's values. It refuses to overwrite an existing listing.yaml.
-What a store returns isn't always what it accepts back (honor serves
-re-encoded WEBP previews, not the originals), so images failing the
-store's own `ListingSpec` are left out of the file and text that wouldn't
-pass is written with a warning — both reported in the store's `notes`.
+What a store returns isn't always what it accepts back. An image whose
+pixel size fits but whose format doesn't (oppo may serve WEBP but takes
+only PNG/JPEG) is converted to an accepted format
+(`store.ConformListingImage`, PNG first, JPEG when PNG is too large);
+images still failing the store's own `ListingSpec` (honor can serve
+reduced-size WEBP previews) are left out of the file, and text that
+wouldn't pass is written with a warning — all reported in the store's
+`notes`. Services importing listing images call `ConformListingImage`
+on the downloaded bytes before checking them.
 Stores opt in with `store.RegisterListingFetcher`: **oppo, vivo, huawei,
 honor** report all four fields (honor's images are the previews just
 mentioned), **tencent** text only (`unavailable` lists the rest); xiaomi
