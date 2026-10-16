@@ -1,16 +1,23 @@
 package oppo
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"image"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/internal/offloadtest"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
@@ -195,5 +202,123 @@ func TestPollTaskState_LeavesRoomBeforeDeadline(t *testing.T) {
 	}
 	if calls, _ := f.seen(); !slices.Contains(calls, "task-state") || calls[len(calls)-1] != "info" {
 		t.Errorf("calls = %v, want task-state polls then a closing app/info", calls)
+	}
+}
+
+// byteCount is a progress.Reporter that tallies an upload's bytes.
+type byteCount struct {
+	mu          sync.Mutex
+	total, sent int64
+}
+
+func (c *byteCount) Phase(string) {}
+
+func (c *byteCount) Total(n int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.total = n
+}
+
+func (c *byteCount) Add(n int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sent += n
+}
+
+// is reports whether the total was n and all n bytes were sent.
+func (c *byteCount) is(n int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.total == n && c.sent == n
+}
+
+// TestUploadSendsThePackage runs a split upload whose stored icon fails
+// OPPO's rule, with the APKs on local disk and, as apkgo-cloud does, with
+// only their facts and an Offloader. OPPO gets the same bytes either way,
+// and the same replacement icon: rebuilt from the APK's launcher icon here,
+// from FileFacts.Icon there.
+func TestUploadSendsThePackage(t *testing.T) {
+	apk32, err := os.ReadFile(fixtureAPK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apk64 := []byte("fake 64-bit apk")
+	path64 := filepath.Join(t.TempDir(), "app64.apk")
+	if err := os.WriteFile(path64, apk64, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var icons [][]byte // the replacement icon each run uploaded
+	for _, remote := range []bool{false, true} {
+		f := newFakeOppo(t)
+		f.staleIcon = true
+		rep := &byteCount{}
+		req := &store.UploadRequest{
+			FilePath:     fixtureAPK,
+			File64Path:   path64,
+			PackageName:  "com.example.app",
+			VersionCode:  2,
+			ReleaseNotes: "修复若干问题",
+			Progress:     rep,
+		}
+		ctx := context.Background()
+		var off *offloadtest.Offloader
+		if remote {
+			req, ctx, off = offloadtest.Remote(t, ctx, req)
+		}
+		if res := f.store().Upload(ctx, req); !res.Success {
+			t.Fatalf("remote=%v: upload failed: %s", remote, res.Error)
+		}
+
+		got := f.received()
+		if len(got) != 3 {
+			t.Fatalf("remote=%v: %d files uploaded, want the two APKs and an icon", remote, len(got))
+		}
+		if got[0].typ != "apk" || got[0].name != "helloworld.apk" || !bytes.Equal(got[0].data, apk32) {
+			t.Errorf("remote=%v: 32-bit upload got %d bytes of type %q as %q", remote, len(got[0].data), got[0].typ, got[0].name)
+		}
+		if got[1].typ != "apk" || got[1].name != "app64.apk" || !bytes.Equal(got[1].data, apk64) {
+			t.Errorf("remote=%v: 64-bit upload got %d bytes of type %q as %q", remote, len(got[1].data), got[1].typ, got[1].name)
+		}
+		icon := got[2]
+		if cfg, format, err := image.DecodeConfig(bytes.NewReader(icon.data)); icon.typ != "photo" || err != nil ||
+			format != "png" || cfg.Width != oppoIconSize || cfg.Height != oppoIconSize {
+			t.Errorf("remote=%v: replacement icon is a %q upload of %s %dx%d (%v)", remote, icon.typ, format, cfg.Width, cfg.Height, err)
+		}
+		icons = append(icons, icon.data)
+
+		calls, upd := f.seen()
+		wantCalls := []string{
+			"info", "upload-url", "upload:apk:helloworld.apk", "upload-url", "upload:apk:app64.apk",
+			"icon-check", "upload-url", "upload:photo:" + icon.name, "upd", "task-state",
+		}
+		if !slices.Equal(calls, wantCalls) {
+			t.Errorf("remote=%v: calls:\n got %v\nwant %v", remote, calls, wantCalls)
+		}
+		var apks []apkInfo
+		if err := json.Unmarshal([]byte(upd.Get("apk_url")), &apks); err != nil {
+			t.Fatalf("remote=%v: apk_url %q: %v", remote, upd.Get("apk_url"), err)
+		}
+		wantAPKs := []apkInfo{
+			{URL: "https://cdn.test/helloworld.apk", MD5: "md5", CpuCode: 32},
+			{URL: "https://cdn.test/app64.apk", MD5: "md5", CpuCode: 64},
+		}
+		if !slices.Equal(apks, wantAPKs) {
+			t.Errorf("remote=%v: apk_url = %+v, want %+v", remote, apks, wantAPKs)
+		}
+		if want := "https://cdn.test/" + icon.name; upd.Get("icon_url") != want {
+			t.Errorf("remote=%v: icon_url = %q, want %q", remote, upd.Get("icon_url"), want)
+		}
+
+		// The bar covers both APKs (the icon stays off it).
+		if want := int64(len(apk32) + len(apk64)); !rep.is(want) {
+			t.Errorf("remote=%v: progress total %d, sent %d, want %d", remote, rep.total, rep.sent, want)
+		}
+		if remote && (!off.Sent(req.FilePath) || !off.Sent(req.File64Path)) {
+			t.Errorf("the packages did not go out as transfers")
+		}
+	}
+	if !bytes.Equal(icons[0], icons[1]) {
+		t.Error("the icon rebuilt from FileFacts.Icon differs from the one rebuilt from the APK")
 	}
 }

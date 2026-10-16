@@ -42,7 +42,7 @@ stores:
     client_id: ""      # required
     client_secret: ""  # required
     app_id: ""         # optional, auto-detected from package name
-    url_push_min_mb: "" # optional; with -f <URL>, files >= this size (default 100) are pulled by honor from the URL instead of uploaded
+    url_push_min_mb: "" # optional; with -f <URL>, files >= this size (default 100; 0 = always) are pulled by honor from the URL instead of uploaded
   meizu:
     client_id: ""      # required, 魅族开放平台客户端凭证
     client_secret: ""  # required

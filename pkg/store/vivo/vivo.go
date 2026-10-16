@@ -3,7 +3,6 @@ package vivo
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,8 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -234,7 +231,8 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	// Pre-declare combined upload bytes so the bar is stable across
 	// sequential 32/64-bit transfers.
-	total, err := sumFileSizes(req.FilePath, req.File64Path)
+	apkFile, apk64File := req.Package(), req.Package64()
+	total, err := store.TotalSize(apkFile, apk64File)
 	if err != nil {
 		return fmt.Errorf("stat apk: %w", err)
 	}
@@ -243,11 +241,11 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	if req.File64Path != "" {
 		// Split package upload
-		resp32, err := s.uploadAPK(ctx, "app.upload.apk.app.32", req.PackageName, req.FilePath, rep)
+		resp32, err := s.uploadAPK(ctx, "app.upload.apk.app.32", req.PackageName, apkFile, rep)
 		if err != nil {
 			return fmt.Errorf("upload 32-bit: %w", err)
 		}
-		resp64, err := s.uploadAPK(ctx, "app.upload.apk.app.64", req.PackageName, req.File64Path, rep)
+		resp64, err := s.uploadAPK(ctx, "app.upload.apk.app.64", req.PackageName, apk64File, rep)
 		if err != nil {
 			return fmt.Errorf("upload 64-bit: %w", err)
 		}
@@ -258,7 +256,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	}
 
 	// Single package upload
-	resp, err := s.uploadAPK(ctx, "app.upload.apk.app", req.PackageName, req.FilePath, rep)
+	resp, err := s.uploadAPK(ctx, "app.upload.apk.app", req.PackageName, apkFile, rep)
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}
@@ -303,11 +301,11 @@ func (s *Store) uploadListingImages(ctx context.Context, packageName string, l *
 	return nil
 }
 
-// uploadImage uploads one listing image and returns its serial number.
-// Unlike the APK methods, app.upload.icon / app.upload.screenshot take
-// only packageName + file (no fileMd5).
+// uploadImage uploads one listing image (a local file) and returns its
+// serial number. Unlike the APK methods, app.upload.icon /
+// app.upload.screenshot take only packageName + file (no fileMd5).
 func (s *Store) uploadImage(ctx context.Context, method, packageName, path string) (string, error) {
-	resp, err := s.uploadFile(ctx, method, map[string]string{"packageName": packageName}, path, progress.Safe(nil))
+	resp, err := s.uploadFile(ctx, method, map[string]string{"packageName": packageName}, store.PackageFile{Path: path}, progress.Safe(nil))
 	if err != nil {
 		return "", err
 	}
@@ -345,11 +343,11 @@ func (s *Store) maybeURLPush(ctx context.Context, req *store.UploadRequest, bizP
 		if req.SourceURL == "" || req.Source64URL == "" {
 			return false, nil
 		}
-		md32, err := fileMD5(req.FilePath)
+		md32, err := req.Package().MD5()
 		if err != nil {
 			return true, fmt.Errorf("md5 32-bit apk: %w", err)
 		}
-		md64, err := fileMD5(req.File64Path)
+		md64, err := req.Package64().MD5()
 		if err != nil {
 			return true, fmt.Errorf("md5 64-bit apk: %w", err)
 		}
@@ -364,7 +362,7 @@ func (s *Store) maybeURLPush(ctx context.Context, req *store.UploadRequest, bizP
 			return true, err
 		}
 	case req.SourceURL != "":
-		md, err := fileMD5(req.FilePath)
+		md, err := req.Package().MD5()
 		if err != nil {
 			return true, fmt.Errorf("md5 apk: %w", err)
 		}
@@ -439,57 +437,42 @@ func (s *Store) queryTaskStatus(packageName string) (status int, reason string, 
 	return resp.Data.Status, resp.Data.ErrorReason, nil
 }
 
-// sumFileSizes totals the byte sizes of the given paths. Empty paths are ignored.
-func sumFileSizes(paths ...string) (int64, error) {
-	var total int64
-	for _, p := range paths {
-		if p == "" {
-			continue
-		}
-		fi, err := os.Stat(p)
-		if err != nil {
-			return 0, err
-		}
-		total += fi.Size()
-	}
-	return total, nil
-}
-
 // uploadAPK uploads an APK via one of the app.upload.apk.* methods,
 // which also want the file's MD5.
-func (s *Store) uploadAPK(ctx context.Context, method, packageName, filePath string, rep progress.Reporter) (*uploadResp, error) {
-	fileMd5, err := fileMD5(filePath)
+func (s *Store) uploadAPK(ctx context.Context, method, packageName string, apkFile store.PackageFile, rep progress.Reporter) (*uploadResp, error) {
+	fileMd5, err := apkFile.MD5()
 	if err != nil {
 		return nil, err
 	}
 	return s.uploadFile(ctx, method, map[string]string{
 		"packageName": packageName,
 		"fileMd5":     fileMd5,
-	}, filePath, rep)
+	}, apkFile, rep)
 }
 
-// uploadFile POSTs filePath as the multipart "file" part of a signed
-// upload method (app.upload.apk.* / app.upload.icon /
-// app.upload.screenshot); each answers with a serialnumber.
-func (s *Store) uploadFile(ctx context.Context, method string, bizParams map[string]string, filePath string, rep progress.Reporter) (*uploadResp, error) {
+// uploadFile POSTs file as the multipart "file" part of a signed upload
+// method (app.upload.apk.* / app.upload.icon / app.upload.screenshot);
+// each answers with a serialnumber. file is the package, or a local image
+// as PackageFile{Path: image}.
+func (s *Store) uploadFile(ctx context.Context, method string, bizParams map[string]string, file store.PackageFile, rep progress.Reporter) (*uploadResp, error) {
 	params := s.signParams(method, bizParams)
 
-	rc, fSize, err := progress.WrapFile(filePath, rep)
+	fSize, err := file.Size()
 	if err != nil {
-		return nil, fmt.Errorf("open file: %w", err)
+		return nil, fmt.Errorf("stat file: %w", err)
 	}
-	defer rc.Close()
 
 	queryVals := url.Values{}
 	for k, v := range params {
 		queryVals.Set(k, v)
 	}
 	httpResp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
-		Method: http.MethodPost,
-		URL:    s.baseURL,
-		Query:  queryVals,
-		Files:  []httpx.FileField{{Field: "file", FileName: filepath.Base(filePath), Reader: rc, Size: fSize}},
-		Client: s.uploadClient,
+		Method:   http.MethodPost,
+		URL:      s.baseURL,
+		Query:    queryVals,
+		Files:    []httpx.FileField{{Field: "file", FileName: file.Name(), Path: file.Path, Size: fSize}},
+		Progress: rep,
+		Client:   s.uploadClient,
 	})
 	if err != nil {
 		return nil, err
@@ -687,17 +670,6 @@ func (s *Store) signParams(method string, bizParams map[string]string) map[strin
 	params["sign"] = hex.EncodeToString(h.Sum(nil))
 
 	return params
-}
-
-func fileMD5(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := md5.New()
-	io.Copy(h, f)
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 type uploadResp struct {

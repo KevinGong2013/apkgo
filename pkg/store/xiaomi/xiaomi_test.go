@@ -1,6 +1,7 @@
 package xiaomi
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -17,9 +18,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/internal/offloadtest"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
@@ -315,8 +318,8 @@ func TestUploadKeepsStoreAppName(t *testing.T) {
 	}
 }
 
-// copyFixtureAPK copies testdata/helloworld.apk into dir (extractIcon writes
-// its temp png next to the APK, so tests must not point it at testdata/).
+// copyFixtureAPK copies testdata/helloworld.apk into dir, so a test can see
+// what an upload leaves next to it.
 func copyFixtureAPK(t *testing.T, dir string) string {
 	t.Helper()
 	apkPath := filepath.Join(dir, "helloworld.apk")
@@ -336,11 +339,11 @@ func copyFixtureAPK(t *testing.T, dir string) string {
 // 48px variant, which replaced the console's HD icon with a blurry one.
 func TestExtractIconPicksDensestLauncherIcon(t *testing.T) {
 	apkPath := copyFixtureAPK(t, t.TempDir())
-	iconPath, err := extractIcon(apkPath)
+	iconPath, err := extractIcon(store.PackageFile{Path: apkPath})
 	if err != nil {
 		t.Fatalf("extractIcon: %v", err)
 	}
-	defer os.Remove(iconPath)
+	defer os.RemoveAll(filepath.Dir(iconPath))
 	f, err := os.Open(iconPath)
 	if err != nil {
 		t.Fatal(err)
@@ -352,6 +355,104 @@ func TestExtractIconPicksDensestLauncherIcon(t *testing.T) {
 	}
 	if cfg.Width != 192 || cfg.Height != 192 {
 		t.Errorf("extracted icon is %dx%d, want 192x192 (xxxhdpi)", cfg.Width, cfg.Height)
+	}
+}
+
+// spyReporter records the byte total push announces and the bytes then
+// reported as sent (Add runs on the request-writing goroutine).
+type spyReporter struct{ total, added atomic.Int64 }
+
+func (r *spyReporter) Phase(string)  {}
+func (r *spyReporter) Total(n int64) { r.total.Store(n) }
+func (r *spyReporter) Add(n int64)   { r.added.Add(n) }
+
+// TestUploadRemotePackage runs a 双包 upload end to end (query, launcher
+// icon, push) with the packages on disk, then the way a service that keeps
+// them in object storage does: paths that don't exist here, FileFacts and
+// an Offloader (offloadtest.Remote). /dev/push must get the same parts
+// under the same names, signed with the same md5s, and progress must count
+// exactly the bytes it announced.
+func TestUploadRemotePackage(t *testing.T) {
+	const queryResp = `{"result":0,"packageInfo":{"appName":"HelloWorld","packageName":"com.example.helloworld","versionCode":1,"versionName":"1.0"}}`
+	dir := t.TempDir()
+	apk32 := copyFixtureAPK(t, dir)
+	raw, err := os.ReadFile(apk32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apk64 := filepath.Join(dir, "helloworld-arm64.apk")
+	if err := os.WriteFile(apk64, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var localSigs []sigEntry
+	for _, remote := range []bool{false, true} {
+		srv, got := newPushServer(t, queryResp)
+		s, key := newTestStore(t, srv.URL)
+		s.client.SetBaseURL(srv.URL)
+		rep := &spyReporter{}
+		req := &store.UploadRequest{
+			PackageName: "com.example.helloworld",
+			VersionCode: 2,
+			FilePath:    apk32,
+			File64Path:  apk64,
+			Progress:    rep,
+		}
+		ctx := context.Background()
+		var off *offloadtest.Offloader
+		if remote {
+			req, ctx, off = offloadtest.Remote(t, ctx, req)
+		}
+		if res := s.Upload(ctx, req); !res.Success {
+			t.Fatalf("remote=%v: upload failed: %s", remote, res.Error)
+		}
+
+		wantParts := []string{"apk", "icon", "secondApk"}
+		if parts := got.fileFields(); !slices.Equal(parts, wantParts) {
+			t.Fatalf("remote=%v: multipart file parts = %v, want %v", remote, parts, wantParts)
+		}
+		for field, name := range map[string]string{"apk": "helloworld.apk", "secondApk": "helloworld-arm64.apk"} {
+			if p := got.part(t, field); !bytes.Equal(p.Body, raw) || p.FileName != name {
+				t.Errorf("remote=%v: %s = %d bytes as %q, want the %d-byte package as %q", remote, field, len(p.Body), p.FileName, len(raw), name)
+			}
+		}
+		icon := got.part(t, "icon")
+		if cfg, err := png.DecodeConfig(bytes.NewReader(icon.Body)); err != nil || cfg.Width != 192 || icon.FileName != "apkgo_icon_tmp.png" {
+			t.Errorf("remote=%v: icon part %q = %dx%d (err %v), want the 192px launcher icon as apkgo_icon_tmp.png", remote, icon.FileName, cfg.Width, cfg.Height, err)
+		}
+
+		// Each signed md5 matches the part sent under its name — and the
+		// remote run signs exactly what the local one did.
+		sigs := decryptSIGEntries(t, key, got.field("SIG"))
+		names := make([]string, 0, len(sigs))
+		for _, e := range sigs {
+			names = append(names, e.Name)
+		}
+		if want := []string{"RequestData", "apk", "secondApk", "icon"}; !slices.Equal(names, want) {
+			t.Fatalf("remote=%v: SIG sig list = %v, want %v", remote, names, want)
+		}
+		for _, e := range sigs[1:] {
+			if h := md5Of(got.part(t, e.Name).Body); e.Hash != h {
+				t.Errorf("remote=%v: sig %s hash = %s, uploaded part md5 = %s", remote, e.Name, e.Hash, h)
+			}
+		}
+		if !remote {
+			localSigs = sigs
+		} else if !slices.Equal(sigs, localSigs) {
+			t.Errorf("remote SIG list = %v, local = %v", sigs, localSigs)
+		}
+
+		var sent int64
+		for _, f := range wantParts {
+			sent += int64(len(got.part(t, f).Body))
+		}
+		if total, added := rep.total.Load(), rep.added.Load(); total != sent || added != sent {
+			t.Errorf("remote=%v: progress total %d, added %d, want both %d", remote, total, added, sent)
+		}
+
+		if remote && (!off.Sent(req.FilePath) || !off.Sent(req.File64Path)) {
+			t.Errorf("the packages did not go out as a transfer")
+		}
 	}
 }
 

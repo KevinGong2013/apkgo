@@ -146,8 +146,9 @@ others always upload. apkgo still fetches the APK once locally for metadata.
   with `app-submit` sends the *previous* package to review and still
   answers success.
 - **honor** throttles its status poll to ~once/3min, so it only URL-pushes
-  when the APK is at least `url_push_min_mb` MB (default 100); smaller APKs
-  upload directly. huawei and vivo URL-push whenever the source is a URL.
+  when the APK is at least `url_push_min_mb` MB (default 100; `0` = always);
+  smaller APKs upload directly. huawei and vivo URL-push whenever the source
+  is a URL.
 
 ### HarmonyOS packages (`harmony` store)
 
@@ -164,6 +165,31 @@ a `Platform` (`store.Platform(name)`); the `harmony` store is the only
 `v3/app-submit`. AGC only accepts `.app` packs, so the store rejects `.hap`
 with `config_invalid`. Without `-s`, the default store set is narrowed to the
 file's platform; an explicit cross-platform target fails before any upload.
+
+### Offloading uploads (library callers)
+
+A service that keeps packages in object storage can run `Store.Upload`
+without the package on local disk, sending the bytes from another
+machine while the store's API calls stay where the credentials are:
+
+- `UploadRequest.FileFacts` / `File64Facts` give what stores would
+  otherwise read from the file: size, md5, sha256, native ABIs, and the
+  launcher icon as a local PNG (`apk.WriteLauncherIconPNG`). Stores read
+  package properties only through `store.PackageFile` (`req.Package()`),
+  which takes a fact when given and reads the file otherwise.
+- `ctx = httpx.WithOffloader(ctx, o)`: every file-bearing request a store
+  makes (`httpx.DoMultipart`, `httpx.DoUpload`) is described to `o` as an
+  `httpx.Transfer` — method, URL, headers, and the body as segments of
+  literal bytes and file references (`FileRef{Path, Size}`) — and `o`
+  returns the store's response. Returning `httpx.ErrSendLocally` has it
+  sent from this process instead, its files read through `o.Open` (small
+  local files, or no other machine available). An offloaded exchange is
+  still recorded in the HTTP trace like any other.
+- `pkg/apk` reads packages through an `io.ReaderAt` too (`ParseAt`,
+  `ABIsAt`, `LauncherIconAt`, `ParseHarmonyAt`), so the facts can be
+  gathered with ranged reads of the stored object.
+
+The `script` store hands `FilePath` to a local command and needs the file.
 
 ### HTTP trace (`--http-trace`)
 

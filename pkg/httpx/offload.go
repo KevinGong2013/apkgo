@@ -154,6 +154,9 @@ func send(ctx context.Context, client *http.Client, t *Transfer) (*http.Response
 			if err == nil && resp == nil {
 				err = errors.New("offloader returned no response")
 			}
+			if resp != nil && resp.Body == nil {
+				resp.Body = http.NoBody
+			}
 			// Built only to describe the exchange; its body is never read.
 			req, rerr := t.request(ctx, func(FileRef) (io.ReadCloser, error) {
 				return nil, errors.New("offloaded body is not read")

@@ -96,7 +96,7 @@ func (s *Store) updateListingFiles(ctx context.Context, appID, lang string, l *s
 	rep := progress.Safe(nil)
 	body := map[string]any{}
 	if l.Icon != "" {
-		id, err := s.uploadFile(ctx, appID, l.Icon, rep)
+		id, err := s.uploadFile(ctx, appID, store.PackageFile{Path: l.Icon}, rep)
 		if err != nil {
 			return fmt.Errorf("upload icon: %w", err)
 		}
@@ -105,7 +105,7 @@ func (s *Store) updateListingFiles(ctx context.Context, appID, lang string, l *s
 	if len(l.Screenshots) > 0 {
 		ids := make([]string, 0, len(l.Screenshots))
 		for i, p := range l.Screenshots {
-			id, err := s.uploadFile(ctx, appID, p, rep)
+			id, err := s.uploadFile(ctx, appID, store.PackageFile{Path: p}, rep)
 			if err != nil {
 				return fmt.Errorf("upload screenshot %d: %w", i+1, err)
 			}

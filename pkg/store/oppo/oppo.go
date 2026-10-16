@@ -10,8 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -243,7 +241,8 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	// Pre-declare the combined upload size so the bar is stable across
 	// apk and apk64 transfers.
-	totalBytes, err := sumFileSizes(req.FilePath, req.File64Path)
+	apkFile, apk64File := req.Package(), req.Package64()
+	totalBytes, err := store.TotalSize(apkFile, apk64File)
 	if err != nil {
 		return fmt.Errorf("stat apk: %w", err)
 	}
@@ -251,7 +250,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	rep.Total(totalBytes)
 
 	// 2. Upload APK
-	uploadResult, err := s.uploadAPK(ctx, req.FilePath, rep)
+	uploadResult, err := s.uploadAPK(ctx, apkFile, rep)
 	if err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
@@ -260,7 +259,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	if req.File64Path != "" {
 		apkInfos[0].CpuCode = 32
-		result64, err := s.uploadAPK(ctx, req.File64Path, rep)
+		result64, err := s.uploadAPK(ctx, apk64File, rep)
 		if err != nil {
 			return fmt.Errorf("upload 64-bit apk: %w", err)
 		}
@@ -283,7 +282,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// A listing icon was already validated against the same rule, so it
 	// replaces the stored one as is.
 	if req.Listing == nil || req.Listing.Icon == "" {
-		app.IconURL = s.compliantIconURL(ctx, app.IconURL, req.FilePath, rep)
+		app.IconURL = s.compliantIconURL(ctx, app.IconURL, apkFile, rep)
 	}
 
 	// 4. Publish. Two errno cases here are not real failures:
@@ -340,23 +339,6 @@ func isOppoUnderReview(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "[911215]")
 }
 
-// sumFileSizes returns the total size in bytes of the given file paths.
-// Empty paths are ignored.
-func sumFileSizes(paths ...string) (int64, error) {
-	var total int64
-	for _, p := range paths {
-		if p == "" {
-			continue
-		}
-		fi, err := os.Stat(p)
-		if err != nil {
-			return 0, err
-		}
-		total += fi.Size()
-	}
-	return total, nil
-}
-
 func (s *Store) queryApp(ctx context.Context, pkgName string) (*appData, error) {
 	data := url.Values{}
 	data.Set("pkg_name", pkgName)
@@ -390,14 +372,15 @@ func (s *Store) queryApp(ctx context.Context, pkgName string) (*appData, error) 
 	return &app, nil
 }
 
-func (s *Store) uploadAPK(ctx context.Context, filePath string, rep progress.Reporter) (*uploadResultData, error) {
-	return s.uploadFile(ctx, filePath, "apk", rep)
+func (s *Store) uploadAPK(ctx context.Context, apkFile store.PackageFile, rep progress.Reporter) (*uploadResultData, error) {
+	return s.uploadFile(ctx, apkFile, "apk", rep)
 }
 
 // uploadFile runs OPPO's two-step upload (get-upload-url → multipart POST) for
 // any file type. fileType is OPPO's discriminator: "apk", "photo" (images), or
 // "resource". The one-time sign is per-file, so each call fetches a fresh one.
-func (s *Store) uploadFile(ctx context.Context, filePath, fileType string, rep progress.Reporter) (*uploadResultData, error) {
+// file is the package, or a local image as PackageFile{Path: image}.
+func (s *Store) uploadFile(ctx context.Context, file store.PackageFile, fileType string, rep progress.Reporter) (*uploadResultData, error) {
 	// Get upload URL
 	var urlResp struct {
 		errEnvelope
@@ -422,11 +405,10 @@ func (s *Store) uploadFile(ctx context.Context, filePath, fileType string, rep p
 	}
 
 	// Upload file (streamed, with progress reporting)
-	rc, fSize, err := progress.WrapFile(filePath, rep)
+	fSize, err := file.Size()
 	if err != nil {
-		return nil, fmt.Errorf("open file: %w", err)
+		return nil, fmt.Errorf("stat file: %w", err)
 	}
-	defer rc.Close()
 
 	var uploadResp struct {
 		errEnvelope
@@ -439,8 +421,9 @@ func (s *Store) uploadFile(ctx context.Context, filePath, fileType string, rep p
 			"sign": urlResp.Data.Sign,
 			"type": fileType,
 		},
-		Files:  []httpx.FileField{{Field: "file", FileName: filepath.Base(filePath), Reader: rc, Size: fSize}},
-		Client: s.uploadClient,
+		Files:    []httpx.FileField{{Field: "file", FileName: file.Name(), Path: file.Path, Size: fSize}},
+		Progress: rep,
+		Client:   s.uploadClient,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("upload: %w", err)

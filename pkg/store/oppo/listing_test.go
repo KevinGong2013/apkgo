@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -39,10 +40,18 @@ type fakeOppo struct {
 	taskState string // task_state /app/task-state answers with; "" = "2" (done)
 	// latest version /app/info reports and its review label
 	infoVersion, infoAudit string
+	staleIcon              bool // the stored icon is 256×256, which /app/upd rejects
 
-	mu    sync.Mutex
-	calls []string // "info", "upload-url", "upload:<type>:<file>", "icon-check", "upd", "task-state"
-	upd   url.Values
+	mu      sync.Mutex
+	calls   []string // "info", "upload-url", "upload:<type>:<file>", "icon-check", "upd", "task-state"
+	upd     url.Values
+	uploads []upload // what /upload received, in order
+}
+
+// upload is a file the fake OPPO received.
+type upload struct {
+	typ, name string
+	data      []byte
 }
 
 func newFakeOppo(t *testing.T) *fakeOppo {
@@ -52,8 +61,11 @@ func newFakeOppo(t *testing.T) *fakeOppo {
 	t.Cleanup(func() { taskPollInterval = old })
 
 	f := &fakeOppo{}
-	var icon bytes.Buffer
+	var icon, staleIcon bytes.Buffer
 	if err := png.Encode(&icon, image.NewRGBA(image.Rect(0, 0, oppoIconSize, oppoIconSize))); err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(&staleIcon, image.NewRGBA(image.Rect(0, 0, 256, 256))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,7 +77,7 @@ func newFakeOppo(t *testing.T) *fakeOppo {
 				"app_name":    "Test App",
 				"summary":     oldSummary,
 				"detail_desc": oldDesc,
-				"icon_url":    f.srv.URL + "/old/icon.png", // compliant, so kept
+				"icon_url":    f.srv.URL + "/old/icon.png", // compliant unless staleIcon, so kept
 				"pic_url":     oldPicURL,
 
 				"version_code":      f.infoVersion,
@@ -82,13 +94,21 @@ func newFakeOppo(t *testing.T) *fakeOppo {
 				t.Errorf("parse multipart: %v", err)
 				return
 			}
-			_, hdr, err := r.FormFile("file")
+			file, hdr, err := r.FormFile("file")
 			if err != nil {
 				t.Errorf("form file: %v", err)
 				return
 			}
+			data, err := io.ReadAll(file)
+			if err != nil {
+				t.Errorf("read form file: %v", err)
+				return
+			}
 			typ := r.FormValue("type")
 			f.record("upload:" + typ + ":" + hdr.Filename)
+			f.mu.Lock()
+			f.uploads = append(f.uploads, upload{typ: typ, name: hdr.Filename, data: data})
+			f.mu.Unlock()
 			if typ == "photo" && f.failPhoto {
 				writeJSON(w, map[string]any{"errno": 500, "message": "图片上传失败"})
 				return
@@ -99,6 +119,10 @@ func newFakeOppo(t *testing.T) *fakeOppo {
 		case "/old/icon.png":
 			f.record("icon-check")
 			w.Header().Set("Content-Type", "image/png")
+			if f.staleIcon {
+				w.Write(staleIcon.Bytes())
+				return
+			}
 			w.Write(icon.Bytes())
 		case "/resource/v1/app/upd":
 			if err := r.ParseForm(); err != nil {
@@ -136,6 +160,13 @@ func (f *fakeOppo) seen() ([]string, url.Values) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.calls), f.upd
+}
+
+// received returns the files uploaded so far, in order.
+func (f *fakeOppo) received() []upload {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.uploads)
 }
 
 func (f *fakeOppo) store() *Store {

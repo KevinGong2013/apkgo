@@ -91,10 +91,11 @@ func (s *Store) applyListing(ctx context.Context, app *appData, l *store.Listing
 	return nil
 }
 
-// uploadPhoto uploads a listing image and returns its OPPO-hosted URL.
-// Images are small; they don't disturb the APK's progress bar.
+// uploadPhoto uploads a listing image (a local file) and returns its
+// OPPO-hosted URL. Images are small; they don't disturb the APK's progress
+// bar.
 func (s *Store) uploadPhoto(ctx context.Context, path string) (string, error) {
-	res, err := s.uploadFile(ctx, path, "photo", progress.Safe(nil))
+	res, err := s.uploadFile(ctx, store.PackageFile{Path: path}, "photo", progress.Safe(nil))
 	if err != nil {
 		return "", err
 	}

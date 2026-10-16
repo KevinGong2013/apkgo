@@ -108,7 +108,7 @@ apkgo upload -f app.apk --listing listing.yaml
 apkgo upload -f app-release.aab -s googleplay
 ```
 
-- `-f` 为 URL 时，huawei / honor / vivo 直接让商店从该地址拉包（honor 仅对 ≥ `url_push_min_mb`，默认 100MB 的文件），其他商店由 apkgo 下载后上传。
+- `-f` 为 URL 时，huawei / honor / vivo 直接让商店从该地址拉包（honor 仅对 ≥ `url_push_min_mb`，默认 100MB 的文件；设为 0 则总是拉包），其他商店由 apkgo 下载后上传。
 - `--release-time` 支持 huawei、harmony、honor、xiaomi、oppo、vivo、samsung、tencent，其他商店立即发布。
 - 文件类型：`.apk` 发往所有安卓商店；`.aab` 仅 googleplay；鸿蒙 `.app` 仅 harmony。
 
@@ -271,7 +271,7 @@ stores:
     client_id: "your-client-id"
     client_secret: "your-client-secret"
     # app_id: ""          # 可选，不填则按包名自动查询
-    # url_push_min_mb: "100" # 可选，-f 为 URL 时 ≥ 该大小（MB）才让荣耀从 URL 拉包
+    # url_push_min_mb: "100" # 可选，-f 为 URL 时 ≥ 该大小（MB）才让荣耀从 URL 拉包，0 = 总是拉包
 
   meizu:
     client_id: "your-client-id"       # 魅族开放平台「客户端凭证」

@@ -1,6 +1,7 @@
 package huawei
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/internal/offloadtest"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
@@ -36,12 +38,13 @@ type fakeAGC struct {
 	mu           sync.Mutex
 	calls        []string
 	uploads      int
+	uploaded     map[string][]byte // file server uploads, by file name
 	fileInfo     []map[string]any
 	languageInfo []map[string]any
 }
 
 func newFakeAGC(t *testing.T) *fakeAGC {
-	f := &fakeAGC{t: t, defaultLang: "en-US"}
+	f := &fakeAGC{t: t, defaultLang: "en-US", uploaded: map[string][]byte{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -82,10 +85,11 @@ func (f *fakeAGC) handle(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "no file", http.StatusBadRequest)
 			return
 		}
-		io.Copy(io.Discard, file)
+		data, _ := io.ReadAll(file)
 		file.Close()
 		f.record("POST upload")
 		f.mu.Lock()
+		f.uploaded[hdr.Filename] = data
 		f.uploads++
 		n := f.uploads
 		f.mu.Unlock()
@@ -202,8 +206,10 @@ func jsonValue(t *testing.T, v any) any {
 // TestUploadWithListing: text goes to app-language-info and images to
 // app-file-info (icon fileType 0, screenshots fileType 2) for the app's
 // default language — all after the APK is bound and before app-submit.
+// With the APK only in remote storage (FileFacts + an Offloader) the
+// upload is the same; the listing images, local files, go through the
+// Offloader too.
 func TestUploadWithListing(t *testing.T) {
-	agc := newFakeAGC(t)
 	dir := t.TempDir()
 	listing := &store.Listing{
 		Brief:       "一句话简介",
@@ -218,65 +224,104 @@ func TestUploadWithListing(t *testing.T) {
 	if errs := store.ValidateListing("huawei", listing); len(errs) > 0 {
 		t.Fatalf("test listing violates listingSpec: %v", errs)
 	}
-
-	res := agc.store().Upload(context.Background(), &store.UploadRequest{
-		FilePath:     writeAPK(t),
-		PackageName:  "com.example",
-		ReleaseNotes: "fix bugs",
-		Listing:      listing,
-	})
-	if !res.Success {
-		t.Fatalf("upload failed: %s", res.Error)
+	apkPath := writeAPK(t)
+	apkBytes, err := os.ReadFile(apkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iconBytes, err := os.ReadFile(listing.Icon)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	wantCalls := []string{
-		"GET upload-url suffix=apk", "POST upload", "PUT app-file-info fileType=5",
-		"PUT app-info",
-		"GET app-info",
-		"PUT app-language-info",
-		"GET upload-url suffix=png", "POST upload", "PUT app-file-info fileType=0",
-		"GET upload-url suffix=png", "POST upload",
-		"GET upload-url suffix=png", "POST upload",
-		"GET upload-url suffix=png", "POST upload",
-		"PUT app-file-info fileType=2",
-		"POST app-submit",
-	}
-	if !reflect.DeepEqual(agc.calls, wantCalls) {
-		t.Fatalf("calls:\n got  %q\n want %q", agc.calls, wantCalls)
-	}
+	for _, remote := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote=%v", remote), func(t *testing.T) {
+			agc := newFakeAGC(t)
+			req := &store.UploadRequest{
+				FilePath:     apkPath,
+				PackageName:  "com.example",
+				ReleaseNotes: "fix bugs",
+				Listing:      listing,
+			}
+			ctx := context.Background()
+			var off *offloadtest.Offloader
+			if remote {
+				req, ctx, off = offloadtest.Remote(t, ctx, req)
+			}
+			res := agc.store().Upload(ctx, req)
+			if !res.Success {
+				t.Fatalf("upload failed: %s", res.Error)
+			}
 
-	wantLang := map[string]any{"lang": "en-US", "briefInfo": "一句话简介", "appDesc": "应用介绍长描述"}
-	if !reflect.DeepEqual(agc.languageInfo, []map[string]any{wantLang}) {
-		t.Errorf("app-language-info body = %v, want %v", agc.languageInfo, wantLang)
-	}
+			wantCalls := []string{
+				"GET upload-url suffix=apk", "POST upload", "PUT app-file-info fileType=5",
+				"PUT app-info",
+				"GET app-info",
+				"PUT app-language-info",
+				"GET upload-url suffix=png", "POST upload", "PUT app-file-info fileType=0",
+				"GET upload-url suffix=png", "POST upload",
+				"GET upload-url suffix=png", "POST upload",
+				"GET upload-url suffix=png", "POST upload",
+				"PUT app-file-info fileType=2",
+				"POST app-submit",
+			}
+			if !reflect.DeepEqual(agc.calls, wantCalls) {
+				t.Fatalf("calls:\n got  %q\n want %q", agc.calls, wantCalls)
+			}
+			if got := agc.uploaded["app.apk"]; !bytes.Equal(got, apkBytes) {
+				t.Errorf("file server got %q as app.apk, want %q", got, apkBytes)
+			}
+			if got := agc.uploaded["icon.png"]; !bytes.Equal(got, iconBytes) {
+				t.Errorf("file server got %d bytes as icon.png, want %d", len(got), len(iconBytes))
+			}
+			if remote && !off.Sent(req.FilePath) {
+				t.Error("the APK did not go out as a transfer")
+			}
+			if remote && (!off.Sent(listing.Icon) || !off.Sent(listing.Screenshots[2])) {
+				t.Error("the listing images did not go out as transfers")
+			}
 
-	if len(agc.fileInfo) != 3 {
-		t.Fatalf("app-file-info calls = %d, want 3", len(agc.fileInfo))
-	}
-	wantIcon := jsonValue(t, map[string]any{
-		"fileType":   0,
-		"lang":       "en-US",
-		"deviceType": 4,
-		"files": []map[string]any{
-			{"fileName": "icon.png", "fileDestUrl": "dest-2", "size": 1002, "imageResolution": "res-2", "imageResolutionSingature": "sig-2"},
-		},
-	})
-	if got := jsonValue(t, agc.fileInfo[1]); !reflect.DeepEqual(got, wantIcon) {
-		t.Errorf("icon app-file-info body:\n got  %v\n want %v", got, wantIcon)
-	}
-	wantShots := jsonValue(t, map[string]any{
-		"fileType":    2,
-		"lang":        "en-US",
-		"deviceType":  4,
-		"imgShowType": 0,
-		"files": []map[string]any{
-			{"fileName": "s1.png", "fileDestUrl": "dest-3", "size": 1003, "imageResolution": "res-3", "imageResolutionSingature": "sig-3"},
-			{"fileName": "s2.png", "fileDestUrl": "dest-4", "size": 1004, "imageResolution": "res-4", "imageResolutionSingature": "sig-4"},
-			{"fileName": "s3.png", "fileDestUrl": "dest-5", "size": 1005, "imageResolution": "res-5", "imageResolutionSingature": "sig-5"},
-		},
-	})
-	if got := jsonValue(t, agc.fileInfo[2]); !reflect.DeepEqual(got, wantShots) {
-		t.Errorf("screenshots app-file-info body:\n got  %v\n want %v", got, wantShots)
+			wantLang := map[string]any{"lang": "en-US", "briefInfo": "一句话简介", "appDesc": "应用介绍长描述"}
+			if !reflect.DeepEqual(agc.languageInfo, []map[string]any{wantLang}) {
+				t.Errorf("app-language-info body = %v, want %v", agc.languageInfo, wantLang)
+			}
+
+			if len(agc.fileInfo) != 3 {
+				t.Fatalf("app-file-info calls = %d, want 3", len(agc.fileInfo))
+			}
+			wantAPK := jsonValue(t, map[string]any{
+				"fileType": 5,
+				"files":    []map[string]string{{"fileName": "app.apk", "fileDestUrl": "dest-1"}},
+			})
+			if got := jsonValue(t, agc.fileInfo[0]); !reflect.DeepEqual(got, wantAPK) {
+				t.Errorf("apk app-file-info body:\n got  %v\n want %v", got, wantAPK)
+			}
+			wantIcon := jsonValue(t, map[string]any{
+				"fileType":   0,
+				"lang":       "en-US",
+				"deviceType": 4,
+				"files": []map[string]any{
+					{"fileName": "icon.png", "fileDestUrl": "dest-2", "size": 1002, "imageResolution": "res-2", "imageResolutionSingature": "sig-2"},
+				},
+			})
+			if got := jsonValue(t, agc.fileInfo[1]); !reflect.DeepEqual(got, wantIcon) {
+				t.Errorf("icon app-file-info body:\n got  %v\n want %v", got, wantIcon)
+			}
+			wantShots := jsonValue(t, map[string]any{
+				"fileType":    2,
+				"lang":        "en-US",
+				"deviceType":  4,
+				"imgShowType": 0,
+				"files": []map[string]any{
+					{"fileName": "s1.png", "fileDestUrl": "dest-3", "size": 1003, "imageResolution": "res-3", "imageResolutionSingature": "sig-3"},
+					{"fileName": "s2.png", "fileDestUrl": "dest-4", "size": 1004, "imageResolution": "res-4", "imageResolutionSingature": "sig-4"},
+					{"fileName": "s3.png", "fileDestUrl": "dest-5", "size": 1005, "imageResolution": "res-5", "imageResolutionSingature": "sig-5"},
+				},
+			})
+			if got := jsonValue(t, agc.fileInfo[2]); !reflect.DeepEqual(got, wantShots) {
+				t.Errorf("screenshots app-file-info body:\n got  %v\n want %v", got, wantShots)
+			}
+		})
 	}
 }
 

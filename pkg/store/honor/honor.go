@@ -1,13 +1,10 @@
 package honor
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -35,7 +32,7 @@ func init() {
 			{Key: "client_id", Required: true, Desc: "Honor developer API client ID"},
 			{Key: "client_secret", Required: true, Desc: "Honor developer API client secret"},
 			{Key: "app_id", Required: false, Desc: "Honor app ID (auto-detected from package name if omitted)"},
-			{Key: "url_push_min_mb", Required: false, Desc: "min APK size (MB) to pull from -f URL instead of uploading; honor throttles its download-status poll to ~3min so small files upload faster (default 100)"},
+			{Key: "url_push_min_mb", Required: false, Desc: "min APK size (MB) to pull from -f URL instead of uploading; 0 = always pull when -f is a URL. honor throttles its download-status poll to ~3min so small files upload faster (default 100)"},
 		},
 		// Honor 文件类型表: icon fileType 1 (512×512, ≤200KB, PNG/JPG/JPEG);
 		// portrait screenshots fileType 3 (1080×1920, ≤5MB each, 3–5).
@@ -242,7 +239,8 @@ const (
 // Download-mode (upload-by-url) constants. Honor pulls the package from a
 // public URL asynchronously and rate-limits status queries to ~once/3min,
 // so direct upload is faster for small APKs — we only URL-push above the
-// size gate, and poll no more often than Honor allows.
+// size gate (url_push_min_mb, default honorURLPushDefaultMB; 0 = always),
+// and poll no more often than Honor allows.
 const (
 	honorUploadDone        = 0 // upload-by-url status: 0=成功, 1=待上传, 2=上传中
 	honorURLPushDefaultMB  = 100
@@ -254,7 +252,7 @@ type Store struct {
 	uploadClient    *http.Client  // streamed file uploads; nil = httpx's default
 	accessToken     string        // kept separately so we can pass it on the signed upload URL, which belongs to a different host
 	configAppID     string        // optional; when set, skips the get-app-id lookup
-	urlPushMinBytes int64         // APK must be at least this big to pull from -f URL; 0 = default
+	urlPushMinBytes int64         // APK must be at least this big to pull from -f URL; 0 = always
 }
 
 func New(cfg map[string]string) (*Store, error) {
@@ -276,20 +274,26 @@ func New(cfg map[string]string) (*Store, error) {
 		SetHeader("Content-Type", "application/json")
 	trace.Client(client.GetClient())
 
-	minMB := honorURLPushDefaultMB
-	if v := strings.TrimSpace(cfg["url_push_min_mb"]); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			minMB = n
-		}
-	}
-
 	return &Store{
 		client:          client,
 		uploadClient:    trace.NewClient(30 * time.Minute),
 		accessToken:     token,
 		configAppID:     cfg["app_id"],
-		urlPushMinBytes: int64(minMB) << 20,
+		urlPushMinBytes: parseURLPushMin(cfg["url_push_min_mb"]),
 	}, nil
+}
+
+// parseURLPushMin parses url_push_min_mb: a whole number of MB, 0 meaning
+// URL-push whenever -f is a URL. Unset or invalid (not a number, negative)
+// keeps the honorURLPushDefaultMB default.
+func parseURLPushMin(v string) int64 {
+	minMB := honorURLPushDefaultMB
+	if v = strings.TrimSpace(v); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			minMB = n
+		}
+	}
+	return int64(minMB) << 20
 }
 
 func (s *Store) Name() string { return "honor" }
@@ -341,14 +345,16 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (string, e
 
 	// Get the APK to Honor. When -f is a public URL and the APK is large
 	// enough to be worth Honor's async download (it throttles status polls
-	// to ~once/3min, so small files upload faster directly), hand Honor the
-	// URL and let it pull the binary; otherwise upload the bytes.
+	// to ~once/3min, so small files upload faster directly; url_push_min_mb
+	// 0 always takes the URL), hand Honor the URL and let it pull the
+	// binary; otherwise upload the bytes.
+	apkFile := req.Package()
 	var apkObjectID int64
-	if req.SourceURL != "" && s.shouldURLPush(req.FilePath) {
-		if apkObjectID, err = s.uploadByURL(ctx, appID, req.SourceURL, req.FilePath, rep); err != nil {
+	if req.SourceURL != "" && s.shouldURLPush(apkFile) {
+		if apkObjectID, err = s.uploadByURL(ctx, appID, req.SourceURL, apkFile, rep); err != nil {
 			return "", fmt.Errorf("upload apk by url: %w", err)
 		}
-	} else if apkObjectID, err = s.uploadAPK(ctx, appID, req.FilePath, rep); err != nil {
+	} else if apkObjectID, err = s.uploadAPK(ctx, appID, apkFile, rep); err != nil {
 		return "", fmt.Errorf("upload apk: %w", err)
 	}
 	bindings := []map[string]any{{"objectId": apkObjectID}}
@@ -541,8 +547,8 @@ func (s *Store) getAppDetail(appID string) (*languageInfo, []pubFileInfo, error)
 
 // uploadAPK stages the APK and returns its objectId; the caller binds it
 // with update-file-info.
-func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progress.Reporter) (int64, error) {
-	return s.uploadFile(ctx, appID, apkPath, filepath.Base(apkPath), fileTypeAPK, rep)
+func (s *Store) uploadAPK(ctx context.Context, appID string, apkFile store.PackageFile, rep progress.Reporter) (int64, error) {
+	return s.uploadFile(ctx, appID, apkFile, apkFile.Name(), fileTypeAPK, rep)
 }
 
 // uploadListingImages stages the listing's icon and screenshots and returns
@@ -553,14 +559,14 @@ func (s *Store) uploadListingImages(ctx context.Context, appID, languageID strin
 	rep := progress.Safe(nil)
 	var bindings []map[string]any
 	if l.Icon != "" {
-		objectID, err := s.uploadFile(ctx, appID, l.Icon, imageFileName(l.Icon), fileTypeIcon, rep)
+		objectID, err := s.uploadFile(ctx, appID, store.PackageFile{Path: l.Icon}, imageFileName(l.Icon), fileTypeIcon, rep)
 		if err != nil {
 			return nil, fmt.Errorf("icon: %w", err)
 		}
 		bindings = append(bindings, map[string]any{"objectId": objectID, "languageId": languageID})
 	}
 	for i, p := range l.Screenshots {
-		objectID, err := s.uploadFile(ctx, appID, p, imageFileName(p), fileTypePortraitScreenshot, rep)
+		objectID, err := s.uploadFile(ctx, appID, store.PackageFile{Path: p}, imageFileName(p), fileTypePortraitScreenshot, rep)
 		if err != nil {
 			return nil, fmt.Errorf("screenshot %d: %w", i+1, err)
 		}
@@ -586,13 +592,14 @@ func imageFileName(path string) string {
 	return strings.TrimSuffix(base, filepath.Ext(base)) + ext
 }
 
-// uploadFile stages one local file on Honor (get-file-upload-url → multipart
-// POST to the signed URL) and returns its objectId. Nothing changes on the
-// app until update-file-info binds the objectId.
-func (s *Store) uploadFile(ctx context.Context, appID, path, fileName string, fileType int, rep progress.Reporter) (int64, error) {
+// uploadFile stages one file on Honor (get-file-upload-url → multipart POST
+// to the signed URL) and returns its objectId: the package, or a local
+// listing image (a PackageFile with no facts). Nothing changes on the app
+// until update-file-info binds the objectId.
+func (s *Store) uploadFile(ctx context.Context, appID string, f store.PackageFile, fileName string, fileType int, rep progress.Reporter) (int64, error) {
 	// Step 1: sha256 + filesize (honor requires them in the get-upload-url body)
 	rep.Phase("hashing")
-	size, sum, err := statAndSha256(path)
+	size, sum, err := sizeAndSha256(f)
 	if err != nil {
 		return 0, fmt.Errorf("hash file: %w", err)
 	}
@@ -631,20 +638,16 @@ func (s *Store) uploadFile(ctx context.Context, appID, path, fileName string, fi
 	upload := urlResp.Data[0]
 
 	// Step 3: stream the file to the signed URL as a multipart POST.
-	// Progress.Reader forwards byte counts to the mpb bar.
+	// DoMultipart forwards byte counts to the mpb bar.
 	rep.Phase("uploading")
-	rc, fSize, err := progress.OpenFile(path, rep)
-	if err != nil {
-		return 0, fmt.Errorf("open file: %w", err)
-	}
-	defer rc.Close()
-
+	rep.Total(size)
 	putHTTP, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
-		Method:  http.MethodPost,
-		URL:     upload.UploadURL,
-		Headers: map[string]string{"Authorization": "Bearer " + s.accessToken},
-		Files:   []httpx.FileField{{Field: "file", FileName: fileName, Reader: rc, Size: fSize}},
-		Client:  s.uploadClient,
+		Method:   http.MethodPost,
+		URL:      upload.UploadURL,
+		Headers:  map[string]string{"Authorization": "Bearer " + s.accessToken},
+		Files:    []httpx.FileField{{Field: "file", FileName: fileName, Path: f.Path, Size: size}},
+		Progress: rep,
+		Client:   s.uploadClient,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("upload: %w", err)
@@ -669,18 +672,18 @@ func (s *Store) uploadFile(ctx context.Context, appID, path, fileName string, fi
 
 // shouldURLPush reports whether the APK is large enough that Honor's async
 // download-from-URL (with its ~3min status-poll floor) beats a direct
-// upload. Below the threshold, uploading the bytes is faster. A stat
-// failure falls back to the upload path.
-func (s *Store) shouldURLPush(apkPath string) bool {
-	min := s.urlPushMinBytes
-	if min <= 0 {
-		min = int64(honorURLPushDefaultMB) << 20
+// upload. Below the threshold, uploading the bytes is faster; a threshold
+// of 0 always URL-pushes. When the size can't be had, it falls back to the
+// upload path.
+func (s *Store) shouldURLPush(apkFile store.PackageFile) bool {
+	if s.urlPushMinBytes <= 0 {
+		return true
 	}
-	fi, err := os.Stat(apkPath)
+	size, err := apkFile.Size()
 	if err != nil {
 		return false
 	}
-	return fi.Size() >= min
+	return size >= s.urlPushMinBytes
 }
 
 // uploadByURL hands Honor a public download URL (upload-by-url) instead of
@@ -688,13 +691,13 @@ func (s *Store) shouldURLPush(apkPath string) bool {
 // (async); we poll until it reports the upload finished and return the
 // objectId, which the caller binds exactly as on the upload path. The URL
 // must be HTTPS, public and unauthenticated — Honor GETs it directly.
-func (s *Store) uploadByURL(ctx context.Context, appID, sourceURL, apkPath string, rep progress.Reporter) (int64, error) {
+func (s *Store) uploadByURL(ctx context.Context, appID, sourceURL string, apkFile store.PackageFile, rep progress.Reporter) (int64, error) {
 	rep.Phase("hashing")
-	size, sum, err := statAndSha256(apkPath)
+	size, sum, err := sizeAndSha256(apkFile)
 	if err != nil {
 		return 0, fmt.Errorf("hash apk: %w", err)
 	}
-	fileName := filepath.Base(apkPath)
+	fileName := apkFile.Name()
 
 	// Step 1: enqueue the download task (type=1).
 	rep.Phase("url push")
@@ -911,23 +914,17 @@ func classifyHonor(code int) store.Category {
 
 // ---- helpers ----
 
-// statAndSha256 returns the file's byte size and hex-encoded sha256 digest
-// in a single pass. Honor's get-file-upload-url endpoint requires both.
-func statAndSha256(path string) (size int64, hashHex string, err error) {
-	f, err := os.Open(path)
-	if err != nil {
+// sizeAndSha256 returns the file's byte size and hex-encoded sha256 digest,
+// from its facts when given. Honor's get-file-upload-url and upload-by-url
+// endpoints require both.
+func sizeAndSha256(f store.PackageFile) (size int64, hashHex string, err error) {
+	if size, err = f.Size(); err != nil {
 		return 0, "", err
 	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
+	if hashHex, err = f.SHA256(); err != nil {
 		return 0, "", err
 	}
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return 0, "", err
-	}
-	return fi.Size(), hex.EncodeToString(h.Sum(nil)), nil
+	return size, hashHex, nil
 }
 
 // diagnose is registered with `apkgo doctor`. Probes:

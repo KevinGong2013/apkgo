@@ -22,12 +22,9 @@ package harmony
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -147,11 +144,12 @@ func (s *Store) publish(ctx context.Context, req *store.UploadRequest) (string, 
 		}
 	}
 
-	objectID, err := s.uploadFile(ctx, appID, req.FilePath, rep)
+	appPack := req.Package()
+	objectID, err := s.uploadFile(ctx, appID, appPack, rep)
 	if err != nil {
 		return "", fmt.Errorf("upload package: %w", err)
 	}
-	fileName := filepath.Base(req.FilePath)
+	fileName := appPack.Name()
 
 	rep.Phase("binding package")
 	packageID, err := s.bindPackage(ctx, appID, fileName, objectID)
@@ -242,12 +240,17 @@ func (s *Store) fetchAppID(ctx context.Context, bundleName string) (string, erro
 }
 
 // uploadFile runs the two-step Upload Management API for any file — the
-// .app pack or a listing image: fetch a signed OBS PUT target for it,
-// then stream the bytes there. Returns the objectId the binding
-// endpoints (app-package-info, app-file-info) reference.
-func (s *Store) uploadFile(ctx context.Context, appID, path string, rep progress.Reporter) (string, error) {
-	fileName := filepath.Base(path)
-	size, sum, err := fileSizeAndSHA256(path)
+// .app pack or a listing image (a local file, as a PackageFile without
+// facts): fetch a signed OBS PUT target for it, then stream the bytes
+// there. Returns the objectId the binding endpoints (app-package-info,
+// app-file-info) reference.
+func (s *Store) uploadFile(ctx context.Context, appID string, file store.PackageFile, rep progress.Reporter) (string, error) {
+	fileName := file.Name()
+	size, err := file.Size()
+	if err != nil {
+		return "", err
+	}
+	sum, err := file.SHA256()
 	if err != nil {
 		return "", err
 	}
@@ -258,33 +261,37 @@ func (s *Store) uploadFile(ctx context.Context, appID, path string, rep progress
 	}
 
 	rep.Phase("uploading")
-	rc, _, err := progress.OpenFile(path, rep)
-	if err != nil {
-		return "", fmt.Errorf("open %s: %w", fileName, err)
-	}
-	defer rc.Close()
+	rep.Total(size)
 
 	method := info.Method
 	if method == "" {
 		method = http.MethodPut
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, method, info.URL, rc)
-	if err != nil {
-		return "", err
-	}
-	httpReq.ContentLength = size
-	httpReq.Header.Set("Content-Type", "application/octet-stream")
+	// The signed headers win over the default Content-Type: keys are
+	// canonicalized, so theirs replaces it in the map.
+	headers := map[string]string{"Content-Type": "application/octet-stream"}
+	var host string
 	for k, v := range info.Headers {
-		// Host is a pseudo-header on the request struct, not a map entry.
+		// Host is a pseudo-header on the request struct, not a header
+		// field: it goes in FileRequest.Host.
 		if strings.EqualFold(k, "Host") {
-			httpReq.Host = v
+			host = v
 			continue
 		}
-		httpReq.Header.Set(k, v)
+		headers[http.CanonicalHeaderKey(k)] = v
 	}
-	resp, err := s.upload.Do(httpReq)
+	resp, err := httpx.DoUpload(ctx, httpx.FileRequest{
+		Method:   method,
+		URL:      info.URL,
+		Host:     host,
+		Headers:  headers,
+		Path:     file.Path,
+		Size:     size,
+		Progress: rep,
+		Client:   s.upload,
+	})
 	if err != nil {
-		return "", httpx.RedactURLError(err)
+		return "", err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
@@ -687,20 +694,6 @@ func diagnose(ctx context.Context, cfg map[string]string, hint store.DiagnoseHin
 		return append(probes, store.Probe{Name: "release-permission", Status: "fail", Error: err.Error()})
 	}
 	return append(probes, store.Probe{Name: "release-permission", Status: "ok", Detail: "upload-url issued (App release permission granted)"})
-}
-
-func fileSizeAndSHA256(path string) (int64, string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return 0, "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	n, err := io.Copy(h, f)
-	if err != nil {
-		return 0, "", err
-	}
-	return n, hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func httpError(resp *resty.Response) error {

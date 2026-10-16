@@ -91,14 +91,14 @@ func (s *Store) resolveListing(ctx context.Context, l *store.Listing) (*listingU
 	lu := &listingUpdate{recommendDesc: l.Brief, appDesc: l.Description}
 	rep := progress.Safe(nil)
 	if l.Icon != "" {
-		name, err := s.uploadFile(ctx, imageUploadURI, l.Icon, rep)
+		name, err := s.uploadFile(ctx, imageUploadURI, store.PackageFile{Path: l.Icon}, rep)
 		if err != nil {
 			return nil, fmt.Errorf("upload icon: %w", err)
 		}
 		lu.icon = name
 	}
 	for i, p := range l.Screenshots {
-		name, err := s.uploadFile(ctx, imageUploadURI, p, rep)
+		name, err := s.uploadFile(ctx, imageUploadURI, store.PackageFile{Path: p}, rep)
 		if err != nil {
 			return nil, fmt.Errorf("upload %s[%d]: %w", store.ListingScreenshots, i, err)
 		}

@@ -108,7 +108,7 @@ apkgo upload -f app.apk --listing listing.yaml
 apkgo upload -f app-release.aab -s googleplay
 ```
 
-- When `-f` is a URL, huawei / honor / vivo have the store pull the package from that URL directly (honor only for files ≥ `url_push_min_mb`, default 100 MB); other stores get it downloaded and uploaded by apkgo.
+- When `-f` is a URL, huawei / honor / vivo have the store pull the package from that URL directly (honor only for files ≥ `url_push_min_mb`, default 100 MB; 0 = always); other stores get it downloaded and uploaded by apkgo.
 - `--release-time` is supported by huawei, harmony, honor, xiaomi, oppo, vivo, samsung and tencent; other stores release immediately.
 - File types: `.apk` goes to every Android store; `.aab` is googleplay-only; a HarmonyOS `.app` is harmony-only.
 
@@ -279,7 +279,7 @@ stores:
     client_id: "your-client-id"
     client_secret: "your-client-secret"
     # app_id: ""             # optional, resolved by package name when omitted
-    # url_push_min_mb: "100" # optional, with -f <URL> only files ≥ this size (MB) are pulled by honor from the URL
+    # url_push_min_mb: "100" # optional, with -f <URL> only files ≥ this size (MB) are pulled by honor from the URL; 0 = always
 
   meizu:
     client_id: "your-client-id"       # Meizu open platform client credential

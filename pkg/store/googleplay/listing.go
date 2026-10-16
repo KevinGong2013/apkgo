@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -126,17 +127,46 @@ func checkResp(op string, resp *resty.Response, err error) error {
 	if !resp.IsError() {
 		return nil
 	}
-	msg := strings.TrimSpace(resp.String())
-	var body struct {
+	return statusError(op, resp.StatusCode(), resp.Body())
+}
+
+// checkHTTPResp is checkResp for a call made with net/http (the binary
+// upload, sent through httpx). It reads and closes resp's body and, like
+// resty's SetResult, decodes a 2xx answer into result.
+func checkHTTPResp(op string, resp *http.Response, err error, result any) error {
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("%s: read response: %w", op, err)
+	}
+	if resp.StatusCode > 399 { // resty's IsError
+		return statusError(op, resp.StatusCode, body)
+	}
+	if resp.StatusCode/100 == 2 && resp.StatusCode != http.StatusNoContent {
+		if err := json.Unmarshal(body, result); err != nil {
+			return fmt.Errorf("%s: decode response: %w", op, err)
+		}
+	}
+	return nil
+}
+
+// statusError is the error for an HTTP error answer to op: Google's
+// error message (else the body), categorized by status.
+func statusError(op string, code int, body []byte) error {
+	msg := strings.TrimSpace(string(body))
+	var e struct {
 		Error struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(resp.Body(), &body) == nil && body.Error.Message != "" {
-		msg = body.Error.Message
+	if json.Unmarshal(body, &e) == nil && e.Error.Message != "" {
+		msg = e.Error.Message
 	}
-	err = fmt.Errorf("%s: HTTP %d: %s", op, resp.StatusCode(), msg)
-	switch code := resp.StatusCode(); {
+	err := fmt.Errorf("%s: HTTP %d: %s", op, code, msg)
+	switch {
 	case code == http.StatusUnauthorized || code == http.StatusForbidden:
 		return store.Categorize(store.CategoryAuthFailed, err)
 	case code == http.StatusTooManyRequests:

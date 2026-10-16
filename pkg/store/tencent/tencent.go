@@ -3,7 +3,6 @@ package tencent
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,8 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -195,7 +192,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	// Pre-declare combined upload bytes for a stable progress bar across
 	// sequential apk + apk64 transfers.
-	total, err := sumFileSizes(req.FilePath, req.File64Path)
+	total, err := store.TotalSize(req.Package(), req.Package64())
 	if err != nil {
 		return fmt.Errorf("stat apk: %w", err)
 	}
@@ -203,7 +200,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	rep.Total(total)
 
 	// 1. Upload APK file → get serial number
-	apkSerial, apkMD5, err := s.uploadFile(ctx, pkg, appID, req.FilePath, "apk", rep)
+	apkSerial, apkMD5, err := s.uploadFile(ctx, pkg, appID, req.Package(), "apk", rep)
 	if err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
@@ -211,7 +208,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// 2. Upload 64-bit APK if provided
 	var apk64Serial, apk64MD5 string
 	if req.File64Path != "" {
-		apk64Serial, apk64MD5, err = s.uploadFile(ctx, pkg, appID, req.File64Path, "apk", rep)
+		apk64Serial, apk64MD5, err = s.uploadFile(ctx, pkg, appID, req.Package64(), "apk", rep)
 		if err != nil {
 			return fmt.Errorf("upload 64-bit apk: %w", err)
 		}
@@ -251,7 +248,7 @@ func (s *Store) listingParams(ctx context.Context, pkg, appID string, l *store.L
 	// Images are small; they don't count toward the APK progress bar.
 	rep := progress.Safe(nil)
 	if l.Icon != "" {
-		serial, _, err := s.uploadFile(ctx, pkg, appID, l.Icon, "img", rep)
+		serial, _, err := s.uploadFile(ctx, pkg, appID, store.PackageFile{Path: l.Icon}, "img", rep)
 		if err != nil {
 			return nil, fmt.Errorf("upload icon: %w", err)
 		}
@@ -260,7 +257,7 @@ func (s *Store) listingParams(ctx context.Context, pkg, appID string, l *store.L
 	if len(l.Screenshots) > 0 {
 		serials := make([]string, len(l.Screenshots))
 		for i, p := range l.Screenshots {
-			serial, _, err := s.uploadFile(ctx, pkg, appID, p, "img", rep)
+			serial, _, err := s.uploadFile(ctx, pkg, appID, store.PackageFile{Path: p}, "img", rep)
 			if err != nil {
 				return nil, fmt.Errorf("upload screenshot %d: %w", i+1, err)
 			}
@@ -298,28 +295,13 @@ func checkListing(l *store.Listing, inspect store.ImageInspector) []error {
 	return errs
 }
 
-// sumFileSizes totals the byte sizes of the given paths. Empty paths are ignored.
-func sumFileSizes(paths ...string) (int64, error) {
-	var total int64
-	for _, p := range paths {
-		if p == "" {
-			continue
-		}
-		fi, err := os.Stat(p)
-		if err != nil {
-			return 0, err
-		}
-		total += fi.Size()
-	}
-	return total, nil
-}
-
-// uploadFile gets a pre-signed COS URL, streams the file, and returns the
-// serial number and file MD5. Reads the file in a streaming fashion so
-// memory use stays bounded regardless of APK size, and reports byte-level
-// progress to rep via a progress.Reader wrapper.
-func (s *Store) uploadFile(ctx context.Context, pkg, appID, filePath, fileType string, rep progress.Reporter) (serialNumber string, fileMd5 string, err error) {
-	fileName := filepath.Base(filePath)
+// uploadFile gets a pre-signed COS URL, streams f to it, and returns the
+// serial number and file MD5. f is a package or a local listing image
+// (PackageFile{Path: image}); its bytes go out through httpx.DoUpload,
+// which streams them so memory use stays bounded regardless of APK size,
+// and reports byte-level progress to rep.
+func (s *Store) uploadFile(ctx context.Context, pkg, appID string, f store.PackageFile, fileType string, rep progress.Reporter) (serialNumber string, fileMd5 string, err error) {
+	fileName := f.Name()
 
 	// Get upload info
 	params := url.Values{}
@@ -343,32 +325,19 @@ func (s *Store) uploadFile(ctx context.Context, pkg, appID, filePath, fileType s
 		return "", "", fmt.Errorf("get_file_upload_info: empty pre_sign_url or serial_number (ret=%d msg=%q)", resp.Ret, resp.text())
 	}
 
-	// Calculate MD5 (streaming, no buffering of the whole file)
-	fileMd5, err = calcFileMD5(filePath)
+	// MD5: the caller's fact, or hashed from the file (streaming, no
+	// buffering of the whole file).
+	fileMd5, err = f.MD5()
 	if err != nil {
 		return "", "", fmt.Errorf("calc md5: %w", err)
 	}
 
-	// Open the file once and stream it to COS. Set ContentLength so the
-	// HTTP client sends a real Content-Length header instead of falling
-	// back to chunked encoding, which COS may reject.
-	f, err := os.Open(filePath)
-	if err != nil {
-		return "", "", fmt.Errorf("open file: %w", err)
-	}
-	defer f.Close()
-	fi, err := f.Stat()
+	// The size makes DoUpload send a real Content-Length header instead
+	// of falling back to chunked encoding, which COS may reject.
+	size, err := f.Size()
 	if err != nil {
 		return "", "", fmt.Errorf("stat file: %w", err)
 	}
-
-	body := &progress.Reader{R: f, Reporter: progress.Safe(rep)}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, resp.PreSignURL, body)
-	if err != nil {
-		return "", "", fmt.Errorf("create put request: %w", err)
-	}
-	httpReq.ContentLength = fi.Size()
-	httpReq.Header.Set("Content-Type", "application/octet-stream")
 
 	// No Client.Timeout here: a flat per-request cap kills legitimate
 	// large-APK uploads on slow uplinks (a 60MB APK over a ~200KB/s line
@@ -378,9 +347,17 @@ func (s *Store) uploadFile(ctx context.Context, pkg, appID, filePath, fileType s
 	if cos == nil {
 		cos = cosClient
 	}
-	httpResp, err := cos.Do(httpReq)
+	httpResp, err := httpx.DoUpload(ctx, httpx.FileRequest{
+		Method:   http.MethodPut,
+		URL:      resp.PreSignURL,
+		Headers:  map[string]string{"Content-Type": "application/octet-stream"},
+		Path:     f.Path,
+		Size:     size,
+		Progress: rep,
+		Client:   cos,
+	})
 	if err != nil {
-		return "", "", fmt.Errorf("upload to cos: %w", httpx.RedactURLError(err))
+		return "", "", fmt.Errorf("upload to cos: %w", err)
 	}
 	defer httpResp.Body.Close()
 
@@ -431,7 +408,7 @@ func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial
 		params.Set("apk64_flag", "1")
 		params.Set("apk64_file_serial_number", apk64Serial)
 		params.Set("apk64_file_md5", apk64MD5)
-	case isAPK64BitOnly(req.FilePath):
+	case isAPK64BitOnly(req.Package()):
 		// Single 64-bit-only APK. apk32_flag=2 (否) — NOT 0, which Tencent
 		// rejects as 无效的请求参数.
 		params.Set("apk32_flag", "2")
@@ -465,12 +442,12 @@ func (s *Store) updateApp(pkg, appID string, req *store.UploadRequest, apkSerial
 	return nil
 }
 
-// isAPK64BitOnly reports whether the APK at path contains only 64-bit
-// native libs. Failures are swallowed and reported as false — the APK
-// already uploaded successfully, so the worst case is that we fall back
-// to the legacy apk32_flag=1 branch, matching prior behavior.
-func isAPK64BitOnly(path string) bool {
-	abis, err := apk.ABIs(path)
+// isAPK64BitOnly reports whether the APK f contains only 64-bit native
+// libs. Failures are swallowed and reported as false — the APK already
+// uploaded successfully, so the worst case is that we fall back to the
+// legacy apk32_flag=1 branch, matching prior behavior.
+func isAPK64BitOnly(f store.PackageFile) bool {
+	abis, err := f.ABIs()
 	if err != nil {
 		return false
 	}
@@ -684,19 +661,6 @@ func (s *Store) calcSign(params url.Values) string {
 	h := hmac.New(sha256.New, []byte(s.accessSecret))
 	h.Write([]byte(signStr))
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-func calcFileMD5(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := md5.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 // diagnose is registered with `apkgo doctor`. Two probes:

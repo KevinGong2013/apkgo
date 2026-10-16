@@ -3,22 +3,18 @@ package oppo
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"image"
-	_ "image/jpeg" // register jpeg decoder for in-APK icons
 	"image/png"
 	"io"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/shogo82148/androidbinary"
-	"github.com/shogo82148/androidbinary/apk"
 	"golang.org/x/image/draw"
-	_ "golang.org/x/image/webp" // modern Android (R8) stores launcher icons as webp
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 // OPPO requires the app icon submitted to /app/upd to be a 512×512 PNG under
@@ -33,24 +29,25 @@ const (
 // compliantIconURL returns an icon_url that satisfies OPPO's /app/upd
 // validation. If the app's existing OPPO-hosted icon already complies
 // (512×512 PNG <1MB) it's returned unchanged — no work, no replacement. Only
-// when it doesn't comply is the launcher icon pulled from the APK, normalized
-// to a 512×512 PNG, uploaded to OPPO (type=photo), and the fresh URL returned.
+// when it doesn't comply is the APK's launcher icon (PackageFile.LauncherIcon)
+// normalized to a 512×512 PNG, uploaded to OPPO (type=photo), and the fresh
+// URL returned.
 //
 // Best-effort: any failure along the replacement path returns the original URL
 // unchanged, so publish proceeds exactly as it would have without this step
 // (and fails with OPPO's own icon error if that icon was the blocker).
-func (s *Store) compliantIconURL(ctx context.Context, currentURL, apkPath string, rep progress.Reporter) string {
+func (s *Store) compliantIconURL(ctx context.Context, currentURL string, apkFile store.PackageFile, rep progress.Reporter) string {
 	if iconURLCompliant(ctx, currentURL) {
 		return currentURL
 	}
-	iconPath, err := extractCompliantIcon(apkPath)
+	iconPath, err := extractCompliantIcon(apkFile)
 	if err != nil {
 		return currentURL
 	}
 	defer os.Remove(iconPath)
 
-	// Small file; don't disturb the APK's progress bar.
-	res, err := s.uploadFile(ctx, iconPath, "photo", progress.Safe(nil))
+	// Small local file; don't disturb the APK's progress bar.
+	res, err := s.uploadFile(ctx, store.PackageFile{Path: iconPath}, "photo", progress.Safe(nil))
 	if err != nil || res.URL == "" {
 		return currentURL
 	}
@@ -91,21 +88,13 @@ func iconURLCompliant(ctx context.Context, url string) bool {
 	return format == "png" && cfg.Width == oppoIconSize && cfg.Height == oppoIconSize
 }
 
-// iconDensities lists the launcher-icon densities to request, densest
-// first. androidbinary resolves the icon resource for the requested
-// config, and a zero density means mdpi — the 48px variant, which scaled
-// up to 512×512 is the blurry icon OPPO used to get. 0xFFFE (anydpi) is
-// deliberately not in the list: it resolves to the adaptive-icon XML,
-// which image.Decode can't read. Lower densities are fallbacks for APKs
-// that only ship an adaptive XML at the top end.
-var iconDensities = []uint16{640, 480, 320, 240, 160}
-
-// extractCompliantIcon pulls the launcher icon from the APK and writes it as a
-// 512×512 PNG to a temp file, returning the path. Even the densest in-APK icon
-// is usually smaller than that (xxxhdpi is 192px), so it is rescaled to exactly
-// 512×512 with a high-quality kernel.
-func extractCompliantIcon(apkPath string) (string, error) {
-	src, err := readIcon(apkPath)
+// extractCompliantIcon takes the APK's launcher icon — the densest one it
+// ships (apk.LauncherIcon), or FileFacts.Icon when the caller gave it — and
+// writes it as a 512×512 PNG to a temp file, returning the path. Even the
+// densest in-APK icon is usually smaller than that (xxxhdpi is 192px), so it
+// is rescaled to exactly 512×512 with a high-quality kernel.
+func extractCompliantIcon(apkFile store.PackageFile) (string, error) {
+	src, err := apkFile.LauncherIcon()
 	if err != nil {
 		return "", err
 	}
@@ -139,23 +128,4 @@ func extractCompliantIcon(apkPath string) (string, error) {
 		return "", err
 	}
 	return f.Name(), nil
-}
-
-// readIcon decodes the densest launcher icon the APK ships as an image.
-func readIcon(apkPath string) (image.Image, error) {
-	pkg, err := apk.OpenFile(apkPath)
-	if err != nil {
-		return nil, fmt.Errorf("open apk: %w", err)
-	}
-	defer pkg.Close()
-
-	var errs []error
-	for _, d := range iconDensities {
-		img, err := pkg.Icon(&androidbinary.ResTableConfig{Density: d})
-		if err == nil {
-			return img, nil
-		}
-		errs = append(errs, fmt.Errorf("density %d: %w", d, err))
-	}
-	return nil, fmt.Errorf("read icon: %w", errors.Join(errs...))
 }

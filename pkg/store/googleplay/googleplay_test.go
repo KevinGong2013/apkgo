@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"image/png"
@@ -15,10 +16,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/internal/offloadtest"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
@@ -27,6 +30,7 @@ type upload struct {
 	path        string
 	contentType string
 	uploadType  string
+	auth        string // Authorization header
 	body        []byte
 }
 
@@ -40,7 +44,9 @@ type fakePlay struct {
 	mu        sync.Mutex
 	calls     []string
 	patchBody map[string]any
-	uploads   []upload
+	uploads   []upload // listing images
+	binaries  []upload // APK / AAB uploads
+	trackBody map[string]any
 
 	failOn string // "METHOD path" answered with HTTP 400
 }
@@ -58,13 +64,23 @@ func (f *fakePlay) serve(w http.ResponseWriter, r *http.Request) {
 
 	f.mu.Lock()
 	f.calls = append(f.calls, call)
-	if strings.HasPrefix(r.URL.Path, "/upload/edits/e1/listings/") {
-		f.uploads = append(f.uploads, upload{
-			path:        r.URL.Path,
-			contentType: r.Header.Get("Content-Type"),
-			uploadType:  r.URL.Query().Get("uploadType"),
-			body:        body,
-		})
+	u := upload{
+		path:        r.URL.Path,
+		contentType: r.Header.Get("Content-Type"),
+		uploadType:  r.URL.Query().Get("uploadType"),
+		auth:        r.Header.Get("Authorization"),
+		body:        body,
+	}
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/upload/edits/e1/listings/"):
+		f.uploads = append(f.uploads, u)
+	case r.URL.Path == "/upload/edits/e1/apks" || r.URL.Path == "/upload/edits/e1/bundles":
+		f.binaries = append(f.binaries, u)
+	case call == "PUT /edits/e1/tracks/production":
+		f.trackBody = map[string]any{}
+		if err := json.Unmarshal(body, &f.trackBody); err != nil {
+			f.t.Errorf("track body %q: %v", body, err)
+		}
 	}
 	if r.Method == http.MethodPatch {
 		f.patchBody = map[string]any{}
@@ -86,6 +102,8 @@ func (f *fakePlay) serve(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"id":"e1"}`)
 	case "POST /upload/edits/e1/apks":
 		io.WriteString(w, `{"versionCode":42}`)
+	case "POST /upload/edits/e1/bundles":
+		io.WriteString(w, `{"versionCode":43}`)
 	case "GET /edits/e1/details":
 		io.WriteString(w, `{"defaultLanguage":"zh-CN","contactEmail":"dev@example.com"}`)
 	case "DELETE /edits/e1/listings/zh-CN/phoneScreenshots":
@@ -97,7 +115,8 @@ func (f *fakePlay) serve(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakePlay) store() *Store {
 	return &Store{
-		client:      resty.New().SetBaseURL(f.srv.URL).SetHeader("Content-Type", "application/json"),
+		client:      resty.New().SetBaseURL(f.srv.URL).SetHeader("Content-Type", "application/json").SetAuthToken("tok"),
+		token:       "tok",
 		uploadBase:  f.srv.URL + "/upload",
 		packageName: "com.example.app",
 		track:       "production",
@@ -304,6 +323,76 @@ func TestUploadHTTPErrorFails(t *testing.T) {
 				t.Fatalf("result = %+v, want HTTP 400 failure", res)
 			}
 		})
+	}
+}
+
+// byteCounter is a progress.Reporter keeping the declared total and the
+// bytes reported sent.
+type byteCounter struct{ total, sent atomic.Int64 }
+
+func (c *byteCounter) Phase(string)  {}
+func (c *byteCounter) Total(n int64) { c.total.Store(n) }
+func (c *byteCounter) Add(n int64)   { c.sent.Add(n) }
+
+// The package goes byte for byte to the endpoint for its kind, with its
+// Content-Type and the bearer token; the versionCode Play answers is the
+// one released to the track, and progress counts the bytes — the same
+// whether the file is here or only its facts and an Offloader are
+// (offloadtest.Remote).
+func TestUploadSendsThePackage(t *testing.T) {
+	data := bytes.Repeat([]byte("PK\x03\x04play-package "), 3000)
+	cases := []struct {
+		file, endpoint, contentType string
+		versionCode                 float64
+	}{
+		{"app.apk", "/upload/edits/e1/apks", "application/vnd.android.package-archive", 42},
+		{"app.aab", "/upload/edits/e1/bundles", "application/octet-stream", 43},
+	}
+	for _, c := range cases {
+		path := filepath.Join(t.TempDir(), c.file)
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, remote := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/remote=%v", c.file, remote), func(t *testing.T) {
+				f := newFakePlay(t)
+				rep := &byteCounter{}
+				req := &store.UploadRequest{FilePath: path, Progress: rep}
+				ctx := context.Background()
+				var off *offloadtest.Offloader
+				if remote {
+					req, ctx, off = offloadtest.Remote(t, ctx, req)
+				}
+				if res := f.store().Upload(ctx, req); !res.Success {
+					t.Fatalf("upload failed: %s", res.Error)
+				}
+
+				want := []string{"POST /edits", "POST " + c.endpoint, "PUT /edits/e1/tracks/production", "POST /edits/e1:commit"}
+				if got, _, _ := f.snapshot(); !slices.Equal(got, want) {
+					t.Fatalf("calls =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+				}
+				f.mu.Lock()
+				binaries, trackBody := slices.Clone(f.binaries), f.trackBody
+				f.mu.Unlock()
+				if len(binaries) != 1 {
+					t.Fatalf("got %d binary uploads, want 1", len(binaries))
+				}
+				if b := binaries[0]; !bytes.Equal(b.body, data) || b.contentType != c.contentType || b.auth != "Bearer tok" {
+					t.Errorf("binary upload: %d bytes, Content-Type %q, Authorization %q; want %d bytes, %q, %q",
+						len(b.body), b.contentType, b.auth, len(data), c.contentType, "Bearer tok")
+				}
+				releases, _ := trackBody["releases"].([]any)
+				if len(releases) != 1 || !slices.Equal(releases[0].(map[string]any)["versionCodes"].([]any), []any{c.versionCode}) {
+					t.Errorf("track body = %v, want versionCodes [%v]", trackBody, c.versionCode)
+				}
+				if n := int64(len(data)); rep.total.Load() != n || rep.sent.Load() != n {
+					t.Errorf("progress: total %d, sent %d; want %d", rep.total.Load(), rep.sent.Load(), n)
+				}
+				if remote && !off.Sent(req.FilePath) {
+					t.Errorf("the package did not go out as a transfer")
+				}
+			})
+		}
 	}
 }
 
