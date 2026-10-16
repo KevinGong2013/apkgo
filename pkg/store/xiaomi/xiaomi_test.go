@@ -471,3 +471,47 @@ func TestNewWithDefaultCert(t *testing.T) {
 		t.Errorf("got key size %d, want 1024", s.pubKey.N.BitLen())
 	}
 }
+
+// TestDiagnoseChecksKeyWithoutPackage: with no package hint, diagnose must
+// still reach /dev/query — cert alone never talks to Xiaomi, and passing on
+// cert alone is how a wrong private key got saved as verified and only failed
+// at publish time with -20014 密码错误.
+func TestDiagnoseChecksKeyWithoutPackage(t *testing.T) {
+	for _, tc := range []struct {
+		name, resp, wantStatus string
+	}{
+		{"accepted", `{"result":0,"create":true}`, "ok"},
+		{"wrong key", `{"result":-20014,"message":"密码错误"}`, "fail"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPkg string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/dev/query" {
+					t.Errorf("unexpected path %s", r.URL.Path)
+				}
+				var reqData struct {
+					PackageName string `json:"packageName"`
+				}
+				_ = r.ParseForm()
+				_ = json.Unmarshal([]byte(r.FormValue("RequestData")), &reqData)
+				gotPkg = reqData.PackageName
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.resp))
+			}))
+			defer srv.Close()
+
+			s, _ := newTestStore(t, srv.URL)
+			s.client.SetBaseURL(srv.URL)
+			probes := s.diagnose(context.Background(), store.DiagnoseHint{})
+			if len(probes) != 2 || probes[1].Name != "query" {
+				t.Fatalf("probes = %+v, want cert + query", probes)
+			}
+			if probes[1].Status != tc.wantStatus {
+				t.Errorf("query status = %q (%+v), want %q", probes[1].Status, probes[1], tc.wantStatus)
+			}
+			if gotPkg != probePackage {
+				t.Errorf("queried package %q, want %q", gotPkg, probePackage)
+			}
+		})
+	}
+}
