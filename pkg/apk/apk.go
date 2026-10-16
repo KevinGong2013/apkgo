@@ -3,6 +3,7 @@ package apk
 import (
 	"archive/zip"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,18 +27,19 @@ type Info struct {
 
 // Parse extracts metadata from an APK file.
 func Parse(path string) (*Info, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open apk: %w", err)
-	}
-	defer f.Close()
+	var info *Info
+	err := withFile(path, "apk", func(r io.ReaderAt, size int64) (err error) {
+		info, err = ParseAt(r, size)
+		return err
+	})
+	return info, err
+}
 
-	stat, err := f.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("stat apk: %w", err)
-	}
-
-	pkg, err := apk.OpenZipReader(f, stat.Size())
+// ParseAt is Parse over an APK read through r (size bytes long) — for a
+// package that lives elsewhere and is read in ranges: only the zip
+// directory, the manifest and the resource table are read.
+func ParseAt(r io.ReaderAt, size int64) (*Info, error) {
+	pkg, err := apk.OpenZipReader(r, size)
 	if err != nil {
 		return nil, fmt.Errorf("parse apk: %w", err)
 	}
@@ -86,11 +88,21 @@ func defaultLabel(pkg *apk.Apk) string {
 // the APK, derived from entries under `lib/<abi>/`. An APK with no
 // native code returns an empty slice.
 func ABIs(path string) ([]string, error) {
-	zr, err := zip.OpenReader(path)
+	var abis []string
+	err := withFile(path, "apk", func(r io.ReaderAt, size int64) (err error) {
+		abis, err = ABIsAt(r, size)
+		return err
+	})
+	return abis, err
+}
+
+// ABIsAt is ABIs over an APK read through r: only the zip directory is
+// read.
+func ABIsAt(r io.ReaderAt, size int64) ([]string, error) {
+	zr, err := zip.NewReader(r, size)
 	if err != nil {
 		return nil, fmt.Errorf("open apk zip: %w", err)
 	}
-	defer zr.Close()
 
 	seen := make(map[string]struct{})
 	for _, f := range zr.File {
@@ -138,4 +150,19 @@ func Is64BitOnly(abis []string) bool {
 		}
 	}
 	return has64 && !has32
+}
+
+// withFile opens path and calls fn with it as a ReaderAt and its size;
+// what names the kind of file in errors.
+func withFile(path, what string, fn func(r io.ReaderAt, size int64) error) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", what, err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", what, err)
+	}
+	return fn(f, fi.Size())
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -35,6 +34,10 @@ type pgyerResp struct {
 	Code    int    `json:"code"`
 	Message string `json:"message,omitempty"`
 }
+
+// buildPollInterval is how often the build's processing status is
+// checked after the upload (a var so tests can shorten it).
+var buildPollInterval = 10 * time.Second
 
 type Store struct {
 	client       *resty.Client
@@ -105,18 +108,20 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	tokenResp.Data.Params["key"] = tokenResp.Data.Key
 
 	rep.Phase("uploading")
-	rc, size, err := progress.OpenFile(req.FilePath, rep)
+	apkFile := req.Package()
+	size, err := apkFile.Size()
 	if err != nil {
-		return fmt.Errorf("open apk: %w", err)
+		return fmt.Errorf("stat apk: %w", err)
 	}
-	defer rc.Close()
+	rep.Total(size)
 
 	resp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
-		Method: http.MethodPost,
-		URL:    tokenResp.Data.Endpoint,
-		Fields: tokenResp.Data.Params,
-		Files:  []httpx.FileField{{Field: "file", FileName: filepath.Base(req.FilePath), Reader: rc, Size: size}},
-		Client: s.uploadClient,
+		Method:   http.MethodPost,
+		URL:      tokenResp.Data.Endpoint,
+		Fields:   tokenResp.Data.Params,
+		Files:    []httpx.FileField{{Field: "file", FileName: apkFile.Name(), Path: apkFile.Path, Size: size}},
+		Progress: rep,
+		Client:   s.uploadClient,
 	})
 	if err != nil {
 		return fmt.Errorf("upload to cos: %w", err)
@@ -129,7 +134,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 
 	// 3. Poll build info until published
 	rep.Phase("processing")
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(buildPollInterval)
 	defer ticker.Stop()
 
 	for attempt := 0; attempt < 30; attempt++ {
