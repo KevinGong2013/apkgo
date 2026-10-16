@@ -192,12 +192,14 @@ func FetchListing(ctx context.Context, job ListingJob) (*ListingReport, error) {
 // of inheriting another store's values. An image that fails to download
 // is recorded in that store's Error and left out of the file.
 //
-// What a store hands back isn't always what it would accept: some serve
+// What a store hands back isn't always what it would accept. An image in
+// a format the store doesn't take back (oppo: WEBP) is re-encoded into one
+// it does (store.ConformListingImage), with a note. Some stores serve
 // re-encoded previews instead of the originals (honor: WEBP at reduced
-// size). Images that fail the store's own ListingSpec are therefore left
-// out of the file (the download stays in assets for reference) so the
-// store keeps what it has; text is always written, with a note when it
-// wouldn't pass. Either way the store's Notes say so.
+// size); images that still fail the store's own ListingSpec are left out
+// of the file (the download stays in assets for reference) so the store
+// keeps what it has; text is always written, with a note when it wouldn't
+// pass. Either way the store's Notes say so.
 func saveListing(ctx context.Context, dir, listingPath string, report *ListingReport) error {
 	assets := filepath.Join(dir, "assets")
 	if err := os.MkdirAll(assets, 0o755); err != nil {
@@ -211,13 +213,13 @@ func saveListing(ctx context.Context, dir, listingPath string, report *ListingRe
 		if !s.Supported || (s.Error != "" && s.Brief == "" && s.Description == "" && s.Icon == "" && len(s.Screenshots) == 0) {
 			continue
 		}
+		key := s.Store
+		if dot := strings.Index(key, "."); dot > 0 {
+			key = key[:dot]
+		}
 		// unfit says why l wouldn't pass this store's spec ("" = fits, or
 		// the store declares none): the first problem, plus how many more.
 		unfit := func(l *store.Listing) string {
-			key := s.Store
-			if dot := strings.Index(key, "."); dot > 0 {
-				key = key[:dot]
-			}
 			if store.ListingSpecFor(key) == nil {
 				return ""
 			}
@@ -235,18 +237,25 @@ func saveListing(ctx context.Context, dir, listingPath string, report *ListingRe
 		fields := listing.Fields{Brief: s.Brief, Description: s.Description}
 		var problems []string
 		if s.Icon != "" {
-			name, err := dl.fetch(ctx, s.Icon, "icon")
+			name, from, err := dl.fetch(ctx, s.Icon, "icon", func(data []byte) ([]byte, bool) {
+				return store.ConformListingImage(key, store.ListingIcon, data)
+			})
 			if err != nil {
 				problems = append(problems, fmt.Sprintf("download icon: %v", err))
 			} else if why := unfit(&store.Listing{Icon: filepath.Join(assets, name)}); why != "" {
 				s.Notes = append(s.Notes, "icon left out of the listing file — the store's copy doesn't meet its own upload spec: "+why)
 			} else {
 				fields.Icon = path.Join("assets", name)
+				if from != "" {
+					s.Notes = append(s.Notes, fmt.Sprintf("icon converted from %s to %s — the store serves it in a format it doesn't take back", from, path.Ext(name)[1:]))
+				}
 			}
 		}
-		var shots []string
+		var shots, converted []string
 		for n, u := range s.Screenshots {
-			name, err := dl.fetch(ctx, u, "screenshot")
+			name, from, err := dl.fetch(ctx, u, "screenshot", func(data []byte) ([]byte, bool) {
+				return store.ConformListingImage(key, store.ListingScreenshots, data)
+			})
 			if err != nil {
 				// A partial screenshot set would replace the store's full
 				// one on upload; keep none rather than some.
@@ -255,6 +264,9 @@ func saveListing(ctx context.Context, dir, listingPath string, report *ListingRe
 				break
 			}
 			shots = append(shots, name)
+			if from != "" {
+				converted = append(converted, fmt.Sprintf("%d (%s to %s)", n+1, from, path.Ext(name)[1:]))
+			}
 		}
 		if len(shots) > 0 {
 			local := make([]string, len(shots))
@@ -266,6 +278,9 @@ func saveListing(ctx context.Context, dir, listingPath string, report *ListingRe
 			} else {
 				for _, name := range shots {
 					fields.Screenshots = append(fields.Screenshots, path.Join("assets", name))
+				}
+				if len(converted) > 0 {
+					s.Notes = append(s.Notes, "screenshots converted — the store serves them in a format it doesn't take back: "+strings.Join(converted, ", "))
 				}
 			}
 		}
@@ -322,50 +337,59 @@ type imageDownloader struct {
 	client *http.Client
 }
 
-// fetch downloads url and returns the name of the file holding it — an
-// earlier file when the bytes were already saved, else the next
-// "<kind>-<n>" with the extension of the image's real format.
-func (d *imageDownloader) fetch(ctx context.Context, url, kind string) (string, error) {
+// fetch downloads url, passes the bytes through conform and returns the
+// name of the file holding the result — an earlier file when the bytes
+// were already saved, else the next "<kind>-<n>" with the extension of
+// the image's real format. from is the downloaded format when conform
+// converted the image, else "".
+func (d *imageDownloader) fetch(ctx context.Context, url, kind string, conform func([]byte) ([]byte, bool)) (name, from string, err error) {
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		return "", fmt.Errorf("not an http(s) URL: %q", url)
+		return "", "", fmt.Errorf("not an http(s) URL: %q", url)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	resp, err := d.client.Do(req)
 	if err != nil {
-		return "", httpx.RedactURLError(err)
+		return "", "", httpx.RedactURLError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("http %d", resp.StatusCode)
+		return "", "", fmt.Errorf("http %d", resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, listingImageMaxBytes+1))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if len(data) > listingImageMaxBytes {
-		return "", fmt.Errorf("larger than %d MB", listingImageMaxBytes>>20)
+		return "", "", fmt.Errorf("larger than %d MB", listingImageMaxBytes>>20)
 	}
 	info, err := imgcheck.InspectBytes(data)
 	if err != nil {
-		return "", fmt.Errorf("not a png/jpeg/webp image")
+		return "", "", fmt.Errorf("not a png/jpeg/webp image")
+	}
+	if out, converted := conform(data); converted {
+		from = info.Format
+		data = out
+		if info, err = imgcheck.InspectBytes(data); err != nil {
+			return "", "", err
+		}
 	}
 	sum := sha256.Sum256(data)
 	sha := hex.EncodeToString(sum[:])
 	if name, ok := d.bySHA[sha]; ok {
-		return name, nil
+		return name, from, nil
 	}
 	ext := map[string]string{"jpeg": "jpg"}[info.Format]
 	if ext == "" {
 		ext = info.Format
 	}
-	name := fmt.Sprintf("%s-%d.%s", kind, d.count[kind]+1, ext)
+	name = fmt.Sprintf("%s-%d.%s", kind, d.count[kind]+1, ext)
 	if err := os.WriteFile(filepath.Join(d.dir, name), data, 0o644); err != nil {
-		return "", err
+		return "", "", err
 	}
 	d.count[kind]++
 	d.bySHA[sha] = name
-	return name, nil
+	return name, from, nil
 }
