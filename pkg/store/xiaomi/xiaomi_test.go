@@ -472,6 +472,119 @@ func TestNewWithDefaultCert(t *testing.T) {
 	}
 }
 
+// rateLimitServer answers /dev/query with -20035 for the first limited
+// calls and with the package after that, counting the calls.
+func rateLimitServer(t *testing.T, limited int32, calls *atomic.Int32) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/dev/query" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if calls.Add(1) <= limited {
+			_, _ = w.Write([]byte(`{"result":-20035,"message":"请求频率太快"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"result":0,"packageInfo":{"packageName":"com.example.helloworld","versionCode":1,"versionName":"1.0"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func shortRateLimitWaits(t *testing.T) {
+	t.Helper()
+	old := queryRateLimitWaits
+	queryRateLimitWaits = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { queryRateLimitWaits = old })
+}
+
+// 2026-10-16: a /dev/query 54ms after another one for the same account got
+// -20035, and the upload failed with it. query waits and asks again.
+func TestQueryRetriesRateLimit(t *testing.T) {
+	shortRateLimitWaits(t)
+	var calls atomic.Int32
+	srv := rateLimitServer(t, 2, &calls)
+	s, _ := newTestStore(t, srv.URL)
+	s.client.SetBaseURL(srv.URL)
+
+	info, err := s.query(context.Background(), "com.example.helloworld")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if info == nil || info.VersionCode != 1 {
+		t.Errorf("info = %+v, want versionCode 1", info)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Errorf("calls = %d, want 3 (two -20035, then the answer)", got)
+	}
+}
+
+// Still -20035 after every wait: the upload fails as store_busy, which
+// orchestrators retry minutes later, instead of unknown.
+func TestUploadRateLimitedIsStoreBusy(t *testing.T) {
+	shortRateLimitWaits(t)
+	var calls atomic.Int32
+	srv := rateLimitServer(t, 100, &calls)
+	s, _ := newTestStore(t, srv.URL)
+	s.client.SetBaseURL(srv.URL)
+
+	res := s.Upload(context.Background(), &store.UploadRequest{PackageName: "com.example.helloworld", VersionCode: 2})
+	if res.Success {
+		t.Fatal("upload succeeded, want failure")
+	}
+	if res.Category != store.CategoryStoreBusy {
+		t.Errorf("category = %q, want store_busy (error %q)", res.Category, res.Error)
+	}
+	if want := int32(len(queryRateLimitWaits) + 1); calls.Load() != want {
+		t.Errorf("calls = %d, want %d", calls.Load(), want)
+	}
+}
+
+// A wrong private key is auth_failed and asked once: waiting won't fix it.
+func TestQueryWrongPasswordIsAuthFailed(t *testing.T) {
+	shortRateLimitWaits(t)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":-20014,"message":"密码错误"}`))
+	}))
+	defer srv.Close()
+	s, _ := newTestStore(t, srv.URL)
+	s.client.SetBaseURL(srv.URL)
+
+	_, err := s.query(context.Background(), "com.example.helloworld")
+	if got := store.CategoryOf(err); got != store.CategoryAuthFailed {
+		t.Errorf("category = %q, want auth_failed (error %v)", got, err)
+	}
+	if calls.Load() != 1 {
+		t.Errorf("calls = %d, want 1", calls.Load())
+	}
+}
+
+// The wait between retries gives up as soon as the context is done.
+func TestQueryRateLimitWaitHonoursContext(t *testing.T) {
+	old := queryRateLimitWaits
+	queryRateLimitWaits = []time.Duration{time.Hour}
+	t.Cleanup(func() { queryRateLimitWaits = old })
+	var calls atomic.Int32
+	srv := rateLimitServer(t, 100, &calls)
+	s, _ := newTestStore(t, srv.URL)
+	s.client.SetBaseURL(srv.URL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := s.query(ctx, "com.example.helloworld")
+	if store.CategoryOf(err) != store.CategoryStoreBusy {
+		t.Errorf("err = %v, want the -20035 (store_busy)", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Errorf("query waited %s after the context was done", time.Since(start))
+	}
+}
+
 // TestDiagnoseChecksKeyWithoutPackage: with no package hint, diagnose must
 // still reach /dev/query — cert alone never talks to Xiaomi, and passing on
 // cert alone is how a wrong private key got saved as verified and only failed
