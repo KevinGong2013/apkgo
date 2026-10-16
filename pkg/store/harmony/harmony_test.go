@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/internal/offloadtest"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
@@ -212,56 +214,75 @@ func writeApp(t *testing.T, name string) string {
 	return p
 }
 
+// TestUploadHappyPath runs the whole release, once with the .app on disk
+// and once with it only in remote storage (FileFacts + an Offloader):
+// AGC must see the same requests, the same size / sha256 and the same
+// bytes at the signed PUT.
 func TestUploadHappyPath(t *testing.T) {
-	f := newFakeAGC(t)
-	f.compilePolls = 2
-	f.submitBusy = 1
-	s := f.store()
-	s.mainlandFlag = "1"
 	path := writeApp(t, "demo-default-signed.app")
 	rt := time.Date(2026, 10, 1, 10, 0, 0, 0, time.FixedZone("UTC+8", 8*3600))
 
-	res := s.Upload(context.Background(), &store.UploadRequest{
-		FilePath:     path,
-		PackageName:  "com.example.harmony",
-		VersionCode:  1000003,
-		VersionName:  "1.0.3",
-		ReleaseNotes: "修复若干问题",
-		ReleaseTime:  &rt,
-	})
-	if !res.Success {
-		t.Fatalf("upload failed: %s (category %s)", res.Error, res.Category)
-	}
-	if res.ExternalID != "pkg-9" {
-		t.Errorf("ExternalID = %q, want pkg-9", res.ExternalID)
-	}
+	for _, remote := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote=%v", remote), func(t *testing.T) {
+			f := newFakeAGC(t)
+			f.compilePolls = 2
+			f.submitBusy = 1
+			s := f.store()
+			s.mainlandFlag = "1"
 
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	want := []string{"appid-list", "upload-url", "obs-put", "app-package-info", "app-info", "app-language-info",
-		"compile-status", "compile-status", "compile-status", "app-submit", "app-submit"}
-	if strings.Join(f.calls, ",") != strings.Join(want, ",") {
-		t.Errorf("calls = %v\nwant    %v", f.calls, want)
-	}
-	if string(f.putBody) != "fake harmony app pack bytes" {
-		t.Errorf("uploaded body = %q", f.putBody)
-	}
-	if f.putHdr.Get("x-amz-date") != "20260911T000000Z" || f.putHdr.Get("Authorization") != "AWS4-HMAC-SHA256 sig" {
-		t.Errorf("signed headers not forwarded: %v", f.putHdr)
-	}
-	if f.putHost != "obs.example.com" {
-		t.Errorf("Host = %q, want obs.example.com", f.putHost)
-	}
-	sum := sha256.Sum256([]byte("fake harmony app pack bytes"))
-	if q := f.uploadQueries[0]; q["sha256"] != hex.EncodeToString(sum[:]) || q["contentLength"] != "27" ||
-		q["fileName"] != "demo-default-signed.app" || q["chineseMainlandFlag"] != "1" {
-		t.Errorf("upload-url query = %v", q)
-	}
-	if f.notesLang != "zh-CN" || f.notesText != "修复若干问题" {
-		t.Errorf("release notes = %q/%q", f.notesLang, f.notesText)
-	}
-	if f.submitBody["releaseTime"] != "2026-10-01T10:00:00+0800" {
-		t.Errorf("submit releaseTime = %v", f.submitBody["releaseTime"])
+			req := &store.UploadRequest{
+				FilePath:     path,
+				PackageName:  "com.example.harmony",
+				VersionCode:  1000003,
+				VersionName:  "1.0.3",
+				ReleaseNotes: "修复若干问题",
+				ReleaseTime:  &rt,
+			}
+			ctx := context.Background()
+			var off *offloadtest.Offloader
+			if remote {
+				req, ctx, off = offloadtest.Remote(t, ctx, req)
+			}
+			res := s.Upload(ctx, req)
+			if !res.Success {
+				t.Fatalf("upload failed: %s (category %s)", res.Error, res.Category)
+			}
+			if res.ExternalID != "pkg-9" {
+				t.Errorf("ExternalID = %q, want pkg-9", res.ExternalID)
+			}
+			if remote && !off.Sent(req.FilePath) {
+				t.Error("the package did not go out as a transfer")
+			}
+
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			want := []string{"appid-list", "upload-url", "obs-put", "app-package-info", "app-info", "app-language-info",
+				"compile-status", "compile-status", "compile-status", "app-submit", "app-submit"}
+			if strings.Join(f.calls, ",") != strings.Join(want, ",") {
+				t.Errorf("calls = %v\nwant    %v", f.calls, want)
+			}
+			if string(f.putBody) != "fake harmony app pack bytes" {
+				t.Errorf("uploaded body = %q", f.putBody)
+			}
+			if f.putHdr.Get("x-amz-date") != "20260911T000000Z" || f.putHdr.Get("Authorization") != "AWS4-HMAC-SHA256 sig" ||
+				f.putHdr.Get("Content-Type") != "application/octet-stream" || f.putHdr.Get("User-Agent") != "agc" {
+				t.Errorf("signed headers not forwarded: %v", f.putHdr)
+			}
+			if f.putHost != "obs.example.com" {
+				t.Errorf("Host = %q, want obs.example.com", f.putHost)
+			}
+			sum := sha256.Sum256([]byte("fake harmony app pack bytes"))
+			if q := f.uploadQueries[0]; q["sha256"] != hex.EncodeToString(sum[:]) || q["contentLength"] != "27" ||
+				q["fileName"] != "demo-default-signed.app" || q["chineseMainlandFlag"] != "1" {
+				t.Errorf("upload-url query = %v", q)
+			}
+			if f.notesLang != "zh-CN" || f.notesText != "修复若干问题" {
+				t.Errorf("release notes = %q/%q", f.notesLang, f.notesText)
+			}
+			if f.submitBody["releaseTime"] != "2026-10-01T10:00:00+0800" {
+				t.Errorf("submit releaseTime = %v", f.submitBody["releaseTime"])
+			}
+		})
 	}
 }
 

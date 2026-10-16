@@ -272,7 +272,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		return s.publishByURL(ctx, appID, req, rep)
 	}
 
-	if err := s.uploadAPK(ctx, appID, req.FilePath, rep); err != nil {
+	if err := s.uploadAPK(ctx, appID, req.Package(), rep); err != nil {
 		return fmt.Errorf("upload apk: %w", err)
 	}
 
@@ -444,9 +444,9 @@ const (
 
 // uploadAPK uploads the APK and binds it to the app's draft version as
 // its package: upload-url → upload → app-file-info (fileType 5).
-func (s *Store) uploadAPK(ctx context.Context, appID, apkPath string, rep progress.Reporter) error {
+func (s *Store) uploadAPK(ctx context.Context, appID string, apkFile store.PackageFile, rep progress.Reporter) error {
 	rep.Phase("uploading")
-	f, err := s.uploadFile(ctx, appID, apkPath, "apk", false, rep)
+	f, err := s.uploadFile(ctx, appID, apkFile, "apk", false, rep)
 	if err != nil {
 		return err
 	}
@@ -478,8 +478,9 @@ type uploadedFile struct {
 	ImageResolutionSignature string `json:"imageResolutionSingature,omitempty"`
 }
 
-// uploadFile puts one local file on Huawei's file server: upload-url for
-// the given suffix (apk, png, jpg, …) → multipart POST. The returned file
+// uploadFile puts one file on Huawei's file server — the package, or a
+// local listing image (a PackageFile without facts): upload-url for the
+// given suffix (apk, png, jpg, …) → multipart POST. The returned file
 // still has to be bound to the app with updateFileInfo.
 //
 // parseImage asks the file server to parse the upload as an image
@@ -487,7 +488,7 @@ type uploadedFile struct {
 // imageResolutionSingature pair app-file-info demands for icons and
 // screenshots; with parseType=0 they come back empty and the bind fails
 // with 204144641 "input fileUrls format error, sign is empty".
-func (s *Store) uploadFile(ctx context.Context, appID, path, suffix string, parseImage bool, rep progress.Reporter) (uploadedFile, error) {
+func (s *Store) uploadFile(ctx context.Context, appID string, file store.PackageFile, suffix string, parseImage bool, rep progress.Reporter) (uploadedFile, error) {
 	url, authCode, err := s.getUploadURL(ctx, appID, suffix)
 	if err != nil {
 		return uploadedFile{}, err
@@ -507,16 +508,16 @@ func (s *Store) uploadFile(ctx context.Context, appID, path, suffix string, pars
 			ResultCode string `json:"resultCode"`
 		} `json:"result"`
 	}
-	filename := filepath.Base(path)
+	filename := file.Name()
 	parseType := "0"
 	if parseImage {
 		parseType = "1"
 	}
-	rc, fSize, err := progress.OpenFile(path, rep)
+	fSize, err := file.Size()
 	if err != nil {
-		return uploadedFile{}, fmt.Errorf("open %s: %w", suffix, err)
+		return uploadedFile{}, fmt.Errorf("stat %s: %w", suffix, err)
 	}
-	defer rc.Close()
+	rep.Total(fSize)
 	resp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
 		Method: http.MethodPost,
 		URL:    url,
@@ -526,8 +527,9 @@ func (s *Store) uploadFile(ctx context.Context, appID, path, suffix string, pars
 			"name":      filename,
 			"parseType": parseType,
 		},
-		Files:  []httpx.FileField{{Field: "file", FileName: filename, Reader: rc, Size: fSize}},
-		Client: s.uploadClient,
+		Files:    []httpx.FileField{{Field: "file", FileName: filename, Path: file.Path, Size: fSize}},
+		Progress: rep,
+		Client:   s.uploadClient,
 	})
 	if err != nil {
 		return uploadedFile{}, err

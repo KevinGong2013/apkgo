@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/internal/offloadtest"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
@@ -122,34 +124,53 @@ func byURLRequest(t *testing.T) *store.UploadRequest {
 // Download mode goes through app-submit-with-file and succeeds only once
 // Huawei's version under review carries the NEW versionCode. The first two
 // answers reproduce the production bug's trap: the app is already "under
-// review" but still with the previous package.
+// review" but still with the previous package. With the package only in
+// remote storage (FileFacts + an Offloader) nothing changes, and no
+// transfer is made.
 func TestPublishByURLWaitsForTheNewPackage(t *testing.T) {
 	old := `{"ret":{"code":0},"appInfo":{"releaseState":5,"versionNumber":"11.0.8","versionCode":10629,"onShelfVersionNumber":"11.0.8","onShelfVersionCode":10629}}`
 	done := `{"ret":{"code":0},"appInfo":{"releaseState":5,"versionNumber":"11.0.9","versionCode":10631,"onShelfVersionNumber":"11.0.8","onShelfVersionCode":10629}}`
-	f, s := newFakeDownloadAGC(t, old, old, done)
+	for _, remote := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote=%v", remote), func(t *testing.T) {
+			f, s := newFakeDownloadAGC(t, old, old, done)
 
-	req := byURLRequest(t)
-	at := time.Date(2026, 10, 15, 20, 0, 0, 0, time.FixedZone("CST", 8*3600))
-	req.ReleaseTime = &at
-	if res := s.Upload(context.Background(), req); !res.Success {
-		t.Fatalf("Upload failed: %s", res.Error)
-	}
+			req := byURLRequest(t)
+			at := time.Date(2026, 10, 15, 20, 0, 0, 0, time.FixedZone("CST", 8*3600))
+			req.ReleaseTime = &at
+			ctx := context.Background()
+			var off *offloadtest.Offloader
+			if remote {
+				// offloadtest takes the facts from a real file; the store
+				// then gets a path that doesn't exist here.
+				if err := os.WriteFile(req.FilePath, []byte("PK\x03\x04 fake apk"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				req, ctx, off = offloadtest.Remote(t, ctx, req)
+			}
+			if res := s.Upload(ctx, req); !res.Success {
+				t.Fatalf("Upload failed: %s", res.Error)
+			}
 
-	want := []string{"PUT app-info", "POST app-submit-with-file", "GET app-info", "GET app-info", "GET app-info"}
-	if got := f.seen(); !slices.Equal(got, want) {
-		t.Fatalf("calls = %v, want %v", got, want)
-	}
-	if f.submit["downloadUrl"] != byURLLink {
-		t.Errorf("downloadUrl = %v, want the link unchanged", f.submit["downloadUrl"])
-	}
-	if f.submit["downloadFileName"] != "com.example.app.apk" {
-		t.Errorf("downloadFileName = %v", f.submit["downloadFileName"])
-	}
-	if id, _ := f.submit["requestId"].(string); id == "" || len(id) > 64 {
-		t.Errorf("requestId = %q, want 1–64 characters", id)
-	}
-	if f.submit["releaseType"] != float64(1) || f.submit["releaseTime"] != "2026-10-15T20:00:00+0800" {
-		t.Errorf("releaseType / releaseTime = %v / %v", f.submit["releaseType"], f.submit["releaseTime"])
+			want := []string{"PUT app-info", "POST app-submit-with-file", "GET app-info", "GET app-info", "GET app-info"}
+			if got := f.seen(); !slices.Equal(got, want) {
+				t.Fatalf("calls = %v, want %v", got, want)
+			}
+			if f.submit["downloadUrl"] != byURLLink {
+				t.Errorf("downloadUrl = %v, want the link unchanged", f.submit["downloadUrl"])
+			}
+			if f.submit["downloadFileName"] != "com.example.app.apk" {
+				t.Errorf("downloadFileName = %v", f.submit["downloadFileName"])
+			}
+			if id, _ := f.submit["requestId"].(string); id == "" || len(id) > 64 {
+				t.Errorf("requestId = %q, want 1–64 characters", id)
+			}
+			if f.submit["releaseType"] != float64(1) || f.submit["releaseTime"] != "2026-10-15T20:00:00+0800" {
+				t.Errorf("releaseType / releaseTime = %v / %v", f.submit["releaseType"], f.submit["releaseTime"])
+			}
+			if remote && len(off.Transfers()) != 0 {
+				t.Errorf("download mode made %d transfers, want none", len(off.Transfers()))
+			}
+		})
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -259,9 +258,9 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (int64, er
 	// Meizu accepts a single 64-bit package (32-bit uploads are rejected
 	// with code 113030), so a split-arch invocation sends the 64-bit
 	// artifact.
-	apkPath := req.FilePath
+	apkFile := req.Package()
 	if req.File64Path != "" {
-		apkPath = req.File64Path
+		apkFile = req.Package64()
 	}
 
 	// 2. Screenshots. publish refuses a version without any ("[113001]
@@ -279,14 +278,14 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (int64, er
 	// This runs ahead of the APK upload so an APK without a usable icon
 	// fails before the slow part.
 	if det.Icon == "" && (req.Listing == nil || req.Listing.Icon == "") {
-		if det.Icon, err = s.launcherIcon(ctx, apkPath); err != nil {
+		if det.Icon, err = s.launcherIcon(ctx, apkFile); err != nil {
 			return 0, fmt.Errorf("icon: %w", err)
 		}
 	}
 
 	// 4. Upload the APK.
 	rep.Phase("uploading")
-	packageURL, err := s.uploadFile(ctx, apkUploadURI, apkPath, rep)
+	packageURL, err := s.uploadFile(ctx, apkUploadURI, apkFile, rep)
 	if err != nil {
 		return 0, fmt.Errorf("upload apk: %w", err)
 	}
@@ -362,21 +361,22 @@ func (s *Store) detail(ctx context.Context, verID int64) (*appDetail, error) {
 
 // uploadFile streams a file to one of the multipart upload endpoints
 // (apkUploadURI / imageUploadURI) and returns the stored file name,
-// which publish takes as packageUrl / icon / screenShots.
-func (s *Store) uploadFile(ctx context.Context, uri, filePath string, rep progress.Reporter) (string, error) {
-	rc, fSize, err := progress.WrapFile(filePath, rep)
+// which publish takes as packageUrl / icon / screenShots. file is the
+// package, or a local image as a PackageFile with no facts.
+func (s *Store) uploadFile(ctx context.Context, uri string, file store.PackageFile, rep progress.Reporter) (string, error) {
+	fSize, err := file.Size()
 	if err != nil {
-		return "", fmt.Errorf("open file: %w", err)
+		return "", fmt.Errorf("stat file: %w", err)
 	}
-	defer rc.Close()
 	rep.Total(fSize)
 
 	resp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
-		Method:  http.MethodPost,
-		URL:     s.baseURL + uri,
-		Headers: s.signedHeaders(uri),
-		Files:   []httpx.FileField{{Field: "file", FileName: filepath.Base(filePath), Reader: rc, Size: fSize}},
-		Client:  s.uploadClient,
+		Method:   http.MethodPost,
+		URL:      s.baseURL + uri,
+		Headers:  s.signedHeaders(uri),
+		Files:    []httpx.FileField{{Field: "file", FileName: file.Name(), Path: file.Path, Size: fSize}},
+		Progress: rep,
+		Client:   s.uploadClient,
 	})
 	if err != nil {
 		return "", err

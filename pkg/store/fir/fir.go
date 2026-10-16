@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -105,7 +104,7 @@ func (s *Store) Upload(ctx context.Context, req *store.UploadRequest) *store.Upl
 	return store.NewResult(s.Name(), start)
 }
 
-func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
+func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	rep := progress.Safe(req.Progress)
 
 	// 1. Get upload token
@@ -142,17 +141,20 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 
 	// 2. Upload binary
 	rep.Phase("uploading")
-	rc, size, err := progress.OpenFile(req.FilePath, rep)
+	apkFile := req.Package()
+	size, err := apkFile.Size()
 	if err != nil {
-		return fmt.Errorf("open apk: %w", err)
+		return fmt.Errorf("stat apk: %w", err)
 	}
-	defer rc.Close()
+	rep.Total(size)
 
 	var uploadResp struct {
 		Completed bool `json:"is_completed"`
 	}
 
-	resp, err := httpx.DoMultipart(context.Background(), httpx.MultipartRequest{
+	// Not cancelled with ctx (fir has no way to resume a half-sent
+	// upload), but under its values: an Offloader, a recorder.
+	resp, err := httpx.DoMultipart(context.WithoutCancel(ctx), httpx.MultipartRequest{
 		Method: http.MethodPost,
 		URL:    tokenResp.Cert.Binary.UploadURL,
 		Fields: map[string]string{
@@ -163,8 +165,9 @@ func (s *Store) upload(_ context.Context, req *store.UploadRequest) error {
 			"x:build":     strconv.Itoa(int(req.VersionCode)),
 			"x:changelog": req.ReleaseNotes,
 		},
-		Files:  []httpx.FileField{{Field: "file", FileName: filepath.Base(req.FilePath), Reader: rc, Size: size}},
-		Client: s.uploadClient,
+		Files:    []httpx.FileField{{Field: "file", FileName: apkFile.Name(), Path: apkFile.Path, Size: size}},
+		Progress: rep,
+		Client:   s.uploadClient,
 	})
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)

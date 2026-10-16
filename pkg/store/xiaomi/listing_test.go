@@ -39,6 +39,15 @@ func writePNG(t *testing.T, dir, name string, w, h int) string {
 
 func md5Of(b []byte) string { return fmt.Sprintf("%x", md5.Sum(b)) }
 
+// fileMD5 is the md5 of the file at path, as the SIG list signs it.
+func fileMD5(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return md5Of(b), nil
+}
+
 // pushPart is one multipart file part received by the fake /dev/push.
 type pushPart struct {
 	Field    string
@@ -309,6 +318,12 @@ func TestUploadListingIcon(t *testing.T) {
 	t.Run("extracted from apk", func(t *testing.T) {
 		dir := t.TempDir()
 		apkPath := copyFixtureAPK(t, dir)
+		// The temp icon goes under os.TempDir(), not next to the APK.
+		tmp := filepath.Join(dir, "tmp")
+		if err := os.Mkdir(tmp, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("TMPDIR", tmp)
 		srv, got := newPushServer(t, queryResp)
 		s, _ := newTestStore(t, srv.URL)
 		s.client.SetBaseURL(srv.URL)
@@ -326,7 +341,10 @@ func TestUploadListingIcon(t *testing.T) {
 			t.Errorf("icon part = %dx%d (err %v), want the 192px launcher icon", cfg.Width, cfg.Height, err)
 		}
 		if _, err := os.Stat(filepath.Join(dir, "apkgo_icon_tmp.png")); !os.IsNotExist(err) {
-			t.Errorf("extracted temp icon not removed: stat err = %v", err)
+			t.Errorf("icon extracted next to the APK: stat err = %v", err)
+		}
+		if left, err := os.ReadDir(tmp); err != nil || len(left) != 0 {
+			t.Errorf("extracted temp icon not removed: %v left in TMPDIR (err %v)", left, err)
 		}
 	})
 

@@ -75,7 +75,7 @@ func screenshotFiles(l *store.Listing) []sigFile {
 	}
 	files := make([]sigFile, 0, len(l.Screenshots))
 	for i, p := range l.Screenshots {
-		files = append(files, sigFile{name: fmt.Sprintf("screenshot_%d", i+1), path: p})
+		files = append(files, sigFile{name: fmt.Sprintf("screenshot_%d", i+1), file: store.PackageFile{Path: p}})
 	}
 	return files
 }

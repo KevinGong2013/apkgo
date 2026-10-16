@@ -3,20 +3,16 @@ package meizu
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"image"
-	_ "image/jpeg" // register jpeg decoder for in-APK icons
 	"image/png"
 	"os"
 
-	"github.com/shogo82148/androidbinary"
-	"github.com/shogo82148/androidbinary/apk"
 	"golang.org/x/image/draw"
-	_ "golang.org/x/image/webp" // modern Android (R8) stores launcher icons as webp
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/ctxlog"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
+	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
 // publish requires `icon`, and an update echoes the one app/detail
@@ -30,18 +26,10 @@ import (
 // asks for where it does name one (FAQ, docs?id=27).
 const iconSize = 512
 
-// iconDensities lists the launcher-icon densities to request, densest
-// first. androidbinary resolves the icon resource for the requested
-// config, and a zero density means mdpi — the 48px variant. 0xFFFE
-// (anydpi) is deliberately not in the list: it resolves to the
-// adaptive-icon XML, which image.Decode can't read. Lower densities are
-// fallbacks for APKs that only ship an adaptive XML at the top end.
-var iconDensities = []uint16{640, 480, 320, 240, 160}
-
 // launcherIcon uploads the APK's launcher icon through app/image/upload
 // and returns the destFileName publish takes as `icon`.
-func (s *Store) launcherIcon(ctx context.Context, apkPath string) (string, error) {
-	iconPath, err := extractIcon(apkPath)
+func (s *Store) launcherIcon(ctx context.Context, apkFile store.PackageFile) (string, error) {
+	iconPath, err := extractIcon(apkFile)
 	if err != nil {
 		return "", fmt.Errorf("app/detail returned none and the APK's launcher icon can't be read (在商店资料里提供图标，或到魅族开发者中心补上应用图标): %w", err)
 	}
@@ -49,18 +37,20 @@ func (s *Store) launcherIcon(ctx context.Context, apkPath string) (string, error
 
 	ctxlog.FromContext(ctx).Info("meizu has no icon for this app; submitting the APK's launcher icon")
 	// Small file; don't disturb the APK's progress bar.
-	name, err := s.uploadFile(ctx, imageUploadURI, iconPath, progress.Safe(nil))
+	name, err := s.uploadFile(ctx, imageUploadURI, store.PackageFile{Path: iconPath}, progress.Safe(nil))
 	if err != nil {
 		return "", fmt.Errorf("upload the APK's launcher icon: %w", err)
 	}
 	return name, nil
 }
 
-// extractIcon writes the APK's launcher icon as a 512×512 PNG to a temp
-// file, returning the path. The file name ends in .png because
-// app/image/upload checks the extension.
-func extractIcon(apkPath string) (string, error) {
-	src, err := readIcon(apkPath)
+// extractIcon writes the APK's launcher icon (PackageFile.LauncherIcon:
+// the densest one it ships, so a 48px mdpi icon isn't blown up to a
+// blurry 512px one) as a 512×512 PNG to a temp file, returning the path.
+// The file name ends in .png because app/image/upload checks the
+// extension.
+func extractIcon(apkFile store.PackageFile) (string, error) {
+	src, err := apkFile.LauncherIcon()
 	if err != nil {
 		return "", err
 	}
@@ -91,23 +81,4 @@ func extractIcon(apkPath string) (string, error) {
 		return "", err
 	}
 	return f.Name(), nil
-}
-
-// readIcon decodes the densest launcher icon the APK ships as an image.
-func readIcon(apkPath string) (image.Image, error) {
-	pkg, err := apk.OpenFile(apkPath)
-	if err != nil {
-		return nil, fmt.Errorf("open apk: %w", err)
-	}
-	defer pkg.Close()
-
-	var errs []error
-	for _, d := range iconDensities {
-		img, err := pkg.Icon(&androidbinary.ResTableConfig{Density: d})
-		if err == nil {
-			return img, nil
-		}
-		errs = append(errs, fmt.Errorf("density %d: %w", d, err))
-	}
-	return nil, errors.Join(errs...)
 }

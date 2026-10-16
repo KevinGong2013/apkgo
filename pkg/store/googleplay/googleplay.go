@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/apk"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
+	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
 	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
@@ -45,6 +47,9 @@ const apiHost = "https://androidpublisher.googleapis.com"
 
 type Store struct {
 	client *resty.Client
+	// token is the OAuth access token, client's bearer token. The binary
+	// upload goes through httpx rather than client and sends it itself.
+	token string
 	// uploadBase is the media-upload counterpart of client's base URL
 	// (.../upload/androidpublisher/v3/applications/{package}). Binaries
 	// and listing images are POSTed under it; kept separate so tests can
@@ -98,6 +103,7 @@ func New(cfg map[string]string) (*Store, error) {
 
 	return &Store{
 		client:      client,
+		token:       token,
 		uploadBase:  apiHost + "/upload/androidpublisher/v3/applications/" + packageName,
 		packageName: packageName,
 		track:       track,
@@ -140,13 +146,14 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// different Content-Type expectations; misuse returns HTTP 400 with
 	// no helpful hint, so we route by file extension.
 	rep.Phase("uploading")
-	rc, _, err := progress.OpenFile(req.FilePath, rep)
+	pkgFile := req.Package()
+	size, err := pkgFile.Size()
 	if err != nil {
-		return fmt.Errorf("open file: %w", err)
+		return fmt.Errorf("stat file: %w", err)
 	}
-	defer rc.Close()
+	rep.Total(size)
 
-	isAAB := apk.IsAAB(req.FilePath)
+	isAAB := apk.IsAAB(pkgFile.Path)
 	uploadPath := "apks"
 	contentType := "application/vnd.android.package-archive"
 	if isAAB {
@@ -156,20 +163,28 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	uploadURL := fmt.Sprintf("%s/edits/%s/%s", s.uploadBase, editID, uploadPath)
 
 	// Both /apks and /bundles return `versionCode` in the response body.
+	// Sent through httpx (an Offloader may carry the bytes) on client's
+	// own transport, so it is traced like the rest of the edit.
 	var uploadResp struct {
 		VersionCode int `json:"versionCode"`
 	}
-	resp, err = s.client.R().
-		SetContext(ctx).
-		SetHeader("Content-Type", contentType).
-		SetBody(rc).
-		SetResult(&uploadResp).
-		Post(uploadURL)
+	httpResp, err := httpx.DoUpload(ctx, httpx.FileRequest{
+		Method: http.MethodPost,
+		URL:    uploadURL,
+		Headers: map[string]string{
+			"Content-Type":  contentType,
+			"Authorization": "Bearer " + s.token,
+		},
+		Path:     pkgFile.Path,
+		Size:     size,
+		Progress: rep,
+		Client:   s.client.GetClient(),
+	})
 	artifact := "apk"
 	if isAAB {
 		artifact = "aab"
 	}
-	if err := checkResp("upload "+artifact, resp, err); err != nil {
+	if err := checkHTTPResp("upload "+artifact, httpResp, err, &uploadResp); err != nil {
 		return err
 	}
 

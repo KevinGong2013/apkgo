@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -28,6 +29,7 @@ type vivoCall struct {
 	query  url.Values // query string and form body merged
 	inURL  url.Values // query string only
 	file   string     // multipart "file" part's filename, for upload methods
+	data   []byte     // and its bytes
 }
 
 // fakeVivo mimics vivo's /router/rest: upload methods answer with a
@@ -51,11 +53,14 @@ func (f *fakeVivo) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	q := r.Form
 	c := vivoCall{method: q.Get("method"), query: q, inURL: r.URL.Query()}
 	if strings.HasPrefix(c.method, "app.upload.") {
-		_, hdr, err := r.FormFile("file")
+		file, hdr, err := r.FormFile("file")
 		if err != nil {
 			f.t.Errorf("%s: no multipart file part: %v", c.method, err)
 		} else {
 			c.file = hdr.Filename
+			if c.data, err = io.ReadAll(file); err != nil {
+				f.t.Errorf("%s: read file part: %v", c.method, err)
+			}
 		}
 	}
 	f.mu.Lock()

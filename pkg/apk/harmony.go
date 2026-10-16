@@ -71,13 +71,24 @@ type packInfo struct {
 // cannot be resolved (it is informational only — AGC takes the listing
 // name from the console, not from the package).
 func ParseHarmony(path string) (*Info, error) {
-	zr, err := zip.OpenReader(path)
+	var info *Info
+	err := withFile(path, "harmony package", func(r io.ReaderAt, size int64) (err error) {
+		info, err = ParseHarmonyAt(r, size, filepath.Base(path))
+		return err
+	})
+	return info, err
+}
+
+// ParseHarmonyAt is ParseHarmony over a package read through r (size
+// bytes long); name is its file name, whose extension tells a .hap module
+// from an .app pack.
+func ParseHarmonyAt(r io.ReaderAt, size int64, name string) (*Info, error) {
+	zr, err := zip.NewReader(r, size)
 	if err != nil {
 		return nil, fmt.Errorf("open harmony package: %w", err)
 	}
-	defer zr.Close()
 
-	pi, err := readPackInfo(&zr.Reader)
+	pi, err := readPackInfo(zr)
 	if err != nil {
 		return nil, err
 	}
@@ -98,9 +109,9 @@ func ParseHarmony(path string) (*Info, error) {
 
 	// Best-effort label. A .hap is itself the module; a .app pack nests the
 	// modules as <package name>.hap entries.
-	if strings.EqualFold(filepath.Ext(path), ".hap") {
-		info.AppName = labelFromModule(&zr.Reader)
-	} else if entry := findEntryHap(&zr.Reader, pi); entry != nil {
+	if strings.EqualFold(filepath.Ext(name), ".hap") {
+		info.AppName = labelFromModule(zr)
+	} else if entry := findEntryHap(zr, pi); entry != nil {
 		if inner := openNestedZip(entry); inner != nil {
 			info.AppName = labelFromModule(inner)
 		}

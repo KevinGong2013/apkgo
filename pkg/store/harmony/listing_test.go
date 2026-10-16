@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/internal/offloadtest"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
@@ -72,59 +74,76 @@ func assertJSON(t *testing.T, got []byte, want string) {
 	}
 }
 
+// TestUploadWithListing also runs with the .app only in remote storage
+// (FileFacts + an Offloader): the listing images, local files, go through
+// the same upload and the Offloader as well.
 func TestUploadWithListing(t *testing.T) {
-	f := newFakeAGC(t)
-	s := f.store()
 	icon := writePNG(t, "icon.png", 216, 216)
 	shots := screenshots(t, 3)
+	appPath := writeApp(t, "demo.app")
 
-	res := s.Upload(context.Background(), &store.UploadRequest{
-		FilePath:     writeApp(t, "demo.app"),
-		PackageName:  "com.example.harmony",
-		ReleaseNotes: "修复若干问题",
-		Listing: &store.Listing{
-			Brief:       "一句话简介",
-			Description: "很长的应用描述",
-			Icon:        icon,
-			Screenshots: shots,
-		},
-	})
-	if !res.Success {
-		t.Fatalf("upload failed: %s (category %s)", res.Error, res.Category)
-	}
+	for _, remote := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote=%v", remote), func(t *testing.T) {
+			f := newFakeAGC(t)
+			s := f.store()
+			req := &store.UploadRequest{
+				FilePath:     appPath,
+				PackageName:  "com.example.harmony",
+				ReleaseNotes: "修复若干问题",
+				Listing: &store.Listing{
+					Brief:       "一句话简介",
+					Description: "很长的应用描述",
+					Icon:        icon,
+					Screenshots: shots,
+				},
+			}
+			ctx := context.Background()
+			var off *offloadtest.Offloader
+			if remote {
+				req, ctx, off = offloadtest.Remote(t, ctx, req)
+			}
+			res := s.Upload(ctx, req)
+			if !res.Success {
+				t.Fatalf("upload failed: %s (category %s)", res.Error, res.Category)
+			}
+			if remote && (!off.Sent(req.FilePath) || !off.Sent(icon) || !off.Sent(shots[2])) {
+				t.Error("the package and listing images did not all go out as transfers")
+			}
 
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	want := []string{"appid-list", "upload-url", "obs-put", "app-package-info",
-		"app-info", "app-language-info",
-		"upload-url", "obs-put", // icon
-		"upload-url", "obs-put", "upload-url", "obs-put", "upload-url", "obs-put", // screenshots
-		"app-file-info", "compile-status", "app-submit"}
-	if strings.Join(f.calls, ",") != strings.Join(want, ",") {
-		t.Errorf("calls = %v\nwant    %v", f.calls, want)
-	}
-	wantLang := map[string]string{"lang": "zh-CN", "newFeatures": "修复若干问题", "briefInfo": "一句话简介", "appDesc": "很长的应用描述"}
-	if !reflect.DeepEqual(f.langBody, wantLang) {
-		t.Errorf("app-language-info body = %v, want %v", f.langBody, wantLang)
-	}
-	if f.fileInfoQuery["appId"] != "app-1" || f.fileInfoQuery["releaseType"] != "1" {
-		t.Errorf("app-file-info query = %v", f.fileInfoQuery)
-	}
-	assertJSON(t, f.fileInfoBody, `{
-		"appIconList": [{"lang": "zh-CN", "fileInfoList": [
-			{"deviceType": 4, "objectIdList": ["CN/2026091101/icon.png"], "showType": 0}]}],
-		"screenShotList": [{"lang": "zh-CN", "fileInfoList": [
-			{"deviceType": 4, "objectIdList": ["CN/2026091101/shot1.png", "CN/2026091101/shot2.png", "CN/2026091101/shot3.png"], "showType": 0}]}]
-	}`)
-	iconBytes, _ := os.ReadFile(icon)
-	if string(f.objects["CN/2026091101/icon.png"]) != string(iconBytes) {
-		t.Error("icon bytes not uploaded to its objectId")
-	}
-	if q := f.uploadQueries[1]; q["fileName"] != "icon.png" || q["appId"] != "app-1" || q["sha256"] == "" {
-		t.Errorf("icon upload-url query = %v", q)
-	}
-	if string(f.putBody) != "fake harmony app pack bytes" {
-		t.Errorf("package bytes = %q", f.putBody)
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			want := []string{"appid-list", "upload-url", "obs-put", "app-package-info",
+				"app-info", "app-language-info",
+				"upload-url", "obs-put", // icon
+				"upload-url", "obs-put", "upload-url", "obs-put", "upload-url", "obs-put", // screenshots
+				"app-file-info", "compile-status", "app-submit"}
+			if strings.Join(f.calls, ",") != strings.Join(want, ",") {
+				t.Errorf("calls = %v\nwant    %v", f.calls, want)
+			}
+			wantLang := map[string]string{"lang": "zh-CN", "newFeatures": "修复若干问题", "briefInfo": "一句话简介", "appDesc": "很长的应用描述"}
+			if !reflect.DeepEqual(f.langBody, wantLang) {
+				t.Errorf("app-language-info body = %v, want %v", f.langBody, wantLang)
+			}
+			if f.fileInfoQuery["appId"] != "app-1" || f.fileInfoQuery["releaseType"] != "1" {
+				t.Errorf("app-file-info query = %v", f.fileInfoQuery)
+			}
+			assertJSON(t, f.fileInfoBody, `{
+				"appIconList": [{"lang": "zh-CN", "fileInfoList": [
+					{"deviceType": 4, "objectIdList": ["CN/2026091101/icon.png"], "showType": 0}]}],
+				"screenShotList": [{"lang": "zh-CN", "fileInfoList": [
+					{"deviceType": 4, "objectIdList": ["CN/2026091101/shot1.png", "CN/2026091101/shot2.png", "CN/2026091101/shot3.png"], "showType": 0}]}]
+			}`)
+			iconBytes, _ := os.ReadFile(icon)
+			if string(f.objects["CN/2026091101/icon.png"]) != string(iconBytes) {
+				t.Error("icon bytes not uploaded to its objectId")
+			}
+			if q := f.uploadQueries[1]; q["fileName"] != "icon.png" || q["appId"] != "app-1" || q["sha256"] == "" {
+				t.Errorf("icon upload-url query = %v", q)
+			}
+			if string(f.putBody) != "fake harmony app pack bytes" {
+				t.Errorf("package bytes = %q", f.putBody)
+			}
+		})
 	}
 }
 

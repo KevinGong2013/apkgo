@@ -11,10 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"fmt"
-	"image"
-	_ "image/jpeg" // register jpeg decoder for icon extraction
 	"image/png"
 	"io"
 	"net/http"
@@ -25,12 +22,6 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/shogo82148/androidbinary"
-	"github.com/shogo82148/androidbinary/apk"
-	// Register decoder for webp icons. Modern Android builds (R8) often
-	// store app icons as webp; without this the std image package fails
-	// with "image: unknown format" when extracting the launcher icon.
-	_ "golang.org/x/image/webp"
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
 	"github.com/KevinGong2013/apkgo/v4/pkg/httpx"
@@ -206,11 +197,11 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		iconPath = req.Listing.Icon
 	} else {
 		rep.Phase("icon")
-		iconPath, err = extractIcon(req.FilePath)
+		iconPath, err = extractIcon(req.Package())
 		if err != nil {
 			return fmt.Errorf("extract icon: %w", err)
 		}
-		defer os.Remove(iconPath)
+		defer os.RemoveAll(filepath.Dir(iconPath))
 	}
 
 	// Push
@@ -287,11 +278,13 @@ func (s *Store) push(ctx context.Context, synchroType int, req *store.UploadRequ
 	// icon, screenshot_1..N) rather than letting map iteration shuffle it
 	// per run. The doc requires every uploaded file, screenshots included,
 	// to be signed.
-	files := []sigFile{{name: "apk", path: req.FilePath}}
-	if req.File64Path != "" {
-		files = append(files, sigFile{name: "secondApk", path: req.File64Path})
+	apkFile, apk64File := req.Package(), req.Package64()
+	iconFile := store.PackageFile{Path: iconPath}
+	files := []sigFile{{name: "apk", file: apkFile}}
+	if apk64File.Path != "" {
+		files = append(files, sigFile{name: "secondApk", file: apk64File})
 	}
-	files = append(files, sigFile{name: "icon", path: iconPath})
+	files = append(files, sigFile{name: "icon", file: iconFile})
 	files = append(files, shots...)
 
 	body := s.encode(map[string]any{
@@ -300,42 +293,32 @@ func (s *Store) push(ctx context.Context, synchroType int, req *store.UploadRequ
 		"appInfo":     appInfo,
 	}, files)
 
-	// Wrap every streamed file so the same reporter sees combined progress.
-	// Set Total once to the sum of all wrapped file sizes.
+	// Every part is sent from its path, so DoMultipart reports the bytes of
+	// all of them to the same reporter: set Total once to their sum.
 	rep.Phase("uploading")
-	apkRC, apkSize, err := progress.WrapFile(req.FilePath, rep)
+	apkSize, err := apkFile.Size()
 	if err != nil {
-		return fmt.Errorf("open apk: %w", err)
+		return fmt.Errorf("stat apk: %w", err)
 	}
-	defer apkRC.Close()
-
-	iconRC, iconSize, err := progress.WrapFile(iconPath, rep)
+	iconSize, err := iconFile.Size()
 	if err != nil {
-		return fmt.Errorf("open icon: %w", err)
+		return fmt.Errorf("stat icon: %w", err)
 	}
-	defer iconRC.Close()
-
-	var (
-		apk64RC   io.ReadCloser
-		apk64Size int64
-	)
-	if req.File64Path != "" {
-		apk64RC, apk64Size, err = progress.WrapFile(req.File64Path, rep)
-		if err != nil {
-			return fmt.Errorf("open apk64: %w", err)
+	var apk64Size int64
+	if apk64File.Path != "" {
+		if apk64Size, err = apk64File.Size(); err != nil {
+			return fmt.Errorf("stat apk64: %w", err)
 		}
-		defer apk64RC.Close()
 	}
 
 	shotParts := make([]httpx.FileField, 0, len(shots))
 	var shotsSize int64
 	for _, f := range shots {
-		rc, size, err := progress.WrapFile(f.path, rep)
+		size, err := f.file.Size()
 		if err != nil {
-			return fmt.Errorf("open %s: %w", f.name, err)
+			return fmt.Errorf("stat %s: %w", f.name, err)
 		}
-		defer rc.Close()
-		shotParts = append(shotParts, httpx.FileField{Field: f.name, FileName: filepath.Base(f.path), Reader: rc, Size: size})
+		shotParts = append(shotParts, httpx.FileField{Field: f.name, FileName: f.file.Name(), Path: f.file.Path, Size: size})
 		shotsSize += size
 	}
 	rep.Total(apkSize + iconSize + apk64Size + shotsSize)
@@ -345,20 +328,21 @@ func (s *Store) push(ctx context.Context, synchroType int, req *store.UploadRequ
 		fields[k] = body.Get(k)
 	}
 	parts := []httpx.FileField{
-		{Field: "apk", FileName: filepath.Base(req.FilePath), Reader: apkRC, Size: apkSize},
-		{Field: "icon", FileName: filepath.Base(iconPath), Reader: iconRC, Size: iconSize},
+		{Field: "apk", FileName: apkFile.Name(), Path: apkFile.Path, Size: apkSize},
+		{Field: "icon", FileName: iconFile.Name(), Path: iconFile.Path, Size: iconSize},
 	}
-	if apk64RC != nil {
-		parts = append(parts, httpx.FileField{Field: "secondApk", FileName: filepath.Base(req.File64Path), Reader: apk64RC, Size: apk64Size})
+	if apk64File.Path != "" {
+		parts = append(parts, httpx.FileField{Field: "secondApk", FileName: apk64File.Name(), Path: apk64File.Path, Size: apk64Size})
 	}
 	parts = append(parts, shotParts...)
 
 	pushResp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
-		Method: http.MethodPost,
-		URL:    s.baseURL + "/dev/push",
-		Fields: fields,
-		Files:  parts,
-		Client: s.uploadClient,
+		Method:   http.MethodPost,
+		URL:      s.baseURL + "/dev/push",
+		Fields:   fields,
+		Files:    parts,
+		Progress: rep,
+		Client:   s.uploadClient,
 	})
 	if err != nil {
 		return err
@@ -397,10 +381,12 @@ func classifyXiaomi(result int, msg string) store.Category {
 }
 
 // sigFile is one uploaded part as it appears in the SIG hash list: the
-// multipart field name plus the local file whose md5 is signed.
+// multipart field name plus the file whose md5 is signed — a package, whose
+// md5 may be a given fact, or a local image (no facts: its md5 is read
+// from the file).
 type sigFile struct {
 	name string
-	path string
+	file store.PackageFile
 }
 
 // encode builds form values with RSA-encrypted SIG. files is signed in the
@@ -416,10 +402,10 @@ func (s *Store) encode(params map[string]any, files []sigFile) url.Values {
 	}}
 
 	for _, f := range files {
-		if f.path == "" {
+		if f.file.Path == "" {
 			continue
 		}
-		hash, err := fileMD5(f.path)
+		hash, err := f.file.MD5()
 		if err != nil {
 			continue
 		}
@@ -516,57 +502,27 @@ func md5hex(data []byte) string {
 	return fmt.Sprintf("%x", md5.Sum(data))
 }
 
-func fileMD5(path string) (string, error) {
-	f, err := os.Open(path)
+// extractIcon writes the package's launcher icon (PackageFile.LauncherIcon:
+// the densest one it ships, so the console's HD icon isn't overwritten
+// with the blurry 48px mdpi variant, #51) as a PNG into a new temp
+// directory and returns its path; the caller removes the directory. The
+// file keeps the name /dev/push has always been sent, apkgo_icon_tmp.png.
+func extractIcon(pf store.PackageFile) (string, error) {
+	icon, err := pf.LauncherIcon()
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	h := md5.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
-}
-
-// iconDensities lists the launcher-icon densities to request, densest
-// first. androidbinary resolves the icon resource for the requested
-// config: a zero density means mdpi and yields the 48px variant, which is
-// what used to overwrite the console's HD icon with a blurry one (#51).
-// 0xFFFE (anydpi) is deliberately not in the list — it resolves to the
-// adaptive-icon XML, which image.Decode can't read. Lower densities are
-// fallbacks for APKs that only ship an adaptive XML at the top end.
-var iconDensities = []uint16{640, 480, 320, 240, 160}
-
-func extractIcon(apkPath string) (string, error) {
-	pkg, err := apk.OpenFile(apkPath)
-	if err != nil {
-		return "", err
-	}
-	defer pkg.Close()
-
-	var (
-		icon image.Image
-		errs []error
-	)
-	for _, d := range iconDensities {
-		img, err := pkg.Icon(&androidbinary.ResTableConfig{Density: d})
-		if err == nil {
-			icon = img
-			break
-		}
-		errs = append(errs, fmt.Errorf("density %d: %w", d, err))
-	}
-	if icon == nil {
-		return "", errors.Join(errs...)
-	}
-
-	iconPath := filepath.Join(filepath.Dir(apkPath), "apkgo_icon_tmp.png")
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, icon); err != nil {
 		return "", err
 	}
+	dir, err := os.MkdirTemp("", "apkgo-xiaomi-icon-")
+	if err != nil {
+		return "", err
+	}
+	iconPath := filepath.Join(dir, "apkgo_icon_tmp.png")
 	if err := os.WriteFile(iconPath, buf.Bytes(), 0644); err != nil {
+		os.RemoveAll(dir)
 		return "", err
 	}
 	return iconPath, nil

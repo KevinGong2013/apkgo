@@ -242,8 +242,16 @@ type transport struct {
 }
 
 func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
-	ex := Exchange{
-		Time:   time.Now(),
+	ex, sent, req := t.begin(req, time.Now())
+	resp, err := t.base.RoundTrip(req)
+	return t.end(ex, sent, resp, err), err
+}
+
+// begin starts recording req: what is known before it is sent. It
+// returns the request to send, which may carry a capturing body.
+func (t *transport) begin(req *http.Request, start time.Time) (*Exchange, *capture, *http.Request) {
+	ex := &Exchange{
+		Time:   start,
 		Store:  t.tracer.store,
 		Method: req.Method,
 		URL:    redactURL(req.URL),
@@ -258,14 +266,21 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		r2.Body = body
 		req = r2
 	}
+	return ex, sent, req
+}
 
-	resp, err := t.base.RoundTrip(req)
-	if err != nil {
+// end records the outcome of the exchange begun by begin — at once for a
+// failed round trip, otherwise once the response body has been read or
+// closed — and returns the response to hand on.
+func (t *transport) end(ex *Exchange, sent *capture, resp *http.Response, err error) *http.Response {
+	if err != nil || resp == nil {
 		sent.finish(&ex.Request)
 		ex.DurationMS = time.Since(ex.Time).Milliseconds()
-		ex.Error = redactError(err)
-		t.tracer.rec.Record(ex)
-		return nil, err
+		if err != nil {
+			ex.Error = redactError(err)
+		}
+		t.tracer.rec.Record(*ex)
+		return resp
 	}
 
 	ex.Status = resp.StatusCode
@@ -277,10 +292,28 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 			sent.finish(&ex.Request)
 			got.finish(ex.Response)
 			ex.DurationMS = time.Since(ex.Time).Milliseconds()
-			t.tracer.rec.Record(ex)
+			t.tracer.rec.Record(*ex)
 		})
 	}}
-	return resp, nil
+	return resp
+}
+
+// Recorded hands an exchange that took place outside c — an upload
+// another machine carried out on c's behalf (httpx.Offloader) — to c's
+// recorder, if c records, exactly as if c had sent req: req describes
+// what went out (its body is not read) and resp, or err, what came back,
+// starting at start. It returns the response to use in place of resp,
+// whose body is captured as it is read.
+func Recorded(c *http.Client, req *http.Request, start time.Time, resp *http.Response, err error) *http.Response {
+	if c == nil {
+		return resp
+	}
+	t, ok := c.Transport.(*transport)
+	if !ok {
+		return resp
+	}
+	ex, sent, _ := t.begin(req, start)
+	return t.end(ex, sent, resp, err)
 }
 
 // captureRequest decides how req's body is recorded. It returns the

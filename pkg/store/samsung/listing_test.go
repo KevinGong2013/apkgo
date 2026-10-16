@@ -1,6 +1,8 @@
 package samsung
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/internal/offloadtest"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
@@ -26,10 +29,12 @@ type fakeSamsung struct {
 	srv *httptest.Server
 
 	mu        sync.Mutex
-	calls     []string       // "path" or "fileUpload:<filename>"
-	sessions  []string       // sessionId of every fileUpload
-	update    map[string]any // decoded contentUpdate body
-	failFile  string         // fileUpload of this filename answers 500
+	calls     []string          // "path" or "fileUpload:<filename>"
+	sessions  []string          // sessionId of every fileUpload
+	files     map[string][]byte // fileUpload bytes by filename
+	fileAuth  []string          // service-account-id and Authorization of every fileUpload
+	update    map[string]any    // decoded contentUpdate body
+	failFile  string            // fileUpload of this filename answers 500
 	submitted bool
 
 	info   string   // contentInfo body; "" = a live app with versionCode 5
@@ -65,7 +70,7 @@ func answer(t *testing.T, w http.ResponseWriter, script *[]string, ok string) st
 
 func newFakeSamsung(t *testing.T) *fakeSamsung {
 	t.Helper()
-	f := &fakeSamsung{}
+	f := &fakeSamsung{files: map[string][]byte{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -81,10 +86,12 @@ func newFakeSamsung(t *testing.T) *fakeSamsung {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			io.Copy(io.Discard, file)
+			data, _ := io.ReadAll(file)
 			file.Close()
 			f.calls = append(f.calls, "fileUpload:"+hdr.Filename)
 			f.sessions = append(f.sessions, r.FormValue("sessionId"))
+			f.files[hdr.Filename] = data
+			f.fileAuth = append(f.fileAuth, r.Header.Get("service-account-id")+" "+r.Header.Get("Authorization"))
 			if hdr.Filename == f.failFile {
 				w.WriteHeader(http.StatusInternalServerError)
 				io.WriteString(w, `{"errorCode":"500","errorMsg":"boom"}`)
@@ -185,9 +192,10 @@ func TestUploadWithoutListing(t *testing.T) {
 
 // TestUploadWithListing checks that the icon and screenshots are uploaded
 // through the binary's session before contentUpdate, and that contentUpdate
-// carries the text fields plus the new file keys in display order.
+// carries the text fields plus the new file keys in display order. It goes
+// the same way when the package isn't here (remote): only its facts and an
+// Offloader, which sends the package and the (local) images.
 func TestUploadWithListing(t *testing.T) {
-	f := newFakeSamsung(t)
 	dir := t.TempDir()
 	l := &store.Listing{
 		Brief:       "一句话介绍",
@@ -197,40 +205,74 @@ func TestUploadWithListing(t *testing.T) {
 	for i := range 4 {
 		l.Screenshots = append(l.Screenshots, writePNG(t, dir, fmt.Sprintf("shot%d.png", i), 540, 960))
 	}
-	if err := f.store().upload(t.Context(), &store.UploadRequest{FilePath: writeAPK(t, dir), Listing: l}); err != nil {
-		t.Fatalf("upload: %v", err)
+	apkPath := writeAPK(t, dir)
+	apkData, err := os.ReadFile(apkPath)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	wantCalls := []string{
-		"/seller/createUploadSessionId", "fileUpload:app.apk",
-		"fileUpload:icon.png", "fileUpload:shot0.png", "fileUpload:shot1.png", "fileUpload:shot2.png", "fileUpload:shot3.png",
-		"/seller/contentInfo", "/seller/contentUpdate", "/seller/v2/content/binary", "/seller/contentSubmit",
-	}
-	if !reflect.DeepEqual(f.calls, wantCalls) {
-		t.Fatalf("calls = %v, want %v", f.calls, wantCalls)
-	}
-	for i, s := range f.sessions {
-		if s != "sess-1" {
-			t.Errorf("fileUpload[%d] sessionId = %q, want sess-1", i, s)
-		}
-	}
+	for _, remote := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote=%v", remote), func(t *testing.T) {
+			f := newFakeSamsung(t)
+			req := &store.UploadRequest{FilePath: apkPath, Listing: l}
+			ctx := context.Background()
+			var off *offloadtest.Offloader
+			if remote {
+				req, ctx, off = offloadtest.Remote(t, ctx, req)
+			}
+			if res := f.store().Upload(ctx, req); !res.Success {
+				t.Fatalf("upload: %s", res.Error)
+			}
 
-	want := map[string]any{
-		"shortDescription": "一句话介绍",
-		"longDescription":  "long description",
-		"iconKey":          "key-icon.png",
-		"screenshots": []any{
-			map[string]any{"screenshotKey": "key-shot0.png", "reuseYn": false},
-			map[string]any{"screenshotKey": "key-shot1.png", "reuseYn": false},
-			map[string]any{"screenshotKey": "key-shot2.png", "reuseYn": false},
-			map[string]any{"screenshotKey": "key-shot3.png", "reuseYn": false},
-		},
-	}
-	for k, v := range baseUpdate {
-		want[k] = v
-	}
-	if !reflect.DeepEqual(f.update, want) {
-		t.Fatalf("contentUpdate body = %v, want %v", f.update, want)
+			wantCalls := []string{
+				"/seller/createUploadSessionId", "fileUpload:app.apk",
+				"fileUpload:icon.png", "fileUpload:shot0.png", "fileUpload:shot1.png", "fileUpload:shot2.png", "fileUpload:shot3.png",
+				"/seller/contentInfo", "/seller/contentUpdate", "/seller/v2/content/binary", "/seller/contentSubmit",
+			}
+			if !reflect.DeepEqual(f.calls, wantCalls) {
+				t.Fatalf("calls = %v, want %v", f.calls, wantCalls)
+			}
+			for i, s := range f.sessions {
+				if s != "sess-1" {
+					t.Errorf("fileUpload[%d] sessionId = %q, want sess-1", i, s)
+				}
+			}
+			for i, a := range f.fileAuth {
+				if a != "svc-acct Bearer tok" {
+					t.Errorf("fileUpload[%d] service-account-id/Authorization = %q, want svc-acct Bearer tok", i, a)
+				}
+			}
+			if !bytes.Equal(f.files["app.apk"], apkData) {
+				t.Errorf("fileUpload got %d bytes of app.apk, want %d", len(f.files["app.apk"]), len(apkData))
+			}
+
+			want := map[string]any{
+				"shortDescription": "一句话介绍",
+				"longDescription":  "long description",
+				"iconKey":          "key-icon.png",
+				"screenshots": []any{
+					map[string]any{"screenshotKey": "key-shot0.png", "reuseYn": false},
+					map[string]any{"screenshotKey": "key-shot1.png", "reuseYn": false},
+					map[string]any{"screenshotKey": "key-shot2.png", "reuseYn": false},
+					map[string]any{"screenshotKey": "key-shot3.png", "reuseYn": false},
+				},
+			}
+			for k, v := range baseUpdate {
+				want[k] = v
+			}
+			if !reflect.DeepEqual(f.update, want) {
+				t.Fatalf("contentUpdate body = %v, want %v", f.update, want)
+			}
+
+			if remote {
+				if !off.Sent(req.FilePath) {
+					t.Errorf("the package did not go out as a transfer")
+				}
+				if n := len(off.Transfers()); n != 6 {
+					t.Errorf("%d transfers, want 6 (apk, icon, 4 screenshots)", n)
+				}
+			}
+		})
 	}
 }
 

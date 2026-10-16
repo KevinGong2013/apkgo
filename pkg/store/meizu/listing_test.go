@@ -74,6 +74,7 @@ type fakeMeizu struct {
 
 	mu         sync.Mutex
 	calls      []string
+	apks       [][]byte // app/apk/upload bodies
 	images     [][]byte // app/image/upload bodies, in upload order
 	submitURI  string
 	submitBody map[string]any
@@ -129,6 +130,11 @@ func (f *fakeMeizu) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.images = append(f.images, data)
 			f.mu.Unlock()
 			prefix = "img/"
+		} else {
+			data, _ := io.ReadAll(file)
+			f.mu.Lock()
+			f.apks = append(f.apks, data)
+			f.mu.Unlock()
 		}
 		fmt.Fprintf(w, `{"code":200,"value":{"destFileName":%q}}`, prefix+hdr.Filename)
 	case publishURI, failappURI:

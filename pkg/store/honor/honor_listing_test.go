@@ -1,7 +1,10 @@
 package honor
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -18,6 +21,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/KevinGong2013/apkgo/v4/pkg/internal/offloadtest"
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
@@ -27,11 +31,14 @@ type honorCall struct {
 	body     any    // decoded JSON body (nil for multipart uploads)
 	objectID string // file-upload: objectId query param
 	fileName string // file-upload: multipart file name
+	data     []byte // file-upload: multipart file bytes
+	auth     string // file-upload: Authorization header
 }
 
 // fakeHonor serves the publish endpoints Store.upload drives. Each
-// get-file-upload-url entry gets objectId 1001, 1002, …; file-upload
-// fails for objectIDs listed in failUpload.
+// get-file-upload-url entry (and upload-by-url task, which finishes at
+// once) gets objectId 1001, 1002, …; file-upload fails for objectIDs
+// listed in failUpload.
 type fakeHonor struct {
 	t          *testing.T
 	srv        *httptest.Server
@@ -80,8 +87,11 @@ func (f *fakeHonor) serve(w http.ResponseWriter, r *http.Request) {
 			f.t.Errorf("file-upload: parse multipart: %v", err)
 		}
 		call.objectID = r.URL.Query().Get("objectId")
-		if _, hdr, err := r.FormFile("file"); err == nil {
+		call.auth = r.Header.Get("Authorization")
+		if file, hdr, err := r.FormFile("file"); err == nil {
 			call.fileName = hdr.Filename
+			call.data, _ = io.ReadAll(file)
+			file.Close()
 		}
 		f.calls = append(f.calls, call)
 		if f.failUpload[call.objectID] {
@@ -110,6 +120,9 @@ func (f *fakeHonor) serve(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": data})
+	case "/openapi/v1/publish/upload-by-url":
+		f.nextObj++
+		json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": []map[string]any{{"objectId": f.nextObj, "status": honorUploadDone}}})
 	case "/openapi/v1/publish/submit-audit":
 		io.WriteString(w, `{"code":0,"data":"rel-1"}`)
 	default: // update-file-info, update-language-info
@@ -149,6 +162,11 @@ func jsonOf(t *testing.T, v any) any {
 		t.Fatal(err)
 	}
 	return out
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func writePNG(t *testing.T, dir, name string, w, h int) string {
@@ -210,9 +228,10 @@ func TestUploadWithoutListingUnchanged(t *testing.T) {
 // portrait screenshots (fileType 3) are staged after the APK and bound in
 // the same update-file-info call with languageId (+ order for
 // screenshots); update-language-info carries the new intro / briefIntro
-// with setAll=0; all of it lands before submit-audit.
+// with setAll=0; all of it lands before submit-audit. It goes the same
+// way when the package isn't here (remote): only its facts and an
+// Offloader, which sends the package and the (local) images.
 func TestUploadWithListing(t *testing.T) {
-	f := newFakeHonor(t)
 	dir := t.TempDir()
 	listing := &store.Listing{
 		Brief:       "新的一句话简介",
@@ -227,67 +246,102 @@ func TestUploadWithListing(t *testing.T) {
 	if errs := store.ValidateListing("honor", listing); len(errs) > 0 {
 		t.Fatalf("test listing should satisfy honor's spec: %v", errs)
 	}
-	req := &store.UploadRequest{FilePath: writeAPK(t, dir), PackageName: "com.example", ReleaseNotes: "bug fixes", Listing: listing}
-
-	res := f.store().Upload(context.Background(), req)
-	if !res.Success {
-		t.Fatalf("Upload failed: %s", res.Error)
-	}
-	if res.ExternalID != "rel-1" {
-		t.Errorf("ExternalID = %q, want rel-1", res.ExternalID)
+	apkPath := writeAPK(t, dir)
+	apkData, err := os.ReadFile(apkPath)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	wantPaths := []string{"get-app-detail",
-		"get-file-upload-url", "file-upload", // apk
-		"get-file-upload-url", "file-upload", // icon
-		"get-file-upload-url", "file-upload", // screenshots
-		"get-file-upload-url", "file-upload",
-		"get-file-upload-url", "file-upload",
-		"update-file-info", "update-language-info", "submit-audit"}
-	if got := f.paths(); !reflect.DeepEqual(got, wantPaths) {
-		t.Fatalf("request sequence = %v\nwant %v", got, wantPaths)
-	}
+	for _, remote := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote=%v", remote), func(t *testing.T) {
+			f := newFakeHonor(t)
+			req := &store.UploadRequest{FilePath: apkPath, PackageName: "com.example", ReleaseNotes: "bug fixes", Listing: listing}
+			ctx := context.Background()
+			var off *offloadtest.Offloader
+			if remote {
+				req, ctx, off = offloadtest.Remote(t, ctx, req)
+			}
 
-	var gotTypes []any
-	var gotNames []any
-	for _, c := range f.only("get-file-upload-url") {
-		e := c.body.([]any)[0].(map[string]any)
-		gotTypes = append(gotTypes, e["fileType"])
-		gotNames = append(gotNames, e["fileName"])
-	}
-	if want := []any{float64(fileTypeAPK), float64(1), float64(3), float64(3), float64(3)}; !reflect.DeepEqual(gotTypes, want) {
-		t.Errorf("get-file-upload-url fileTypes = %v, want %v", gotTypes, want)
-	}
-	if want := []any{"app.apk", "icon.png", "s1.png", "s2.png", "s3.png"}; !reflect.DeepEqual(gotNames, want) {
-		t.Errorf("get-file-upload-url fileNames = %v, want %v", gotNames, want)
-	}
-	var uploaded []string
-	for _, c := range f.only("file-upload") {
-		uploaded = append(uploaded, c.objectID)
-	}
-	if want := []string{"1001", "1002", "1003", "1004", "1005"}; !reflect.DeepEqual(uploaded, want) {
-		t.Errorf("file-upload objectIds = %v, want %v", uploaded, want)
-	}
+			res := f.store().Upload(ctx, req)
+			if !res.Success {
+				t.Fatalf("Upload failed: %s", res.Error)
+			}
+			if res.ExternalID != "rel-1" {
+				t.Errorf("ExternalID = %q, want rel-1", res.ExternalID)
+			}
 
-	wantBind := jsonOf(t, map[string]any{"bindingFileList": []map[string]any{
-		{"objectId": 1001},
-		{"objectId": 1002, "languageId": "zh-CN"},
-		{"objectId": 1003, "languageId": "zh-CN", "order": 0},
-		{"objectId": 1004, "languageId": "zh-CN", "order": 1},
-		{"objectId": 1005, "languageId": "zh-CN", "order": 2},
-	}})
-	if got := f.only("update-file-info")[0].body; !reflect.DeepEqual(got, wantBind) {
-		t.Errorf("update-file-info body = %v\nwant %v", got, wantBind)
-	}
+			wantPaths := []string{"get-app-detail",
+				"get-file-upload-url", "file-upload", // apk
+				"get-file-upload-url", "file-upload", // icon
+				"get-file-upload-url", "file-upload", // screenshots
+				"get-file-upload-url", "file-upload",
+				"get-file-upload-url", "file-upload",
+				"update-file-info", "update-language-info", "submit-audit"}
+			if got := f.paths(); !reflect.DeepEqual(got, wantPaths) {
+				t.Fatalf("request sequence = %v\nwant %v", got, wantPaths)
+			}
 
-	wantLang := jsonOf(t, map[string]any{
-		"languageInfoList": []map[string]any{{
-			"languageId": "zh-CN", "appName": "应用", "intro": "新的应用介绍", "briefIntro": "新的一句话简介", "newFeature": "bug fixes",
-		}},
-		"setAll": 0,
-	})
-	if got := f.only("update-language-info")[0].body; !reflect.DeepEqual(got, wantLang) {
-		t.Errorf("update-language-info body = %v\nwant %v", got, wantLang)
+			var gotTypes []any
+			var gotNames []any
+			for _, c := range f.only("get-file-upload-url") {
+				e := c.body.([]any)[0].(map[string]any)
+				gotTypes = append(gotTypes, e["fileType"])
+				gotNames = append(gotNames, e["fileName"])
+			}
+			if want := []any{float64(fileTypeAPK), float64(1), float64(3), float64(3), float64(3)}; !reflect.DeepEqual(gotTypes, want) {
+				t.Errorf("get-file-upload-url fileTypes = %v, want %v", gotTypes, want)
+			}
+			if want := []any{"app.apk", "icon.png", "s1.png", "s2.png", "s3.png"}; !reflect.DeepEqual(gotNames, want) {
+				t.Errorf("get-file-upload-url fileNames = %v, want %v", gotNames, want)
+			}
+			apkEntry := f.only("get-file-upload-url")[0].body.([]any)[0].(map[string]any)
+			if apkEntry["fileSize"] != float64(len(apkData)) || apkEntry["fileSha256"] != sha256Hex(apkData) {
+				t.Errorf("apk fileSize/fileSha256 = %v/%v, want %d/%s", apkEntry["fileSize"], apkEntry["fileSha256"], len(apkData), sha256Hex(apkData))
+			}
+			var uploaded []string
+			for _, c := range f.only("file-upload") {
+				uploaded = append(uploaded, c.objectID)
+				if c.auth != "Bearer tok" {
+					t.Errorf("file-upload %s Authorization = %q, want Bearer tok", c.objectID, c.auth)
+				}
+			}
+			if want := []string{"1001", "1002", "1003", "1004", "1005"}; !reflect.DeepEqual(uploaded, want) {
+				t.Errorf("file-upload objectIds = %v, want %v", uploaded, want)
+			}
+			if got := f.only("file-upload")[0]; !bytes.Equal(got.data, apkData) || got.fileName != "app.apk" {
+				t.Errorf("apk file-upload got %d bytes as %q, want %d as app.apk", len(got.data), got.fileName, len(apkData))
+			}
+
+			wantBind := jsonOf(t, map[string]any{"bindingFileList": []map[string]any{
+				{"objectId": 1001},
+				{"objectId": 1002, "languageId": "zh-CN"},
+				{"objectId": 1003, "languageId": "zh-CN", "order": 0},
+				{"objectId": 1004, "languageId": "zh-CN", "order": 1},
+				{"objectId": 1005, "languageId": "zh-CN", "order": 2},
+			}})
+			if got := f.only("update-file-info")[0].body; !reflect.DeepEqual(got, wantBind) {
+				t.Errorf("update-file-info body = %v\nwant %v", got, wantBind)
+			}
+
+			wantLang := jsonOf(t, map[string]any{
+				"languageInfoList": []map[string]any{{
+					"languageId": "zh-CN", "appName": "应用", "intro": "新的应用介绍", "briefIntro": "新的一句话简介", "newFeature": "bug fixes",
+				}},
+				"setAll": 0,
+			})
+			if got := f.only("update-language-info")[0].body; !reflect.DeepEqual(got, wantLang) {
+				t.Errorf("update-language-info body = %v\nwant %v", got, wantLang)
+			}
+
+			if remote {
+				if !off.Sent(req.FilePath) {
+					t.Errorf("the package did not go out as a transfer")
+				}
+				if n := len(off.Transfers()); n != 5 {
+					t.Errorf("%d transfers, want 5 (apk, icon, 3 screenshots)", n)
+				}
+			}
+		})
 	}
 }
 

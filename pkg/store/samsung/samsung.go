@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -422,7 +421,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	)
 	if !attached {
 		rep.Phase("uploading")
-		if fileKey, err = s.uploadFile(ctx, session, req.FilePath, rep); err != nil {
+		if fileKey, err = s.uploadFile(ctx, session, req.Package(), rep); err != nil {
 			return err
 		}
 	}
@@ -609,25 +608,27 @@ type uploadSession struct {
 	SessionID string `json:"sessionId"`
 }
 
-// uploadFile uploads the local file at path to the session URL and returns
-// its fileKey. Per the docs sessionId is a multipart form field (not a query
-// param), and the upload needs the service-account-id header like every
-// other content call. Byte progress goes to rep.
-func (s *Store) uploadFile(ctx context.Context, session uploadSession, path string, rep progress.Reporter) (string, error) {
-	name := filepath.Base(path)
-	rc, fSize, err := progress.OpenFile(path, rep)
+// uploadFile uploads f (the package, or a local listing image with no
+// facts) to the session URL and returns its fileKey. Per the docs sessionId
+// is a multipart form field (not a query param), and the upload needs the
+// service-account-id header like every other content call. Byte progress
+// goes to rep.
+func (s *Store) uploadFile(ctx context.Context, session uploadSession, f store.PackageFile, rep progress.Reporter) (string, error) {
+	name := f.Name()
+	size, err := f.Size()
 	if err != nil {
-		return "", fmt.Errorf("open %s: %w", name, err)
+		return "", fmt.Errorf("stat %s: %w", name, err)
 	}
-	defer rc.Close()
+	rep.Total(size)
 
 	httpResp, err := httpx.DoMultipart(ctx, httpx.MultipartRequest{
-		Method:  http.MethodPost,
-		URL:     session.URL,
-		Headers: samsungAuthHeaders(s),
-		Fields:  map[string]string{"sessionId": session.SessionID},
-		Files:   []httpx.FileField{{Field: "file", FileName: name, Reader: rc, Size: fSize}},
-		Client:  s.uploadClient, // nil → httpx's default (no proxy, not recorded)
+		Method:   http.MethodPost,
+		URL:      session.URL,
+		Headers:  samsungAuthHeaders(s),
+		Fields:   map[string]string{"sessionId": session.SessionID},
+		Files:    []httpx.FileField{{Field: "file", FileName: name, Path: f.Path, Size: size}},
+		Progress: rep,
+		Client:   s.uploadClient, // nil → httpx's default (no proxy, not recorded)
 	})
 	if err != nil {
 		return "", fmt.Errorf("upload %s: %w", name, err)
@@ -663,7 +664,7 @@ func (s *Store) listingFields(ctx context.Context, session uploadSession, l *sto
 		fields["longDescription"] = l.Description
 	}
 	if l.Icon != "" {
-		key, err := s.uploadFile(ctx, session, l.Icon, progress.Safe(nil))
+		key, err := s.uploadFile(ctx, session, store.PackageFile{Path: l.Icon}, progress.Safe(nil))
 		if err != nil {
 			return nil, fmt.Errorf("listing %s: %w", store.ListingIcon, err)
 		}
@@ -674,7 +675,7 @@ func (s *Store) listingFields(ctx context.Context, session uploadSession, l *sto
 		// left out of it are removed, and reuseYn=false + a new key replaces.
 		shots := make([]map[string]any, 0, len(l.Screenshots))
 		for i, p := range l.Screenshots {
-			key, err := s.uploadFile(ctx, session, p, progress.Safe(nil))
+			key, err := s.uploadFile(ctx, session, store.PackageFile{Path: p}, progress.Safe(nil))
 			if err != nil {
 				return nil, fmt.Errorf("listing %s[%d]: %w", store.ListingScreenshots, i, err)
 			}

@@ -46,13 +46,14 @@ func TestUploadFillsMissingIcon(t *testing.T) {
 	}
 }
 
-// TestReadIconPicksDensestLauncherIcon: the icon must come from the
-// densest variant the APK ships. Requesting density 0 resolves to mdpi,
-// which would upscale a 48px icon into a blurry 512px one.
-func TestReadIconPicksDensestLauncherIcon(t *testing.T) {
-	img, err := readIcon(fixtureAPK)
+// TestLauncherIconPicksDensestLauncherIcon: the icon extractIcon scales
+// must come from the densest variant the APK ships. Requesting density 0
+// resolves to mdpi, which would upscale a 48px icon into a blurry 512px
+// one.
+func TestLauncherIconPicksDensestLauncherIcon(t *testing.T) {
+	img, err := store.PackageFile{Path: fixtureAPK}.LauncherIcon()
 	if err != nil {
-		t.Fatalf("readIcon: %v", err)
+		t.Fatalf("LauncherIcon: %v", err)
 	}
 	if b := img.Bounds(); b.Dx() != 192 || b.Dy() != 192 {
 		t.Errorf("read a %dx%d icon, want 192x192 (xxxhdpi)", b.Dx(), b.Dy())

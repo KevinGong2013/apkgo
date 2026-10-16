@@ -15,8 +15,18 @@ type Store interface {
 
 // UploadRequest carries the APK and metadata for a single upload.
 type UploadRequest struct {
-	FilePath     string // path to primary APK
-	File64Path   string // optional 64-bit APK for split-arch uploads
+	FilePath   string // path to primary APK
+	File64Path string // optional 64-bit APK for split-arch uploads
+
+	// FileFacts / File64Facts are what the caller already knows about
+	// FilePath / File64Path (size, digests, ABIs, launcher icon). A store
+	// uses a fact instead of reading the file; with every fact given and
+	// an httpx.Offloader on the context, the package need not exist
+	// locally (see FileFacts). Stores read them through Package /
+	// Package64.
+	FileFacts   *FileFacts `json:"-"`
+	File64Facts *FileFacts `json:"-"`
+
 	AppName      string
 	PackageName  string
 	VersionCode  int32

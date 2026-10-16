@@ -1,7 +1,8 @@
 // Package httpx provides streaming-friendly HTTP helpers used by store
-// uploaders. Specifically, DoMultipart performs a multipart/form-data
-// POST/PUT whose body is fed through io.Pipe so file payloads stream
-// straight to the network without ever residing in a single buffer.
+// uploaders. DoMultipart performs a multipart/form-data POST/PUT and
+// DoUpload a request whose body is one file; both stream file payloads
+// straight to the network without ever holding them in a single buffer,
+// and both can hand the request to an Offloader instead (see Transfer).
 //
 // resty's multipart implementation buffers the entire request body in
 // a *bytes.Buffer before sending — fine for tiny form payloads but a
@@ -12,31 +13,43 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/httptrace"
+	"github.com/KevinGong2013/apkgo/v4/pkg/progress"
 )
 
-// FileField is a multipart file part.
+// FileField is a multipart file part: a file on disk (Path) or a stream
+// (Reader).
 //
-// Size is optional but strongly recommended: when every file in a
-// MultipartRequest has Size > 0, DoMultipart pre-computes a total
-// Content-Length and sends it as a header instead of falling back to
-// Transfer-Encoding: chunked. Some COS-style upload endpoints (e.g.
-// pgyer's, AWS S3) reject chunked multipart POSTs with
-// "MalformedPOSTRequest", so passing Size matters in practice.
+// Size is required with Path and strongly recommended with Reader: when
+// every part's size is known, DoMultipart sends a Content-Length header
+// instead of falling back to Transfer-Encoding: chunked. Some COS-style
+// upload endpoints (e.g. pgyer's, AWS S3) reject chunked multipart POSTs
+// with "MalformedPOSTRequest", so passing Size matters in practice.
 type FileField struct {
-	Field    string    // form field name
-	FileName string    // filename in Content-Disposition
-	Reader   io.Reader // streamed; caller closes the underlying source
-	Size     int64     // optional; required for Content-Length precomputation
+	Field    string // form field name
+	FileName string // filename in Content-Disposition
+	// Path is the file to send. DoMultipart opens it only when the request
+	// goes out from this process, so under an Offloader (see Transfer) it
+	// need not exist here; its bytes count towards
+	// MultipartRequest.Progress.
+	Path string
+	// Reader streams the part instead of Path; the caller closes the
+	// underlying source and reports its progress. A request with a Reader
+	// part is always sent from this process.
+	Reader io.Reader
+	Size   int64
 }
 
 // MultipartRequest describes a streaming multipart POST/PUT.
@@ -47,7 +60,10 @@ type MultipartRequest struct {
 	Fields  map[string]string // multipart non-file form fields
 	Files   []FileField       // multipart file parts (streamed)
 	Headers map[string]string // extra request headers
-	Client  *http.Client      // optional; nil → default (30 min timeout)
+	// Progress receives the bytes of Path parts as they are sent (Add
+	// only — set Total yourself).
+	Progress progress.Reporter
+	Client   *http.Client // optional; nil → default (30 min timeout)
 }
 
 // defaultClient mirrors a resty default but with a long enough timeout
@@ -57,38 +73,26 @@ var defaultClient = &http.Client{Timeout: 30 * time.Minute}
 // DoMultipart issues the request and returns the response. The caller
 // is responsible for reading and closing resp.Body.
 //
-// Implementation: a goroutine drains Fields + Files into the multipart
-// writer, which writes into the writer side of an io.Pipe; the HTTP
-// transport reads the matching pipe reader as the request body. Result:
-//   - peak memory ≈ pipe buffer (a few KB), regardless of file size
-//   - progress reporters wrapping FileField.Reader fire as bytes are
-//     sent on the wire, not as they're staged in RAM
+// The body is built as segments — the encoded form fields and part
+// headers, then each file's bytes — and streamed: peak memory stays
+// independent of file size, and progress fires as bytes are sent on the
+// wire, not as they're staged in RAM. Fields are written in sorted order.
+// Under an Offloader the request is described to it as a Transfer
+// instead (see Transfer).
 //
-// When every FileField has Size set, Content-Length is precomputed and
-// sent as a header (some upload endpoints reject chunked multipart).
-// Otherwise the request body is sent with Transfer-Encoding: chunked.
+// When every file's size is known, Content-Length is sent as a header
+// (some upload endpoints reject chunked multipart). Otherwise the request
+// body is sent with Transfer-Encoding: chunked.
 func DoMultipart(ctx context.Context, mr MultipartRequest) (*http.Response, error) {
-	urlStr := mr.URL
-	if len(mr.Query) > 0 {
-		sep := "?"
-		if strings.Contains(urlStr, "?") {
-			sep = "&"
-		}
-		urlStr += sep + mr.Query.Encode()
+	segs, contentType, err := multipartSegments(mr.Fields, mr.Files)
+	if err != nil {
+		return nil, err
 	}
-
-	pr, pw := io.Pipe()
-	mw := multipart.NewWriter(pw)
-
-	contentLength, lenKnown := computeContentLength(mw.Boundary(), mr.Fields, mr.Files)
-
-	go func() {
-		err := writeMultipart(mw, mr.Fields, mr.Files)
-		if err == nil {
-			err = mw.Close()
-		}
-		pw.CloseWithError(err)
-	}()
+	header := http.Header{}
+	header.Set("Content-Type", contentType)
+	for k, v := range mr.Headers {
+		header.Set(k, v)
+	}
 
 	// The body is a one-way stream of file bytes: tell a recording
 	// transport what it is made of instead of having it read along.
@@ -98,27 +102,85 @@ func DoMultipart(ctx context.Context, mr MultipartRequest) (*http.Response, erro
 	}
 	ctx = httptrace.WithMultipart(ctx, mr.Fields, parts)
 
-	req, err := http.NewRequestWithContext(ctx, mr.Method, urlStr, pr)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", mw.FormDataContentType())
-	if lenKnown {
-		req.ContentLength = contentLength
-	}
-	for k, v := range mr.Headers {
-		req.Header.Set(k, v)
-	}
+	return send(ctx, mr.Client, &Transfer{
+		Method:   mr.Method,
+		URL:      withQuery(mr.URL, mr.Query),
+		Header:   header,
+		Body:     segs,
+		Progress: progress.Safe(mr.Progress),
+	})
+}
 
-	client := mr.Client
-	if client == nil {
-		client = defaultClient
+// multipartSegments encodes fields and files as body segments and returns
+// them with the request's Content-Type (boundary included).
+func multipartSegments(fields map[string]string, files []FileField) ([]Segment, string, error) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	var segs []Segment
+	flush := func() {
+		if buf.Len() > 0 {
+			segs = append(segs, Segment{Data: append([]byte(nil), buf.Bytes()...)})
+			buf.Reset()
+		}
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, RedactURLError(err)
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
 	}
-	return resp, nil
+	sort.Strings(keys)
+	for _, k := range keys {
+		if err := mw.WriteField(k, fields[k]); err != nil {
+			return nil, "", err
+		}
+	}
+	for _, f := range files {
+		// CreateFormFile emits the boundary and the part headers; the
+		// CRLF that ends the part comes with the next boundary.
+		if _, err := mw.CreateFormFile(f.Field, f.FileName); err != nil {
+			return nil, "", err
+		}
+		flush()
+		switch {
+		case f.Path != "":
+			if f.Size <= 0 {
+				return nil, "", fmt.Errorf("multipart file %q: size required with Path", f.FileName)
+			}
+			segs = append(segs, Segment{File: &FileRef{Path: f.Path, Size: f.Size}})
+		case f.Reader != nil:
+			r := f.Reader
+			if f.Size > 0 {
+				r = &sizedReader{r: f.Reader, n: f.Size}
+			}
+			segs = append(segs, Segment{reader: r})
+		default:
+			return nil, "", fmt.Errorf("multipart file %q: neither Path nor Reader", f.FileName)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		return nil, "", err
+	}
+	flush()
+	return segs, mw.FormDataContentType(), nil
+}
+
+// sizedReader marks a Reader part whose size the caller declared, so the
+// body's Content-Length is known.
+type sizedReader struct {
+	r io.Reader
+	n int64
+}
+
+func (s *sizedReader) Read(p []byte) (int, error) { return s.r.Read(p) }
+
+func withQuery(rawURL string, q url.Values) string {
+	if len(q) == 0 {
+		return rawURL
+	}
+	sep := "?"
+	if strings.Contains(rawURL, "?") {
+		sep = "&"
+	}
+	return rawURL + sep + q.Encode()
 }
 
 // RedactURLError strips the query string from the URL embedded in any
@@ -136,70 +198,4 @@ func RedactURLError(err error) error {
 		}
 	}
 	return err
-}
-
-// computeContentLength does a dry-run multipart write into a counting
-// writer to measure exactly how many bytes the headers + boundaries
-// will produce, then adds the file body sizes. Returns (size, true)
-// when every file has a known Size; (0, false) otherwise (caller falls
-// back to chunked transfer encoding).
-func computeContentLength(boundary string, fields map[string]string, files []FileField) (int64, bool) {
-	for _, f := range files {
-		if f.Size <= 0 {
-			return 0, false
-		}
-	}
-	cw := &countingWriter{}
-	dry := multipart.NewWriter(cw)
-	if err := dry.SetBoundary(boundary); err != nil {
-		return 0, false
-	}
-	for k, v := range fields {
-		if err := dry.WriteField(k, v); err != nil {
-			return 0, false
-		}
-	}
-	for _, f := range files {
-		// CreateFormFile emits the per-file headers (boundary + content-
-		// disposition + content-type) but no body. The actual body bytes
-		// are accounted for separately via f.Size, and the trailing CRLF
-		// before the next boundary is emitted by the next CreateFormFile
-		// or by Close().
-		if _, err := dry.CreateFormFile(f.Field, f.FileName); err != nil {
-			return 0, false
-		}
-	}
-	if err := dry.Close(); err != nil {
-		return 0, false
-	}
-	total := cw.n
-	for _, f := range files {
-		total += f.Size
-	}
-	return total, true
-}
-
-type countingWriter struct{ n int64 }
-
-func (c *countingWriter) Write(p []byte) (int, error) {
-	c.n += int64(len(p))
-	return len(p), nil
-}
-
-func writeMultipart(mw *multipart.Writer, fields map[string]string, files []FileField) error {
-	for k, v := range fields {
-		if err := mw.WriteField(k, v); err != nil {
-			return err
-		}
-	}
-	for _, f := range files {
-		part, err := mw.CreateFormFile(f.Field, f.FileName)
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(part, f.Reader); err != nil {
-			return err
-		}
-	}
-	return nil
 }
