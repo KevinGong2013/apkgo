@@ -70,6 +70,7 @@ type fakeMeizu struct {
 	status    int  // latest version status reported by app/list
 	failImage bool // app/image/upload answers 113007
 	noIcon    bool // app/detail returns an empty icon
+	noShots   bool // app/detail returns no screenshots
 
 	mu         sync.Mutex
 	calls      []string
@@ -104,6 +105,9 @@ func (f *fakeMeizu) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		detail := detailFixture
 		if f.noIcon {
 			detail = strings.Replace(detail, `"icon": "old/icon.png"`, `"icon": ""`, 1)
+		}
+		if f.noShots {
+			detail = strings.Replace(detail, `"screenShots": ["old/s1.png", "old/s2.png"]`, `"screenShots": []`, 1)
 		}
 		fmt.Fprintf(w, `{"code":200,"value":%s}`, detail)
 	case apkUploadURI, imageUploadURI:
@@ -156,13 +160,18 @@ func newTestStore(srv *httptest.Server) *Store {
 
 func writePNG(t *testing.T, dir, name string) string {
 	t.Helper()
+	return writePNGSized(t, dir, name, 8, 8)
+}
+
+func writePNGSized(t *testing.T, dir, name string, w, h int) string {
+	t.Helper()
 	path := filepath.Join(dir, name)
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	if err := png.Encode(f, image.NewRGBA(image.Rect(0, 0, 8, 8))); err != nil {
+	if err := png.Encode(f, image.NewRGBA(image.Rect(0, 0, w, h))); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -296,6 +305,54 @@ func TestUploadListingImageFailure(t *testing.T) {
 	}
 }
 
+// TestUploadMissingScreenshots: publish refuses a version without
+// screenshots ("[113001] 缺少参数：应用截图不能为空"). When app/detail has
+// none, the listing's screenshots are what publish gets; without any the
+// store fails as config_invalid before uploading the APK — or the icon,
+// when that is missing too.
+func TestUploadMissingScreenshots(t *testing.T) {
+	t.Run("listing brings them", func(t *testing.T) {
+		dir := t.TempDir()
+		shots := []string{writePNG(t, dir, "s1.png"), writePNG(t, dir, "s2.png"), writePNG(t, dir, "s3.png")}
+		f := &fakeMeizu{t: t, status: statusOnSale, noShots: true}
+		res := runUpload(t, f, dir, &store.Listing{Screenshots: shots})
+		if !res.Success {
+			t.Fatalf("upload failed: %s", res.Error)
+		}
+		want := []any{"img/s1.png", "img/s2.png", "img/s3.png"}
+		if got := f.submitBody["screenShots"]; !reflect.DeepEqual(got, want) {
+			t.Errorf("published screenShots = %v, want %v", got, want)
+		}
+	})
+
+	for _, c := range []struct {
+		name    string
+		noIcon  bool
+		listing *store.Listing
+	}{
+		{name: "no listing"},
+		{name: "listing without screenshots", listing: &store.Listing{Brief: "new brief"}},
+		{name: "icon missing too", noIcon: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeMeizu{t: t, status: statusOnSale, noShots: true, noIcon: c.noIcon}
+			res := runUpload(t, f, t.TempDir(), c.listing)
+			if res.Success {
+				t.Fatal("upload succeeded, want screenshots failure")
+			}
+			if !strings.HasPrefix(res.Error, "screenshots: ") || !strings.Contains(res.Error, "魅族开发者中心") {
+				t.Errorf("error = %q, want a screenshots error saying where to supply them", res.Error)
+			}
+			if res.Category != store.CategoryConfigInvalid {
+				t.Errorf("category = %q, want %q", res.Category, store.CategoryConfigInvalid)
+			}
+			if want := []string{listURI, detailURI}; !slices.Equal(f.calls, want) {
+				t.Errorf("calls = %v, want %v", f.calls, want)
+			}
+		})
+	}
+}
+
 // TestUploadRejectedUsesVerisonID: a rejected latest version resubmits
 // via failapp/update, whose version-id parameter is spelled `verisonId`
 // in the official docs (§3.7); `verId` goes along until one spelling is
@@ -327,6 +384,10 @@ func TestListingSpec(t *testing.T) {
 	dir := t.TempDir()
 	okIcon := writePNG(t, dir, "icon.PNG")
 	noExt := writePNG(t, dir, "icon")
+	portrait := writePNGSized(t, dir, "portrait.PNG", 1080, 1920)
+	landscape := writePNGSized(t, dir, "landscape.png", 2560, 1440)
+	shotNoExt := writePNGSized(t, dir, "shot", 720, 1280)
+	small := writePNG(t, dir, "small.png")
 	desc := strings.Repeat("描", 100)
 
 	cases := []struct {
@@ -339,9 +400,12 @@ func TestListingSpec(t *testing.T) {
 		{"description too short", &store.Listing{Description: desc[:len(desc)-len("描")]}, "at least 100"},
 		{"description too long", &store.Listing{Description: strings.Repeat("描", 1001)}, "at most 1000"},
 		{"description banned char", &store.Listing{Description: desc + "Q&A"}, `"&"`},
-		{"upper-case extension", &store.Listing{Icon: okIcon, Screenshots: []string{okIcon}}, ""},
+		{"upper-case extension", &store.Listing{Icon: okIcon, Screenshots: []string{portrait, portrait, portrait}}, ""},
 		{"icon without extension", &store.Listing{Icon: noExt}, "must end in .png, .jpg or .jpeg"},
-		{"screenshot without extension", &store.Listing{Screenshots: []string{okIcon, noExt}}, "screenshots[1]"},
+		{"screenshot without extension", &store.Listing{Screenshots: []string{portrait, portrait, shotNoExt}}, "screenshots[2]: " + shotNoExt + ": file name must end in"},
+		{"mixed orientations", &store.Listing{Screenshots: []string{portrait, landscape, portrait}}, ""},
+		{"too few screenshots", &store.Listing{Screenshots: []string{portrait, landscape}}, "need at least 3"},
+		{"screenshot size", &store.Listing{Screenshots: []string{portrait, small, portrait}}, "size 8x8, want 720x1280"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

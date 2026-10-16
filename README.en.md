@@ -153,7 +153,7 @@ stores:
 | vivo | 5–16 CJK chars | 50–1000 | square PNG 256–512px, ≤500KB | 1080×1920, ≤2MB, 3–5 |
 | oppo | ≤13, no punctuation/spaces | ≥20 | PNG 512×512, ≤1MB | 1080×1920, ≤1MB, 2–5 |
 | xiaomi | ≤17 CJK chars, no trailing punctuation | — | PNG 512×512 | 1080×1920 or 1920×1080 (not mixed), ≤5MB, 3–5 |
-| meizu | — | 100–1000 | PNG/JPG | PNG/JPG |
+| meizu | — | 100–1000 | PNG/JPG | PNG/JPG, 16:9 at 720×1280, 1012×1800, 1080×1920 or 1440×2560 (either orientation), ≥3 |
 | samsung | ≤40 bytes | ≤4000 bytes | PNG 512×512, ≤1MB | 320–3840px, aspect ≤2:1, 4–8 |
 | tencent | 5–15 | 60–500 | PNG 512×512, ≤200KB | ≤1MB, same size, 4–5 |
 | googleplay | ≤80 | ≤4000 | PNG 512×512, ≤1MB | 320–3840px, aspect ≤2:1, 2–8 |
@@ -579,7 +579,7 @@ stores:
 apkgo doctor -s meizu -p com.example.app
 ```
 
-Uploads submit a new version of an app that is already listed — the first release (qualifications, ICP filing, screenshots) must be done in the Flyme console. Meizu accepts 64-bit packages only; a split-arch upload (`--file64`) sends the 64-bit APK. If the latest version was rejected (审核不通过), apkgo automatically resubmits through the fail-app update endpoint instead of the regular publish one.
+Uploads submit a new version of an app that is already listed — the first release (qualifications, ICP filing, screenshots) must be done in the Flyme console. Meizu accepts 64-bit packages only; a split-arch upload (`--file64`) sends the 64-bit APK. If the latest version was rejected (审核不通过), apkgo automatically resubmits through the fail-app update endpoint instead of the regular publish one. Every version needs an icon and screenshots: a missing icon is taken from the APK, but when Meizu has no screenshots on record for the app the upload stops before sending the APK — supply at least 3 with `--listing`, or add them in the console.
 
 #### Tencent App Store (YingYongBao)
 

@@ -33,7 +33,7 @@
 
 - **请求形态**：华为、鸿蒙、荣耀、vivo（可选字段，不传是否保留原值待实测）、腾讯、Google Play、三星（`"null"` 保留）按字段增量提交；OPPO `/app/upd`、魅族 `publish` 本来就是整套提交，apkgo 已从详情接口读回现有资料回填，只需覆盖用户指定的项。
 - **不采用的接口**（只用于「不发版改资料」）：OPPO `/app/updm`、腾讯不传 APK 的 `update_app`、小米 `synchroType=2`、魅族 `saleapp/update`、华为/鸿蒙「同版本升级」。下文各商店详情保留这些信息仅作参考。
-- **仍需实测**：vivo 可选字段不传时是否保留原值；小米 `synchroType=1` 时资料字段是否生效；魅族 `recommendDesc` 长度、icon/截图规格；三星中文按字节计的长度。
+- **仍需实测**：vivo 可选字段不传时是否保留原值；小米 `synchroType=1` 时资料字段是否生效；魅族 `recommendDesc` 长度、icon 规格（截图规格已从开发者中心上传表单取得，见 meizu-store-research.md）；三星中文按字节计的长度。
 
 ---
 

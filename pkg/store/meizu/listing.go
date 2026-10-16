@@ -12,21 +12,35 @@ import (
 )
 
 // listingSpec is what Meizu accepts for the listing (商店资料). Sources:
-// API doc open.flyme.cn/docs?id=333 (v1.07) and the review guideline
-// id=110.
+// API doc open.flyme.cn/docs?id=333 (v1.07), the review guideline
+// id=110 and the developer console's 应用截图 upload form.
 //
 //   - Brief → recommendDesc (推荐语): no length limit is documented, so
 //     it's unbounded.
 //   - Description → appDesc: 100–1000 characters (review guideline).
 //   - Icon / screenshots: app/image/upload only takes jpg/png/jpeg. No
-//     pixel size, byte size or screenshot count is documented, so only
-//     the format is checked.
+//     icon pixel size or byte size is documented.
+//   - Screenshots: the console asks for at least 3, each 16:9 in one of
+//     four exact sizes, either orientation (seen 2026-10). It names no
+//     maximum count.
 var listingSpec = &store.ListingSpec{
 	Description: store.TextSpec{Min: 100, Max: 1000},
 	Icon:        store.ImageSpec{Formats: []string{"png", "jpeg"}},
-	Screenshot:  store.ImageSpec{Formats: []string{"png", "jpeg"}},
-	Check:       checkListing,
+	Screenshot: store.ImageSpec{
+		Formats: []string{"png", "jpeg"},
+		Sizes: []store.Size{
+			{Width: 720, Height: 1280}, {Width: 1280, Height: 720},
+			{Width: 1012, Height: 1800}, {Width: 1800, Height: 1012},
+			{Width: 1080, Height: 1920}, {Width: 1920, Height: 1080},
+			{Width: 1440, Height: 2560}, {Width: 2560, Height: 1440},
+		},
+	},
+	MinScreenshots: minScreenshots,
+	Check:          checkListing,
 }
+
+// minScreenshots is the fewest screenshots the console accepts.
+const minScreenshots = 3
 
 // imageExts are the file name extensions app/image/upload accepts. The
 // check is by name — error 113007 lists "JPG", "jpg", "PNG", "png",
