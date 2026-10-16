@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"image"
@@ -32,6 +33,10 @@ type FileFacts struct {
 	// (apk.WriteLauncherIconPNG); empty when unknown. Unused for packages
 	// that have none (AAB, HarmonyOS).
 	Icon string
+	// IconErr says why the caller couldn't read the launcher icon, when
+	// Icon is empty because it tried: LauncherIcon reports it rather than
+	// reading the file.
+	IconErr string
 }
 
 // PackageFile is a package to upload: its path and the facts the caller
@@ -94,6 +99,9 @@ func (p PackageFile) ABIs() ([]string, error) {
 
 // LauncherIcon decodes the package's launcher icon (apk.LauncherIcon).
 func (p PackageFile) LauncherIcon() (image.Image, error) {
+	if p.Facts != nil && p.Facts.Icon == "" && p.Facts.IconErr != "" {
+		return nil, errors.New(p.Facts.IconErr)
+	}
 	if p.Facts == nil || p.Facts.Icon == "" {
 		return apk.LauncherIcon(p.Path)
 	}

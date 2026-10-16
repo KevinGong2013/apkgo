@@ -76,3 +76,10 @@ func TestPackageFileUsesFacts(t *testing.T) {
 func writeIcon(src *os.File, size int64, dest string) error {
 	return apk.WriteLauncherIconPNG(src, size, dest)
 }
+
+func TestPackageFileReportsTheIconError(t *testing.T) {
+	p := PackageFile{Path: "/nowhere/app.apk", Facts: &FileFacts{IconErr: "read icon: no bitmap launcher icon"}}
+	if _, err := p.LauncherIcon(); err == nil || err.Error() != "read icon: no bitmap launcher icon" {
+		t.Errorf("LauncherIcon error = %v", err)
+	}
+}
