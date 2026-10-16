@@ -264,7 +264,17 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (int64, er
 		apkPath = req.File64Path
 	}
 
-	// 2. Icon. When app/detail has none to echo, submit the APK's
+	// 2. Screenshots. publish refuses a version without any ("[113001]
+	// 缺少参数：应用截图不能为空"), and for some apps app/detail returns
+	// none to echo. Unlike the icon they can't be taken from the APK, so
+	// without a listing that brings its own, stop here rather than after
+	// the APK upload, which is slow on Meizu (~0.4 MB/s).
+	if len(det.ScreenShots) == 0 && (req.Listing == nil || len(req.Listing.Screenshots) == 0) {
+		return 0, store.Categorize(store.CategoryConfigInvalid, fmt.Errorf(
+			"screenshots: app/detail returned none and the listing brings none (魅族要求至少 %d 张截图：在商店资料里提供截图，或到魅族开发者中心补上)", minScreenshots))
+	}
+
+	// 3. Icon. When app/detail has none to echo, submit the APK's
 	// launcher icon (see icon.go) unless the listing brings its own.
 	// This runs ahead of the APK upload so an APK without a usable icon
 	// fails before the slow part.
@@ -274,14 +284,14 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (int64, er
 		}
 	}
 
-	// 3. Upload the APK.
+	// 4. Upload the APK.
 	rep.Phase("uploading")
 	packageURL, err := s.uploadFile(ctx, apkUploadURI, apkPath, rep)
 	if err != nil {
 		return 0, fmt.Errorf("upload apk: %w", err)
 	}
 
-	// 4. Listing (商店资料): there's no separate listing endpoint — the
+	// 5. Listing (商店资料): there's no separate listing endpoint — the
 	// publish body carries the full listing — so upload the new images
 	// now and override those fields below. Any failure aborts before
 	// the version is submitted.
@@ -293,7 +303,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) (int64, er
 		}
 	}
 
-	// 5. Submit for review, echoing the currently-listed metadata with
+	// 6. Submit for review, echoing the currently-listed metadata with
 	// the new package, release notes and listing. A latest version
 	// sitting in "审核不通过" must go through failapp/update instead of
 	// publish (which would fail with 113042/113046). The docs (§3.7) spell
