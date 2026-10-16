@@ -208,7 +208,40 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	return s.push(ctx, synchroType, req, iconPath, rep)
 }
 
+// resultRateLimited is xiaomi's 「请求频率太快」. Xiaomi documents neither the
+// limit nor what it counts (account or source address): 2026-10-16 a
+// /dev/query 54ms after another one for the same account got it, and the
+// upload failed with it in place of the real error.
+const resultRateLimited = -20035
+
+// queryRateLimitWaits are the pauses before query asks again after
+// -20035, one per retry. /dev/query only reads, so asking again is safe,
+// and a few seconds clears the near-simultaneous calls that trip the limit
+// (a preflight query right before the upload's, several jobs on one
+// account or one host). If it still says -20035 the error is store_busy and
+// the orchestrator retries the store minutes later. A var so tests can
+// shorten it.
+var queryRateLimitWaits = []time.Duration{2 * time.Second, 5 * time.Second}
+
+// query looks up the package on the account, retrying -20035 after
+// queryRateLimitWaits.
 func (s *Store) query(ctx context.Context, packageName string) (*packageInfo, error) {
+	for attempt := 0; ; attempt++ {
+		info, result, err := s.queryOnce(ctx, packageName)
+		if result != resultRateLimited || attempt >= len(queryRateLimitWaits) {
+			return info, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(queryRateLimitWaits[attempt]):
+		}
+	}
+}
+
+// queryOnce sends one /dev/query and also returns xiaomi's result code
+// (0 when the request didn't get that far).
+func (s *Store) queryOnce(ctx context.Context, packageName string) (*packageInfo, int, error) {
 	body := s.encode(map[string]any{
 		"packageName": packageName,
 		"userName":    s.email,
@@ -227,10 +260,10 @@ func (s *Store) query(ctx context.Context, packageName string) (*packageInfo, er
 		SetResult(&resp).
 		Post("/dev/query")
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if httpResp.IsError() {
-		return nil, fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+		return nil, 0, fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
 	}
 	if resp.Result != 0 {
 		msg := resp.Message
@@ -240,9 +273,10 @@ func (s *Store) query(ctx context.Context, packageName string) (*packageInfo, er
 		if msg == "" {
 			msg = strings.TrimSpace(string(httpResp.Body()))
 		}
-		return nil, fmt.Errorf("[%d] %s", resp.Result, msg)
+		return nil, resp.Result, store.Categorize(classifyXiaomi(resp.Result, msg),
+			fmt.Errorf("[%d] %s", resp.Result, msg))
 	}
-	return resp.PackageInfo, nil
+	return resp.PackageInfo, 0, nil
 }
 
 func (s *Store) push(ctx context.Context, synchroType int, req *store.UploadRequest, iconPath string, rep progress.Reporter) error {
@@ -376,6 +410,10 @@ func classifyXiaomi(result int, msg string) store.Category {
 		return store.CategoryPolicyBlock
 	case result == -7: // 应用归属关系异常
 		return store.CategoryConfigInvalid
+	case result == -20014: // 密码错误: private_key doesn't match the email
+		return store.CategoryAuthFailed
+	case result == resultRateLimited:
+		return store.CategoryStoreBusy
 	}
 	return store.CategoryUnknown
 }
