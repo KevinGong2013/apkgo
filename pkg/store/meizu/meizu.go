@@ -122,7 +122,7 @@ func New(cfg map[string]string) (*Store, error) {
 	trace.Client(s.client.GetClient())
 	trace.Client(s.uploadClient)
 	if err := s.fetchToken(); err != nil {
-		return nil, store.Categorize(store.CategoryAuthFailed, fmt.Errorf("auth: %w", err))
+		return nil, store.AuthError(fmt.Errorf("auth: %w", err))
 	}
 	return s, nil
 }
@@ -148,7 +148,7 @@ func (s *Store) fetchToken() error {
 		return err
 	}
 	if httpResp.IsError() {
-		return fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+		return store.StatusError("", httpResp.StatusCode(), string(httpResp.Body()))
 	}
 	if resp.Code != 200 || resp.Value.AccessToken == "" {
 		return resp.errOf()

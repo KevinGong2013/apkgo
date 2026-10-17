@@ -265,7 +265,7 @@ func New(cfg map[string]string) (*Store, error) {
 	trace := httptrace.ForStore("honor", cfg)
 	token, err := fetchToken(trace, clientID, clientSecret)
 	if err != nil {
-		return nil, store.Categorize(store.CategoryAuthFailed, fmt.Errorf("auth: %w", err))
+		return nil, store.AuthError(fmt.Errorf("auth: %w", err))
 	}
 
 	client := resty.New().
@@ -411,6 +411,10 @@ func fetchToken(trace *httptrace.Tracer, clientID, clientSecret string) (string,
 	// {"error":"invalid_client",...} body would leave resp.Error blank
 	// and lose the OAuth2 reason.
 	body := httpResp.Body()
+	// A 5xx is Honor's gateway failing, not a verdict on the credentials.
+	if httpResp.StatusCode() >= 500 {
+		return "", store.StatusError("", httpResp.StatusCode(), truncateBody(string(body)))
+	}
 	var resp struct {
 		AccessToken      string `json:"access_token"`
 		Error            string `json:"error,omitempty"`

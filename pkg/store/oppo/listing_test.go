@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-resty/resty/v2"
 
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
@@ -41,6 +40,9 @@ type fakeOppo struct {
 	// latest version /app/info reports and its review label
 	infoVersion, infoAudit string
 	staleIcon              bool // the stored icon is 256×256, which /app/upd rejects
+	// gateway504 makes a path answer 504 NoStackTraceTimeoutException this
+	// many times before it works, like OPPO's gateway does now and then.
+	gateway504 map[string]int
 
 	mu      sync.Mutex
 	calls   []string // "info", "upload-url", "upload:<type>:<file>", "icon-check", "upd", "task-state"
@@ -56,11 +58,11 @@ type upload struct {
 
 func newFakeOppo(t *testing.T) *fakeOppo {
 	t.Helper()
-	old := taskPollInterval
-	taskPollInterval = time.Millisecond
-	t.Cleanup(func() { taskPollInterval = old })
+	old, oldWait := taskPollInterval, apiRetryWait
+	taskPollInterval, apiRetryWait = time.Millisecond, time.Millisecond
+	t.Cleanup(func() { taskPollInterval, apiRetryWait = old, oldWait })
 
-	f := &fakeOppo{}
+	f := &fakeOppo{gateway504: map[string]int{}}
 	var icon, staleIcon bytes.Buffer
 	if err := png.Encode(&icon, image.NewRGBA(image.Rect(0, 0, oppoIconSize, oppoIconSize))); err != nil {
 		t.Fatal(err)
@@ -70,6 +72,18 @@ func newFakeOppo(t *testing.T) *fakeOppo {
 	}
 
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		timeout := f.gateway504[r.URL.Path] > 0
+		if timeout {
+			f.gateway504[r.URL.Path]--
+		}
+		f.mu.Unlock()
+		if timeout {
+			f.record("504:" + r.URL.Path)
+			w.WriteHeader(http.StatusGatewayTimeout)
+			w.Write([]byte("NoStackTraceTimeoutException"))
+			return
+		}
 		switch r.URL.Path {
 		case "/resource/v1/app/info":
 			f.record("info")
@@ -171,7 +185,7 @@ func (f *fakeOppo) received() []upload {
 
 func (f *fakeOppo) store() *Store {
 	return &Store{
-		client:       resty.New().SetBaseURL(f.srv.URL),
+		client:       newAPIClient(f.srv.URL),
 		accessToken:  "test-token",
 		clientSecret: "test-secret",
 	}

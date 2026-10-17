@@ -163,15 +163,13 @@ func New(cfg map[string]string) (*Store, error) {
 		return nil, fmt.Errorf("client_id and client_secret are required")
 	}
 
-	client := resty.New().
-		SetBaseURL("https://oop-openapi-cn.heytapmobi.com").
-		SetHeader("Content-Type", "application/json")
+	client := newAPIClient("https://oop-openapi-cn.heytapmobi.com")
 	trace := httptrace.ForStore("oppo", cfg)
 	trace.Client(client.GetClient())
 
 	token, err := fetchToken(client, clientID, clientSecret)
 	if err != nil {
-		return nil, store.Categorize(store.CategoryAuthFailed, fmt.Errorf("auth: %w", err))
+		return nil, store.AuthError(fmt.Errorf("auth: %w", err))
 	}
 
 	return &Store{
@@ -180,6 +178,39 @@ func New(cfg map[string]string) (*Store, error) {
 		accessToken:  token,
 		clientSecret: clientSecret,
 	}, nil
+}
+
+// apiRetryWait is the first pause before re-sending an idempotent call;
+// tests shorten it.
+var apiRetryWait = time.Second
+
+// newAPIClient is the client for OPPO's open API. OPPO's gateway now and
+// then answers 504 NoStackTraceTimeoutException after ~3 s, and
+// connections drop; calls that are safe to repeat are re-sent twice
+// before giving up (see retryIdempotent).
+func newAPIClient(baseURL string) *resty.Client {
+	return resty.New().
+		SetBaseURL(baseURL).
+		SetHeader("Content-Type", "application/json").
+		SetRetryCount(2).
+		SetRetryWaitTime(apiRetryWait).
+		SetRetryMaxWaitTime(3 * apiRetryWait).
+		AddRetryCondition(retryIdempotent)
+}
+
+// retryIdempotent re-sends a call that failed in transit or with a 5xx
+// only when repeating it is harmless: every GET (token, app info,
+// get-upload-url — each fetches a fresh one-time sign) and the task-state
+// query. The submit (POST app/upd) is never repeated, so a slow but
+// successful submit can't go in twice. With a condition set, resty
+// retries exactly when it says so.
+func retryIdempotent(r *resty.Response, err error) bool {
+	if r == nil || r.Request == nil {
+		return false
+	}
+	idempotent := r.Request.Method == http.MethodGet ||
+		strings.HasSuffix(r.Request.URL, "/resource/v1/app/task-state")
+	return idempotent && (err != nil || r.StatusCode() >= 500)
 }
 
 // fetchToken exchanges client_id+client_secret for an access token.
@@ -205,7 +236,7 @@ func fetchToken(client *resty.Client, clientID, clientSecret string) (string, er
 		return "", err
 	}
 	if httpResp.IsError() {
-		return "", fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+		return "", store.StatusError("", httpResp.StatusCode(), string(httpResp.Body()))
 	}
 	if resp.Errno != 0 || resp.Data.AccessToken == "" {
 		return "", fmt.Errorf("[%d] %s", resp.Errno, parseError(httpResp.Body()))
@@ -355,7 +386,7 @@ func (s *Store) queryApp(ctx context.Context, pkgName string) (*appData, error) 
 		return nil, err
 	}
 	if httpResp.IsError() {
-		return nil, fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+		return nil, store.StatusError("", httpResp.StatusCode(), string(httpResp.Body()))
 	}
 	if resp.Errno != 0 {
 		return nil, fmt.Errorf("[%d] %s", resp.Errno, parseError(httpResp.Body()))
@@ -398,7 +429,7 @@ func (s *Store) uploadFile(ctx context.Context, file store.PackageFile, fileType
 		return nil, fmt.Errorf("get-upload-url: %w", err)
 	}
 	if httpResp.IsError() {
-		return nil, fmt.Errorf("get-upload-url: http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+		return nil, store.StatusError("get-upload-url: ", httpResp.StatusCode(), string(httpResp.Body()))
 	}
 	if urlResp.Errno != 0 || urlResp.Data.UploadURL == "" {
 		return nil, fmt.Errorf("get-upload-url: [%d] %s", urlResp.Errno, parseError(httpResp.Body()))
@@ -571,7 +602,7 @@ func (s *Store) pollTaskState(ctx context.Context, pkgName, versionCode string) 
 			return err
 		}
 		if httpResp.IsError() {
-			return fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+			return store.StatusError("", httpResp.StatusCode(), string(httpResp.Body()))
 		}
 		// Surface envelope-level errors immediately. Without this, an
 		// auth/sign failure would loop silently for the full polling

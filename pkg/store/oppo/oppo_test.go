@@ -322,3 +322,66 @@ func TestUploadSendsThePackage(t *testing.T) {
 		t.Error("the icon rebuilt from FileFacts.Icon differs from the one rebuilt from the APK")
 	}
 }
+
+// OPPO's gateway now and then answers 504 NoStackTraceTimeoutException
+// after ~3 s (seen on get-upload-url in production). One such hiccup is
+// re-asked and the upload goes through.
+func TestGatewayTimeoutIsRetried(t *testing.T) {
+	f := newFakeOppo(t)
+	f.gateway504["/resource/v1/upload/get-upload-url"] = 1
+	req := &store.UploadRequest{FilePath: fixtureAPK, PackageName: "com.example.app", VersionCode: 2, ReleaseNotes: "x"}
+	if res := f.store().Upload(context.Background(), req); !res.Success {
+		t.Fatalf("upload failed after one 504: %s (%s)", res.Error, res.Category)
+	}
+	calls, _ := f.seen()
+	if !slices.Contains(calls, "504:/resource/v1/upload/get-upload-url") {
+		t.Errorf("the 504 never happened: %v", calls)
+	}
+}
+
+// A gateway that keeps timing out is given up on after three tries and
+// reported as network_retry — the cloud retries those — not unknown.
+func TestGatewayTimeoutKeepsFailing(t *testing.T) {
+	f := newFakeOppo(t)
+	f.gateway504["/resource/v1/upload/get-upload-url"] = 100
+	req := &store.UploadRequest{FilePath: fixtureAPK, PackageName: "com.example.app", VersionCode: 2, ReleaseNotes: "x"}
+	res := f.store().Upload(context.Background(), req)
+	if res.Success || res.Category != store.CategoryNetworkRetry {
+		t.Fatalf("got success=%v category=%q (%s), want a network_retry failure", res.Success, res.Category, res.Error)
+	}
+	calls, _ := f.seen()
+	n := 0
+	for _, c := range calls {
+		if c == "504:/resource/v1/upload/get-upload-url" {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Errorf("get-upload-url tried %d times, want 3 (1 + 2 retries)", n)
+	}
+}
+
+// The submit is never sent twice: a 504 on /app/upd may still have
+// published, so it fails as is instead of being repeated.
+func TestSubmitIsNotRepeated(t *testing.T) {
+	f := newFakeOppo(t)
+	f.gateway504["/resource/v1/app/upd"] = 1
+	req := &store.UploadRequest{FilePath: fixtureAPK, PackageName: "com.example.app", VersionCode: 2, ReleaseNotes: "x"}
+	res := f.store().Upload(context.Background(), req)
+	if res.Success {
+		t.Fatal("upload succeeded although the submit answered 504")
+	}
+	calls, _ := f.seen()
+	submits := 0
+	for _, c := range calls {
+		if c == "504:/resource/v1/app/upd" || c == "upd" {
+			submits++
+		}
+	}
+	if submits != 1 {
+		t.Errorf("submit sent %d times, want exactly 1: %v", submits, calls)
+	}
+	if res.Category == store.CategoryNetworkRetry {
+		t.Errorf("a failed submit is tagged network_retry — the cloud would submit again")
+	}
+}
