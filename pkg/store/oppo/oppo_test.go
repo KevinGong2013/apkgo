@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"net/http"
 	"net/http/httptest"
@@ -383,5 +384,92 @@ func TestSubmitIsNotRepeated(t *testing.T) {
 	}
 	if res.Category == store.CategoryNetworkRetry {
 		t.Errorf("a failed submit is tagged network_retry — the cloud would submit again")
+	}
+}
+
+// The 2026-10-16 case: /app/upd answered "[911001] 版权证书无效" while the
+// real cause, visible only in app/info, was that OPPO had rejected the
+// app as a 马甲 of another one. The publish error now carries app/info's
+// review status and refuse_reason.
+func TestPublishErrorCarriesRefuseReason(t *testing.T) {
+	const reason = "APP与示例应用存在套用马甲的嫌疑（经检测APK相似度0.92）"
+	f := newFakeOppo(t)
+	f.updErrno, f.updMessage = 911001, "版权证书无效"
+	f.infoVersion, f.infoAudit, f.infoAuditCode, f.infoRefuse = "2", "审核不通过", "444", reason
+
+	res := f.store().Upload(context.Background(), uploadRequest(t, nil))
+	if res.Success {
+		t.Fatal("upload succeeded although /app/upd answered 911001")
+	}
+	want := "publish: [911001] 版权证书无效；OPPO 后台审核结果：审核不通过，audit_status=444，版本 1.1.0 (2)，驳回原因：" + reason
+	if res.Error != want {
+		t.Errorf("error:\n got %q\nwant %q", res.Error, want)
+	}
+	if res.Category != store.CategoryUnknown {
+		t.Errorf("category = %q, want it unchanged (unknown)", res.Category)
+	}
+	if calls, _ := f.seen(); calls[len(calls)-1] != "info" || !slices.Contains(calls, "upd") {
+		t.Errorf("calls = %v, want the failed upd followed by an app/info lookup", calls)
+	}
+}
+
+// A failed app/info lookup — an errno, or a gateway that keeps timing out
+// (which on its own would be network_retry) — leaves the publish error
+// exactly as OPPO gave it.
+func TestPublishErrorWhenAuditLookupFails(t *testing.T) {
+	for _, mode := range []string{"errno", "504"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFakeOppo(t)
+			f.updErrno, f.updMessage = 911001, "版权证书无效"
+			f.infoVersion, f.infoAudit, f.infoRefuse = "2", "审核不通过", "APP与示例应用存在套用马甲的嫌疑"
+			f.laterInfo = mode
+
+			res := f.store().Upload(context.Background(), uploadRequest(t, nil))
+			if res.Success {
+				t.Fatal("upload succeeded although /app/upd answered 911001")
+			}
+			if want := "publish: [911001] 版权证书无效"; res.Error != want {
+				t.Errorf("error = %q, want %q", res.Error, want)
+			}
+			if res.Category != store.CategoryUnknown {
+				t.Errorf("category = %q, want it unchanged (unknown)", res.Category)
+			}
+			calls, _ := f.seen()
+			if n := slices.Index(calls, "upd"); n < 0 || len(calls) == n+1 {
+				t.Errorf("calls = %v, want an app/info lookup after the failed upd", calls)
+			}
+		})
+	}
+}
+
+// Only a rejection is added, and only to 911xxx errors: an app in review
+// or live says nothing about why the publish failed, and an 800xxx error
+// (a bad field, the token) has its own cause, so app/info isn't asked.
+func TestPublishErrorWithoutRejection(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		errno              int
+		msg, audit, refuse string
+		wantInfoAfter      bool
+	}{
+		{"911001, latest version in review", 911001, "版权证书无效", "审核中", "", true},
+		{"911001, latest version live", 911001, "版权证书无效", "上线", "", true},
+		{"911001, withdrawn by the developer", 911001, "版权证书无效", "审核不通过", "开发者申请撤销审核", true},
+		{"800002 bad field", 800002, "Summary只能包含至多13个字符。", "审核不通过", "应用截图与实际功能不符", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeOppo(t)
+			f.updErrno, f.updMessage = tc.errno, tc.msg
+			f.infoVersion, f.infoAudit, f.infoRefuse = "2", tc.audit, tc.refuse
+
+			res := f.store().Upload(context.Background(), uploadRequest(t, nil))
+			if want := fmt.Sprintf("publish: [%d] %s", tc.errno, tc.msg); res.Error != want {
+				t.Errorf("error = %q, want %q", res.Error, want)
+			}
+			calls, _ := f.seen()
+			if got := calls[len(calls)-1] == "info"; got != tc.wantInfoAfter {
+				t.Errorf("calls = %v, app/info after upd = %v, want %v", calls, got, tc.wantInfoAfter)
+			}
+		})
 	}
 }

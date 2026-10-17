@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-
 	"github.com/KevinGong2013/apkgo/v4/pkg/store"
 )
 
@@ -34,18 +33,25 @@ const (
 type fakeOppo struct {
 	srv *httptest.Server
 
-	updErrno  int    // errno /app/upd answers with
-	failPhoto bool   // photo uploads answer with an errno
-	taskState string // task_state /app/task-state answers with; "" = "2" (done)
-	// latest version /app/info reports and its review label
-	infoVersion, infoAudit string
-	staleIcon              bool // the stored icon is 256×256, which /app/upd rejects
+	updErrno   int    // errno /app/upd answers with
+	updMessage string // message /app/upd answers with; "" = "应用审核中"
+	failPhoto  bool   // photo uploads answer with an errno
+	taskState  string // task_state /app/task-state answers with; "" = "2" (done)
+	// latest version /app/info reports, its review label, status code and
+	// refuse_reason
+	infoVersion, infoAudit, infoAuditCode, infoRefuse string
+	// laterInfo is how app/info calls after the first (the upload's own
+	// query) fail: "errno" answers an errno, "504" keeps timing out;
+	// "" = they work.
+	laterInfo string
+	staleIcon bool // the stored icon is 256×256, which /app/upd rejects
 	// gateway504 makes a path answer 504 NoStackTraceTimeoutException this
 	// many times before it works, like OPPO's gateway does now and then.
 	gateway504 map[string]int
 
 	mu      sync.Mutex
 	calls   []string // "info", "upload-url", "upload:<type>:<file>", "icon-check", "upd", "task-state"
+	infos   int      // app/info calls so far
 	upd     url.Values
 	uploads []upload // what /upload received, in order
 }
@@ -87,6 +93,19 @@ func newFakeOppo(t *testing.T) *fakeOppo {
 		switch r.URL.Path {
 		case "/resource/v1/app/info":
 			f.record("info")
+			f.mu.Lock()
+			f.infos++
+			later := f.infos > 1
+			f.mu.Unlock()
+			switch {
+			case later && f.laterInfo == "504":
+				w.WriteHeader(http.StatusGatewayTimeout)
+				w.Write([]byte("NoStackTraceTimeoutException"))
+				return
+			case later && f.laterInfo == "errno":
+				writeJSON(w, map[string]any{"errno": 500, "message": "系统繁忙", "data": []any{}})
+				return
+			}
 			writeJSON(w, map[string]any{"errno": 0, "data": map[string]any{
 				"app_name":    "Test App",
 				"summary":     oldSummary,
@@ -94,8 +113,11 @@ func newFakeOppo(t *testing.T) *fakeOppo {
 				"icon_url":    f.srv.URL + "/old/icon.png", // compliant unless staleIcon, so kept
 				"pic_url":     oldPicURL,
 
+				"version_name":      "1.1.0",
 				"version_code":      f.infoVersion,
+				"audit_status":      f.infoAuditCode,
 				"audit_status_name": f.infoAudit,
+				"refuse_reason":     f.infoRefuse,
 			}})
 		case "/resource/v1/upload/get-upload-url":
 			f.record("upload-url")
@@ -146,7 +168,11 @@ func newFakeOppo(t *testing.T) *fakeOppo {
 			f.upd = r.PostForm
 			f.mu.Unlock()
 			f.record("upd")
-			writeJSON(w, map[string]any{"errno": f.updErrno, "message": "应用审核中"})
+			msg := f.updMessage
+			if msg == "" {
+				msg = "应用审核中"
+			}
+			writeJSON(w, map[string]any{"errno": f.updErrno, "message": msg})
 		case "/resource/v1/app/task-state":
 			f.record("task-state")
 			state := f.taskState

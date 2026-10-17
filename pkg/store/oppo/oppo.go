@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -338,7 +339,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 		case isOppoTaskInFlight(err):
 			inFlight = true // fall through to polling
 		default:
-			return fmt.Errorf("publish: %w", err)
+			return fmt.Errorf("publish: %w", s.withAuditReason(ctx, req.PackageName, err))
 		}
 	}
 
@@ -368,6 +369,62 @@ func isOppoTaskInFlight(err error) bool {
 // up to OPPO's reviewers.
 func isOppoUnderReview(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "[911215]")
+}
+
+// apiError is a non-zero errno from OPPO's open API. Its text is the
+// "[errno] message" the store has always reported, which callers and
+// apkgo cloud's hints match on.
+type apiError struct {
+	Errno int
+	Msg   string
+}
+
+func (e *apiError) Error() string { return fmt.Sprintf("[%d] %s", e.Errno, e.Msg) }
+
+// auditLookupTimeout bounds withAuditReason's app/info query, so a slow
+// gateway can't hold up the publish error.
+const auditLookupTimeout = 15 * time.Second
+
+// withAuditReason adds OPPO's review verdict to a 911xxx publish error.
+// /app/upd's message for those can name a different cause than the real
+// one: on 2026-10-16 it answered "[911001] 版权证书无效" for an app OPPO
+// had rejected as a 马甲 of another app (APK 相似度 0.92), a reason only
+// app/info's refuse_reason gave. So when app/info shows the latest
+// version rejected, its status and reason are appended. 800xxx errors
+// (bad fields, token) are left alone: an earlier rejection says nothing
+// about them. If the query fails, err is returned as it was.
+func (s *Store) withAuditReason(ctx context.Context, pkgName string, err error) error {
+	var ae *apiError
+	if !errors.As(err, &ae) || ae.Errno/1000 != 911 {
+		return err
+	}
+	qctx, cancel := context.WithTimeout(ctx, auditLookupTimeout)
+	defer cancel()
+	app, qerr := s.queryApp(qctx, pkgName)
+	if qerr != nil {
+		ctxlog.FromContext(ctx).Warn("oppo app/info lookup for the publish error's review reason failed", "error", qerr)
+		return err
+	}
+	if app == nil {
+		return err
+	}
+	if state, _ := mapOppoAudit(app.AuditStatusName, app.RefuseReason); state != store.AuditRejected {
+		return err
+	}
+	status := app.AuditStatusName
+	if code := strings.TrimSpace(app.AuditStatus); code != "" {
+		status += "，audit_status=" + code
+	}
+	switch vn, vc := app.VersionName, strings.TrimSpace(app.VersionCode); {
+	case vn != "" && vc != "":
+		status += fmt.Sprintf("，版本 %s (%s)", vn, vc)
+	case vn+vc != "":
+		status += "，版本 " + vn + vc
+	}
+	if reason := strings.TrimSpace(app.RefuseReason); reason != "" {
+		return fmt.Errorf("%w；OPPO 后台审核结果：%s，驳回原因：%s", err, status, reason)
+	}
+	return fmt.Errorf("%w；OPPO 后台审核结果：%s", err, status)
 }
 
 func (s *Store) queryApp(ctx context.Context, pkgName string) (*appData, error) {
@@ -535,7 +592,7 @@ func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkIn
 		return fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
 	}
 	if resp.Errno != 0 {
-		return fmt.Errorf("[%d] %s", resp.Errno, parseError(httpResp.Body()))
+		return &apiError{Errno: resp.Errno, Msg: parseError(httpResp.Body())}
 	}
 	return nil
 }
