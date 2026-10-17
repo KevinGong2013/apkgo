@@ -81,3 +81,37 @@ func TestAlreadyDoneError(t *testing.T) {
 		t.Errorf("Error() = %q", got)
 	}
 }
+
+func TestStatusError(t *testing.T) {
+	err := store.StatusError("get-upload-url: ", 504, " NoStackTraceTimeoutException\n")
+	if got := err.Error(); got != "get-upload-url: http 504: NoStackTraceTimeoutException" {
+		t.Errorf("message = %q", got)
+	}
+	if store.CategoryOf(err) != store.CategoryNetworkRetry {
+		t.Errorf("5xx category = %q, want network_retry", store.CategoryOf(err))
+	}
+	if c := store.CategoryOf(store.StatusError("", 400, "bad request")); c != store.CategoryUnknown {
+		t.Errorf("4xx category = %q, want unknown (left to the caller)", c)
+	}
+}
+
+// Only a real rejection of the credentials is auth_failed; a network drop
+// or a 5xx while signing in stays network_retry, so apkgo cloud doesn't
+// mark a working credential 「验证失败」 over a gateway hiccup.
+func TestAuthError(t *testing.T) {
+	if store.AuthError(nil) != nil {
+		t.Error("store.AuthError(nil) != nil")
+	}
+	for name, tc := range map[string]struct {
+		err  error
+		want store.Category
+	}{
+		"rejected":     {errors.New("[invalid_client] bad secret"), store.CategoryAuthFailed},
+		"gateway 504":  {fmt.Errorf("auth: %w", store.StatusError("", 504, "timeout")), store.CategoryNetworkRetry},
+		"network drop": {fmt.Errorf("auth: %w", &url.Error{Op: "Get", URL: "https://x", Err: errors.New("connection reset by peer")}), store.CategoryNetworkRetry},
+	} {
+		if got := store.CategoryOf(store.AuthError(tc.err)); got != tc.want {
+			t.Errorf("%s: category = %q, want %q", name, got, tc.want)
+		}
+	}
+}

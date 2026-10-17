@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"strings"
@@ -104,6 +105,35 @@ func Categorize(cat Category, err error) error {
 		return nil
 	}
 	return &CategorizedError{Cat: cat, Err: err}
+}
+
+// StatusError formats a non-2xx response from a store API as
+// "<prefix>http <status>: <body>". A 5xx is the store's own gateway or
+// server failing — OPPO's get-upload-url answers 504
+// NoStackTraceTimeoutException after ~3 s now and then — not a rejection
+// of the request, so it is tagged network_retry; anything else is left
+// uncategorized for the caller to decide.
+func StatusError(prefix string, status int, body string) error {
+	err := fmt.Errorf("%shttp %d: %s", prefix, status, strings.TrimSpace(body))
+	if status >= 500 {
+		return Categorize(CategoryNetworkRetry, err)
+	}
+	return err
+}
+
+// AuthError tags a failed sign-in (token exchange) as auth_failed — unless
+// the failure was transient (network drop, timeout, 5xx), which says
+// nothing about the credentials and stays network_retry. apkgo cloud marks
+// a credential 「验证失败」 on auth_failed, so a gateway hiccup must not
+// land there.
+func AuthError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if CategoryOf(err) == CategoryNetworkRetry {
+		return err
+	}
+	return Categorize(CategoryAuthFailed, err)
 }
 
 // CategoryOf walks the error chain and returns the first
