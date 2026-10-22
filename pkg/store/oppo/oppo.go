@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -153,8 +154,11 @@ func parseError(body []byte) string {
 type Store struct {
 	client       *resty.Client
 	uploadClient *http.Client // streamed file uploads; nil = httpx's default
-	accessToken  string
+	clientID     string
 	clientSecret string
+
+	mu          sync.Mutex // guards accessToken, replaced by refreshToken
+	accessToken string
 }
 
 func New(cfg map[string]string) (*Store, error) {
@@ -177,8 +181,54 @@ func New(cfg map[string]string) (*Store, error) {
 		client:       client,
 		uploadClient: trace.NewClient(30 * time.Minute),
 		accessToken:  token,
+		clientID:     clientID,
 		clientSecret: clientSecret,
 	}, nil
+}
+
+// errnoTokenInvalid is OPPO's "[800003] Access Token无效".
+//
+// On 2026-10-21 an upload's token, issued at 16:25 with expire_in two days
+// out, was refused at 16:30 while the accepted publish's task-state was
+// being polled: the version had gone in, the upload was reported failed.
+// Nothing in that run asked for another token; the same key used
+// elsewhere at the same time (the developer's own scripts, another tool)
+// is the likely cause. A fresh token from the same key fixes it.
+const errnoTokenInvalid = 800003
+
+// call sends a signed request — send signs it each time it runs — and,
+// when OPPO answers 800003, fetches a new token and sends it once more.
+// OPPO refuses such a request before acting on it, so repeating it, the
+// submit (/app/upd) included, can't apply anything twice. If the new
+// token can't be had, the 800003 answer is returned as it was.
+func (s *Store) call(ctx context.Context, send func() (*resty.Response, error)) (*resty.Response, error) {
+	resp, err := send()
+	if err != nil || !tokenInvalid(resp) {
+		return resp, err
+	}
+	if rerr := s.refreshToken(); rerr != nil {
+		ctxlog.FromContext(ctx).Warn("oppo access token refused; fetching a new one failed", "error", rerr)
+		return resp, err
+	}
+	ctxlog.FromContext(ctx).Info("oppo access token refused (800003); resending with a new one", "path", resp.RawResponse.Request.URL.Path)
+	return send()
+}
+
+func tokenInvalid(resp *resty.Response) bool {
+	var env errEnvelope
+	return json.Unmarshal(resp.Body(), &env) == nil && env.Errno == errnoTokenInvalid
+}
+
+// refreshToken replaces the store's access token with a newly issued one.
+func (s *Store) refreshToken() error {
+	token, err := fetchToken(s.client, s.clientID, s.clientSecret)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.accessToken = token
+	s.mu.Unlock()
+	return nil
 }
 
 // apiRetryWait is the first pause before re-sending an idempotent call;
@@ -332,7 +382,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// store.ListingResult from claiming the listing.
 	rep.Phase("publishing")
 	inFlight := false
-	if err := s.publish(req, app, apkInfos); err != nil {
+	if err := s.publish(ctx, req, app, apkInfos); err != nil {
 		switch {
 		case isOppoUnderReview(err):
 			return &store.AlreadyDoneError{Reason: "version already in OPPO review queue"}
@@ -434,11 +484,13 @@ func (s *Store) queryApp(ctx context.Context, pkgName string) (*appData, error) 
 		errEnvelope
 		Data json.RawMessage `json:"data"`
 	}
-	httpResp, err := s.client.R().
-		SetContext(ctx).
-		SetResult(&resp).
-		SetQueryParamsFromValues(s.sign(data)).
-		Get("/resource/v1/app/info")
+	httpResp, err := s.call(ctx, func() (*resty.Response, error) {
+		return s.client.R().
+			SetContext(ctx).
+			SetResult(&resp).
+			SetQueryParamsFromValues(s.sign(data)).
+			Get("/resource/v1/app/info")
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -477,11 +529,13 @@ func (s *Store) uploadFile(ctx context.Context, file store.PackageFile, fileType
 			Sign      string `json:"sign"`
 		} `json:"data"`
 	}
-	httpResp, err := s.client.R().
-		SetContext(ctx).
-		SetResult(&urlResp).
-		SetQueryParamsFromValues(s.sign(url.Values{})).
-		Get("/resource/v1/upload/get-upload-url")
+	httpResp, err := s.call(ctx, func() (*resty.Response, error) {
+		return s.client.R().
+			SetContext(ctx).
+			SetResult(&urlResp).
+			SetQueryParamsFromValues(s.sign(url.Values{})).
+			Get("/resource/v1/upload/get-upload-url")
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get-upload-url: %w", err)
 	}
@@ -534,7 +588,7 @@ func (s *Store) uploadFile(ctx context.Context, file store.PackageFile, fileType
 	return &uploadResp.Data, nil
 }
 
-func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkInfo) error {
+func (s *Store) publish(ctx context.Context, req *store.UploadRequest, app *appData, apkInfos []apkInfo) error {
 	apkJSON, _ := json.Marshal(apkInfos)
 
 	values := url.Values{}
@@ -581,10 +635,14 @@ func (s *Store) publish(req *store.UploadRequest, app *appData, apkInfos []apkIn
 	var resp struct {
 		errEnvelope
 	}
-	httpResp, err := s.client.R().
-		SetResult(&resp).
-		SetFormDataFromValues(s.sign(values)).
-		Post("/resource/v1/app/upd")
+	// ctx only for call's logging: a submit already on its way is not
+	// cut off.
+	httpResp, err := s.call(ctx, func() (*resty.Response, error) {
+		return s.client.R().
+			SetResult(&resp).
+			SetFormDataFromValues(s.sign(values)).
+			Post("/resource/v1/app/upd")
+	})
 	if err != nil {
 		return err
 	}
@@ -650,11 +708,13 @@ func (s *Store) pollTaskState(ctx context.Context, pkgName, versionCode string) 
 				ErrMsg    string `json:"err_msg"`
 			} `json:"data"`
 		}
-		httpResp, err := s.client.R().
-			SetContext(ctx).
-			SetResult(&resp).
-			SetFormDataFromValues(s.sign(data)).
-			Post("/resource/v1/app/task-state")
+		httpResp, err := s.call(ctx, func() (*resty.Response, error) {
+			return s.client.R().
+				SetContext(ctx).
+				SetResult(&resp).
+				SetFormDataFromValues(s.sign(data)).
+				Post("/resource/v1/app/task-state")
+		})
 		if err != nil {
 			return err
 		}
@@ -704,9 +764,13 @@ func (s *Store) versionInReview(ctx context.Context, pkgName, versionCode string
 	return state == store.AuditReviewing || state == store.AuditApproved
 }
 
-// sign adds common params and HMAC-SHA256 signature.
+// sign adds common params and HMAC-SHA256 signature. Signing data again
+// (call resending it) replaces all three.
 func (s *Store) sign(data url.Values) url.Values {
+	data.Del("api_sign")
+	s.mu.Lock()
 	data.Set("access_token", s.accessToken)
+	s.mu.Unlock()
 	data.Set("timestamp", strconv.FormatInt(time.Now().Unix(), 10))
 
 	// Sort keys and build signing string

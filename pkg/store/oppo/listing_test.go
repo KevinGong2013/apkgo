@@ -48,6 +48,11 @@ type fakeOppo struct {
 	// gateway504 makes a path answer 504 NoStackTraceTimeoutException this
 	// many times before it works, like OPPO's gateway does now and then.
 	gateway504 map[string]int
+	// staleTokenAt makes this path refuse the store's first token with
+	// 800003, as if it had been voided mid-upload; /developer/v1/token
+	// then issues "fresh-token" (or, with tokenErrno, an errno).
+	staleTokenAt string
+	tokenErrno   int
 
 	mu      sync.Mutex
 	calls   []string // "info", "upload-url", "upload:<type>:<file>", "icon-check", "upd", "task-state"
@@ -90,7 +95,19 @@ func newFakeOppo(t *testing.T) *fakeOppo {
 			w.Write([]byte("NoStackTraceTimeoutException"))
 			return
 		}
+		if r.URL.Path == f.staleTokenAt && r.FormValue("access_token") == "test-token" {
+			f.record("800003:" + r.URL.Path)
+			writeJSON(w, map[string]any{"errno": errnoTokenInvalid, "data": map[string]any{"message": "Access Token无效"}})
+			return
+		}
 		switch r.URL.Path {
+		case "/developer/v1/token":
+			f.record("token")
+			if f.tokenErrno != 0 {
+				writeJSON(w, map[string]any{"errno": f.tokenErrno, "message": "invalid client"})
+				return
+			}
+			writeJSON(w, map[string]any{"errno": 0, "data": map[string]any{"access_token": "fresh-token"}})
 		case "/resource/v1/app/info":
 			f.record("info")
 			f.mu.Lock()
@@ -213,6 +230,7 @@ func (f *fakeOppo) store() *Store {
 	return &Store{
 		client:       newAPIClient(f.srv.URL),
 		accessToken:  "test-token",
+		clientID:     "test-client",
 		clientSecret: "test-secret",
 	}
 }

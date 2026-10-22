@@ -473,3 +473,69 @@ func TestPublishErrorWithoutRejection(t *testing.T) {
 		})
 	}
 }
+
+// The 2026-10-21 case: the token is voided mid-upload (another use of the
+// same key) and OPPO answers 800003. Each signed call fetches a new token
+// and goes again, the submit included — OPPO refused it unread — so the
+// upload carries on with exactly one accepted submit.
+func TestVoidedTokenIsReplaced(t *testing.T) {
+	for _, path := range []string{
+		"/resource/v1/app/info",
+		"/resource/v1/upload/get-upload-url",
+		"/resource/v1/app/upd",
+		"/resource/v1/app/task-state",
+	} {
+		t.Run(path, func(t *testing.T) {
+			f := newFakeOppo(t)
+			f.staleTokenAt = path
+			req := &store.UploadRequest{FilePath: fixtureAPK, PackageName: "com.example.app", VersionCode: 2, ReleaseNotes: "x"}
+			res := f.store().Upload(context.Background(), req)
+			if !res.Success {
+				t.Fatalf("upload failed: %s (%s)", res.Error, res.Category)
+			}
+			calls, upd := f.seen()
+			i := slices.Index(calls, "800003:"+path)
+			if i < 0 || i+1 >= len(calls) || calls[i+1] != "token" {
+				t.Fatalf("calls = %v, want the 800003 followed by a token fetch", calls)
+			}
+			if n := countOf(calls, "token"); n != 1 {
+				t.Errorf("tokens fetched %d times, want 1: %v", n, calls)
+			}
+			if n := countOf(calls, "upd"); n != 1 {
+				t.Errorf("submit accepted %d times, want 1: %v", n, calls)
+			}
+			want := "fresh-token"
+			if path == "/resource/v1/app/task-state" {
+				want = "test-token" // the submit went out before the token was voided
+			}
+			if got := upd.Get("access_token"); got != want {
+				t.Errorf("submit signed with %q, want %q", got, want)
+			}
+			if sum := upd.Get("api_sign"); sum == "" || len(upd["api_sign"]) != 1 {
+				t.Errorf("api_sign = %v, want exactly one", upd["api_sign"])
+			}
+		})
+	}
+}
+
+// When no new token can be had, OPPO's 800003 is what the user sees.
+func TestVoidedTokenNotReplaceable(t *testing.T) {
+	f := newFakeOppo(t)
+	f.staleTokenAt = "/resource/v1/app/task-state"
+	f.tokenErrno = 1001
+	req := &store.UploadRequest{FilePath: fixtureAPK, PackageName: "com.example.app", VersionCode: 2, ReleaseNotes: "x"}
+	res := f.store().Upload(context.Background(), req)
+	if res.Success || !strings.Contains(res.Error, "[800003]") {
+		t.Fatalf("got success=%v error %q, want the 800003", res.Success, res.Error)
+	}
+}
+
+func countOf(calls []string, call string) int {
+	n := 0
+	for _, c := range calls {
+		if c == call {
+			n++
+		}
+	}
+	return n
+}
