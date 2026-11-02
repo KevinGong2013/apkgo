@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -279,7 +280,7 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	// Update release notes (newFeatures)
 	if req.ReleaseNotes != "" {
 		rep.Phase("release notes")
-		if err := s.updateAppInfo(appID, req.ReleaseNotes); err != nil {
+		if err := s.updateReleaseNotes(ctx, appID, req.ReleaseNotes); err != nil {
 			return fmt.Errorf("update release notes: %w", err)
 		}
 	}
@@ -301,28 +302,75 @@ func (s *Store) upload(ctx context.Context, req *store.UploadRequest) error {
 	return nil
 }
 
-// updateAppInfo sets the release notes (newFeatures) for the app.
-func (s *Store) updateAppInfo(appID, releaseNotes string) error {
-	var resp struct {
-		Ret retInfo `json:"ret"`
+// maxReleaseNotes is AGC's limit for newFeatures (新特性), in characters.
+const maxReleaseNotes = 1000
+
+// updateReleaseNotes writes the release notes (newFeatures) of the version
+// being prepared and reads them back.
+//
+// newFeatures is a per-language field, so it goes through app-language-info
+// for the app's default language. It used to be sent to app-info, which
+// Huawei accepts (ret.code 0) but ignores, so the version went to review
+// without notes. The read-back exists for that reason: a write that
+// "succeeds" is not proof it was kept.
+func (s *Store) updateReleaseNotes(ctx context.Context, appID, releaseNotes string) error {
+	if r := []rune(releaseNotes); len(r) > maxReleaseNotes {
+		releaseNotes = string(r[:maxReleaseNotes])
 	}
-	_, err := s.client.R().
-		SetQueryParams(map[string]string{
-			"appId":       appID,
-			"releaseType": "1",
-		}).
-		SetBody(map[string]any{
-			"newFeatures": releaseNotes,
-		}).
-		SetResult(&resp).
-		Put("/api/publish/v2/app-info")
+	lang, err := s.defaultLang(ctx, appID)
 	if err != nil {
+		return fmt.Errorf("query default language: %w", err)
+	}
+	if err := s.putLanguageInfo(ctx, appID, map[string]any{
+		"lang":        lang,
+		"newFeatures": releaseNotes,
+	}); err != nil {
 		return err
 	}
-	if resp.Ret.Code != 0 {
-		return fmt.Errorf("[%d] %s", resp.Ret.Code, resp.Ret.text())
+
+	got, found, err := s.readNewFeatures(ctx, appID, lang)
+	switch {
+	case err != nil:
+		log.Printf("huawei: release notes written but could not be read back: %v", err)
+	case !found:
+		log.Printf("huawei: release notes written but app-info reports no newFeatures for %s; cannot verify", lang)
+	case strings.TrimSpace(got) != strings.TrimSpace(releaseNotes):
+		return fmt.Errorf("release notes were not saved: app-info newFeatures for %s is %q after the update", lang, got)
 	}
 	return nil
+}
+
+// readNewFeatures returns newFeatures of lang from app-info. found is false
+// when the response has no such language or no such field, i.e. the shape
+// is not one it can judge.
+func (s *Store) readNewFeatures(ctx context.Context, appID, lang string) (got string, found bool, err error) {
+	var resp struct {
+		Ret       retInfo `json:"ret"`
+		Languages []struct {
+			Lang        string  `json:"lang"`
+			NewFeatures *string `json:"newFeatures"`
+		} `json:"languages"`
+	}
+	httpResp, err := s.client.R().
+		SetContext(ctx).
+		SetQueryParams(map[string]string{"appId": appID, "releaseType": "1"}).
+		SetResult(&resp).
+		Get("/api/publish/v2/app-info")
+	if err != nil {
+		return "", false, err
+	}
+	if httpResp.IsError() {
+		return "", false, fmt.Errorf("http %d: %s", httpResp.StatusCode(), strings.TrimSpace(string(httpResp.Body())))
+	}
+	if resp.Ret.Code != 0 {
+		return "", false, fmt.Errorf("[%d] %s", resp.Ret.Code, resp.Ret.text())
+	}
+	for _, l := range resp.Languages {
+		if l.Lang == lang && l.NewFeatures != nil {
+			return *l.NewFeatures, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // getToken exchanges credentials for an access token.
@@ -645,7 +693,7 @@ var (
 func (s *Store) publishByURL(ctx context.Context, appID string, req *store.UploadRequest, rep progress.Reporter) error {
 	if req.ReleaseNotes != "" {
 		rep.Phase("release notes")
-		if err := s.updateAppInfo(appID, req.ReleaseNotes); err != nil {
+		if err := s.updateReleaseNotes(ctx, appID, req.ReleaseNotes); err != nil {
 			return fmt.Errorf("update release notes: %w", err)
 		}
 	}
