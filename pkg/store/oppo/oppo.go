@@ -588,6 +588,19 @@ func (s *Store) uploadFile(ctx context.Context, file store.PackageFile, fileType
 	return &uploadResp.Data, nil
 }
 
+// maxTestDescRunes is OPPO's limit on test_desc (最多输入 400 个字符).
+const maxTestDescRunes = 400
+
+// testDesc derives the 审核补充说明 from the caller's release notes, cut to
+// OPPO's 400-character limit.
+func testDesc(releaseNotes string) string {
+	r := []rune(strings.TrimSpace(releaseNotes))
+	if len(r) > maxTestDescRunes {
+		r = r[:maxTestDescRunes]
+	}
+	return string(r)
+}
+
 func (s *Store) publish(ctx context.Context, req *store.UploadRequest, app *appData, apkInfos []apkInfo) error {
 	apkJSON, _ := json.Marshal(apkInfos)
 
@@ -611,7 +624,10 @@ func (s *Store) publish(ctx context.Context, req *store.UploadRequest, app *appD
 		values.Set("online_type", "2")
 		values.Set("sche_online_time", store.BeijingLocalTime(*req.ReleaseTime))
 	}
-	values.Set("test_desc", "submitted by apkgo")
+	// test_desc is the 审核补充说明 the OPPO reviewers read. The API marks it
+	// required, but what goes in it is the developer's to say — never a
+	// tool-authored line. Send the release notes the caller supplied.
+	values.Set("test_desc", testDesc(req.ReleaseNotes))
 	// /app/upd validates 软件版权证明 from copyright_url. Accounts that uploaded
 	// an electronic copyright certificate (电子版权证书) get an empty copyright_url
 	// from /app/info with the URL only in electronic_cert_url, so fall back to it.

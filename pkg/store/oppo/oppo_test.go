@@ -296,6 +296,9 @@ func TestUploadSendsThePackage(t *testing.T) {
 		if !slices.Equal(calls, wantCalls) {
 			t.Errorf("remote=%v: calls:\n got %v\nwant %v", remote, calls, wantCalls)
 		}
+		if got := upd.Get("test_desc"); got != req.ReleaseNotes || strings.Contains(got, "apkgo") {
+			t.Errorf("remote=%v: test_desc = %q, want the release notes %q", remote, got, req.ReleaseNotes)
+		}
 		var apks []apkInfo
 		if err := json.Unmarshal([]byte(upd.Get("apk_url")), &apks); err != nil {
 			t.Fatalf("remote=%v: apk_url %q: %v", remote, upd.Get("apk_url"), err)
@@ -538,4 +541,18 @@ func countOf(calls []string, call string) int {
 		}
 	}
 	return n
+}
+
+func TestTestDesc(t *testing.T) {
+	long := strings.Repeat("字", 450)
+	for _, tc := range []struct{ name, in, want string }{
+		{"release notes pass through", "修复若干问题", "修复若干问题"},
+		{"surrounding space trimmed", "  fix crash \n", "fix crash"},
+		{"empty stays empty", "", ""},
+		{"cut to 400 characters", long, strings.Repeat("字", 400)},
+	} {
+		if got := testDesc(tc.in); got != tc.want {
+			t.Errorf("%s: testDesc(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
 }
