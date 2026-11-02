@@ -139,6 +139,12 @@ func (s *Store) updateLanguageInfo(ctx context.Context, appID, lang string, l *s
 	if l.Description != "" {
 		body["appDesc"] = l.Description
 	}
+	return s.putLanguageInfo(ctx, appID, body)
+}
+
+// putLanguageInfo sends one app-language-info update; body carries lang
+// and the fields to change.
+func (s *Store) putLanguageInfo(ctx context.Context, appID string, body map[string]any) error {
 	var resp struct {
 		Ret retInfo `json:"ret"`
 	}
