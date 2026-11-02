@@ -62,6 +62,7 @@ type fakeDownloadAGC struct {
 	calls  []string
 	submit map[string]any
 	polls  int
+	notes  *string // newFeatures written to app-language-info
 }
 
 func newFakeDownloadAGC(t *testing.T, infos ...string) (*fakeDownloadAGC, *Store) {
@@ -83,13 +84,30 @@ func (f *fakeDownloadAGC) handle(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, call)
 	switch call {
-	case "PUT app-info":
+	case "PUT app-language-info":
+		var body struct {
+			Lang        string `json:"lang"`
+			NewFeatures string `json:"newFeatures"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.notes = &body.NewFeatures
 		io.WriteString(w, `{"ret":{"code":0}}`)
 	case "POST app-submit-with-file":
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &f.submit)
 		fmt.Fprintf(w, `{"ret":{"code":%d,"msg":"queued or refused"}}`, f.submitCode)
 	case "GET app-info":
+		if f.submit == nil && !slices.Contains(f.calls, "POST app-submit-with-file") {
+			// Before the submit: the release notes' default-language lookup
+			// and read-back, not the status polling.
+			notes := ""
+			if f.notes != nil {
+				notes = *f.notes
+			}
+			b, _ := json.Marshal(notes)
+			fmt.Fprintf(w, `{"ret":{"code":0},"appInfo":{"defaultLang":"zh-CN"},"languages":[{"lang":"zh-CN","newFeatures":%s}]}`, b)
+			return
+		}
 		i := min(f.polls, len(f.infos)-1)
 		f.polls++
 		io.WriteString(w, f.infos[i])
@@ -151,7 +169,7 @@ func TestPublishByURLWaitsForTheNewPackage(t *testing.T) {
 				t.Fatalf("Upload failed: %s", res.Error)
 			}
 
-			want := []string{"PUT app-info", "POST app-submit-with-file", "GET app-info", "GET app-info", "GET app-info"}
+			want := []string{"GET app-info", "PUT app-language-info", "GET app-info", "POST app-submit-with-file", "GET app-info", "GET app-info", "GET app-info"}
 			if got := f.seen(); !slices.Equal(got, want) {
 				t.Fatalf("calls = %v, want %v", got, want)
 			}
@@ -201,7 +219,7 @@ func TestPublishByURLRefused(t *testing.T) {
 	if res.Success || !strings.Contains(res.Error, "submit with file: [204144647]") {
 		t.Fatalf("result = %+v", res)
 	}
-	if got := f.seen(); !slices.Equal(got, []string{"PUT app-info", "POST app-submit-with-file"}) {
+	if got := f.seen(); !slices.Equal(got, []string{"GET app-info", "PUT app-language-info", "GET app-info", "POST app-submit-with-file"}) {
 		t.Errorf("calls = %v, want no polling after a refusal", got)
 	}
 }
