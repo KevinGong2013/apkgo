@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -34,6 +35,7 @@ type fakeAGC struct {
 
 	defaultLang      string // app-info appInfo.defaultLang; "" = omitted
 	languageInfoCode int    // ret.code for app-language-info
+	ignoreNotes      bool   // accept newFeatures but don't keep it, like AGC's app-info did
 
 	mu           sync.Mutex
 	calls        []string
@@ -41,6 +43,7 @@ type fakeAGC struct {
 	uploaded     map[string][]byte // file server uploads, by file name
 	fileInfo     []map[string]any
 	languageInfo []map[string]any
+	newFeatures  *string // saved release notes, as app-info reports them
 }
 
 func newFakeAGC(t *testing.T) *fakeAGC {
@@ -127,23 +130,34 @@ func (f *fakeAGC) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		io.WriteString(w, ok)
 
-	case "PUT app-info":
-		f.record("PUT app-info")
-		io.WriteString(w, ok)
-
 	case "GET app-info":
 		f.record("GET app-info")
+		f.mu.Lock()
+		notes := f.newFeatures
+		f.mu.Unlock()
+		lang := f.defaultLang
+		if lang == "" {
+			lang = fallbackLang
+		}
+		languages := "[]"
+		if notes != nil {
+			b, _ := json.Marshal(map[string]any{"lang": lang, "newFeatures": *notes})
+			languages = "[" + string(b) + "]"
+		}
 		if f.defaultLang == "" {
-			io.WriteString(w, `{"ret":{"code":0},"appInfo":{"releaseState":0},"languages":[]}`)
+			fmt.Fprintf(w, `{"ret":{"code":0},"appInfo":{"releaseState":0},"languages":%s}`, languages)
 			return
 		}
-		fmt.Fprintf(w, `{"ret":{"code":0},"appInfo":{"releaseState":0,"defaultLang":%q},"languages":[]}`, f.defaultLang)
+		fmt.Fprintf(w, `{"ret":{"code":0},"appInfo":{"releaseState":0,"defaultLang":%q},"languages":%s}`, f.defaultLang, languages)
 
 	case "PUT app-language-info":
 		body := f.decode(r)
 		f.record("PUT app-language-info")
 		f.mu.Lock()
 		f.languageInfo = append(f.languageInfo, body)
+		if nf, ok := body["newFeatures"].(string); ok && !f.ignoreNotes {
+			f.newFeatures = &nf
+		}
 		f.mu.Unlock()
 		fmt.Fprintf(w, `{"ret":{"code":%d,"msg":"lang failed"}}`, f.languageInfoCode)
 
@@ -255,7 +269,7 @@ func TestUploadWithListing(t *testing.T) {
 
 			wantCalls := []string{
 				"GET upload-url suffix=apk", "POST upload", "PUT app-file-info fileType=5",
-				"PUT app-info",
+				"GET app-info", "PUT app-language-info", "GET app-info", // release notes + read-back
 				"GET app-info",
 				"PUT app-language-info",
 				"GET upload-url suffix=png", "POST upload", "PUT app-file-info fileType=0",
@@ -281,9 +295,10 @@ func TestUploadWithListing(t *testing.T) {
 				t.Error("the listing images did not go out as transfers")
 			}
 
+			wantNotes := map[string]any{"lang": "en-US", "newFeatures": "fix bugs"}
 			wantLang := map[string]any{"lang": "en-US", "briefInfo": "一句话简介", "appDesc": "应用介绍长描述"}
-			if !reflect.DeepEqual(agc.languageInfo, []map[string]any{wantLang}) {
-				t.Errorf("app-language-info body = %v, want %v", agc.languageInfo, wantLang)
+			if !reflect.DeepEqual(agc.languageInfo, []map[string]any{wantNotes, wantLang}) {
+				t.Errorf("app-language-info bodies = %v, want %v then %v", agc.languageInfo, wantNotes, wantLang)
 			}
 
 			if len(agc.fileInfo) != 3 {
@@ -343,7 +358,7 @@ func TestUploadWithoutListing(t *testing.T) {
 			}
 			wantCalls := []string{
 				"GET upload-url suffix=apk", "POST upload", "PUT app-file-info fileType=5",
-				"PUT app-info",
+				"GET app-info", "PUT app-language-info", "GET app-info",
 				"POST app-submit",
 			}
 			if !reflect.DeepEqual(agc.calls, wantCalls) {
@@ -464,5 +479,68 @@ func TestListingSpec(t *testing.T) {
 				t.Errorf("errors = %v, want one containing %q", got, c.want)
 			}
 		})
+	}
+}
+
+// TestReleaseNotesGoToLanguageInfo: newFeatures is written to
+// app-language-info for the default language (app-info ignores it), read
+// back, and cut to AGC's 1000 characters on a rune boundary.
+func TestReleaseNotesGoToLanguageInfo(t *testing.T) {
+	agc := newFakeAGC(t)
+	long := strings.Repeat("修", maxReleaseNotes+50)
+	res := agc.store().Upload(context.Background(), &store.UploadRequest{
+		FilePath:     writeAPK(t),
+		PackageName:  "com.example",
+		ReleaseNotes: long,
+	})
+	if !res.Success {
+		t.Fatalf("upload failed: %s", res.Error)
+	}
+	wantCalls := []string{
+		"GET upload-url suffix=apk", "POST upload", "PUT app-file-info fileType=5",
+		"GET app-info", "PUT app-language-info", "GET app-info",
+		"POST app-submit",
+	}
+	if !reflect.DeepEqual(agc.calls, wantCalls) {
+		t.Fatalf("calls:\n got  %q\n want %q", agc.calls, wantCalls)
+	}
+	want := []map[string]any{{"lang": "en-US", "newFeatures": strings.Repeat("修", maxReleaseNotes)}}
+	if !reflect.DeepEqual(agc.languageInfo, want) {
+		t.Errorf("app-language-info body has %d notes characters, want exactly %d", len([]rune(agc.languageInfo[0]["newFeatures"].(string))), maxReleaseNotes)
+	}
+}
+
+// TestReleaseNotesNotPersisted: AGC answers ret.code 0 but app-info still
+// shows other notes — the upload fails and nothing is submitted.
+func TestReleaseNotesNotPersisted(t *testing.T) {
+	agc := newFakeAGC(t)
+	old := "previous notes"
+	agc.newFeatures = &old
+	agc.ignoreNotes = true
+	res := agc.store().Upload(context.Background(), &store.UploadRequest{
+		FilePath:     writeAPK(t),
+		PackageName:  "com.example",
+		ReleaseNotes: "fix bugs",
+	})
+	if res.Success || !strings.Contains(res.Error, "release notes were not saved") {
+		t.Fatalf("result = %+v, want a not-saved error", res)
+	}
+	if slices.Contains(agc.calls, "POST app-submit") {
+		t.Errorf("version was submitted although the notes were not saved: %q", agc.calls)
+	}
+}
+
+// TestReleaseNotesReadBackUnknownShape: when app-info doesn't show
+// newFeatures at all, the read-back can't judge, so the upload goes on.
+func TestReleaseNotesReadBackUnknownShape(t *testing.T) {
+	agc := newFakeAGC(t)
+	agc.ignoreNotes = true
+	res := agc.store().Upload(context.Background(), &store.UploadRequest{
+		FilePath:     writeAPK(t),
+		PackageName:  "com.example",
+		ReleaseNotes: "fix bugs",
+	})
+	if !res.Success {
+		t.Fatalf("upload failed: %s", res.Error)
 	}
 }
