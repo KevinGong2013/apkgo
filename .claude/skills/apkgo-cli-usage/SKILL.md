@@ -33,6 +33,7 @@ stores:
   oppo:
     client_id: ""      # required
     client_secret: ""  # required
+    test_desc: ""      # optional; 测试附加说明 (test_desc). Empty keeps the value already on the app. --oppo-test-desc overrides
   vivo:
     access_key: ""     # required
     access_secret: ""  # required
@@ -234,6 +235,12 @@ apkgo upload -f app.apk --sandbox
 #    supported by huawei, harmony, honor, xiaomi, oppo, vivo, samsung, tencent;
 #    add --listing listing.yaml to update the store listing with this version)
 apkgo upload -f app.apk --notes "v1.0.0 release" --timeout 15m
+
+# OPPO 测试附加说明 (test_desc). Omit it to keep the value already on the
+# app (app/info), or to send an empty string when the app has none.
+# stores.oppo.test_desc / APKGO_OPPO_TEST_DESC is the config fallback.
+# Never filled from --notes.
+apkgo upload -f app.apk -s oppo --oppo-test-desc "测试账号 demo / 123456"
 
 # 7. Parse JSON result from stdout, check exit code
 

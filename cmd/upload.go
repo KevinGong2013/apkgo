@@ -25,6 +25,7 @@ var (
 	flagStore          string
 	flagNotes          string
 	flagNotesFile      string
+	flagOppoTestDesc   string
 	flagReleaseTime    string
 	flagListing        string
 	flagDryRun         bool
@@ -39,6 +40,7 @@ func init() {
 	uploadCmd.Flags().StringVarP(&flagStore, "store", "s", "", "comma-separated store names (default: all configured)")
 	uploadCmd.Flags().StringVarP(&flagNotes, "notes", "n", "", "release notes (text)")
 	uploadCmd.Flags().StringVar(&flagNotesFile, "notes-file", "", "read release notes from file (overrides --notes)")
+	uploadCmd.Flags().StringVar(&flagOppoTestDesc, "oppo-test-desc", "", "OPPO 测试附加说明 (test_desc, max 400 characters). Overrides stores.oppo.test_desc; when both are empty, the value already on the app is sent, or an empty string if the app has none")
 	uploadCmd.Flags().StringVar(&flagReleaseTime, "release-time", "", "schedule a timed release (定时发布) at an RFC3339 time, e.g. 2026-06-20T10:00:00+08:00 (supported: huawei,harmony,honor,xiaomi,oppo,vivo,samsung,tencent; others release immediately)")
 	uploadCmd.Flags().StringVar(&flagListing, "listing", "", "listing file (商店资料: brief / description / icon / screenshots, with per-store overrides) to update together with this version")
 	uploadCmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "validate config and APK without uploading")
@@ -77,6 +79,7 @@ var uploadCmd = &cobra.Command{
   apkgo upload -f app.apk --sandbox
   apkgo upload -f app.apk --notes "Bug fixes"
   apkgo upload -f app.apk --notes-file CHANGELOG.md
+  apkgo upload -f app.apk -s oppo --oppo-test-desc "测试账号 demo / 123456"
   apkgo upload -f app.apk --listing listing.yaml --dry-run
   apkgo upload -f https://artifacts.example.com/app-v1.apk --store huawei
   apkgo upload -f https://private.example.com/app.apk --fetch-header "Authorization: Bearer xxx"`,
@@ -118,6 +121,7 @@ var uploadCmd = &cobra.Command{
 			Stores:       stores,
 			Notes:        flagNotes,
 			NotesFile:    flagNotesFile,
+			TestDesc:     flagOppoTestDesc,
 			ReleaseTime:  releaseTime,
 			ListingFile:  flagListing,
 			Config:       cfg,

@@ -85,6 +85,9 @@ apkgo upload -f app.apk --store huawei,xiaomi
 apkgo upload -f app.apk --notes "Fixed login issue"
 apkgo upload -f app.apk --notes-file CHANGELOG.md
 
+# OPPO review note (test_desc). Omit it to keep the value already on the app, or to send an empty string when the app has none
+apkgo upload -f app.apk -s oppo --oppo-test-desc "demo account: demo / 123456"
+
 # Split-arch APKs
 apkgo upload -f app-arm32.apk --file64 app-arm64.apk
 
@@ -110,6 +113,7 @@ apkgo upload -f app-release.aab -s googleplay
 
 - When `-f` is a URL, huawei / honor / vivo have the store pull the package from that URL directly (honor only for files ≥ `url_push_min_mb`, default 100 MB; 0 = always); other stores get it downloaded and uploaded by apkgo.
 - `--release-time` is supported by huawei, harmony, honor, xiaomi, oppo, vivo, samsung and tencent; other stores release immediately.
+- `--oppo-test-desc` is sent only to OPPO, as the review note (`test_desc`, at most 400 characters). Priority: this flag (library callers set `Job.TestDesc`) > `stores.oppo.test_desc` in config (yaml, `APKGO_OPPO_TEST_DESC`, or JSON credentials) > the `test_desc` already on the app (app/info) > an empty string. It is never copied from the release notes.
 - File types: `.apk` goes to every Android store; `.aab` is googleplay-only; a HarmonyOS `.app` is harmony-only.
 
 `--sandbox` and `--dry-run` are mutually exclusive. vivo is currently the only sandbox-capable store: it makes real sandbox API calls, while every other target receives the same local validation as `--dry-run`. Sandbox runs skip all hooks, upload history, lifecycle event callbacks, and upload telemetry. The top-level result contains `"sandbox": true`; the vivo result contains `"sandbox": true`; other stores contain `"dry_run": true`.
@@ -268,6 +272,7 @@ stores:
   oppo:
     client_id: "your-client-id"        # 19-digit number
     client_secret: "your-client-secret"
+    # test_desc: ""  # optional review note (测试附加说明); --oppo-test-desc wins. Empty keeps the value already on the app
 
   vivo:
     access_key: "your-access-key"
@@ -861,7 +866,7 @@ Encryption: AES-256-GCM with scrypt key derivation; a wrong password produces a 
 ```
 apkgo init          [-s store1,store2] [-c config.yaml]
 apkgo upload        -f <apk|aab|app|url> [--file64 <apk|url>] [-s stores] [-n notes] [--notes-file path]
-                    [--release-time <RFC3339>] [--listing <file>] [--fetch-header "Name: value"] [--dry-run | --sandbox]
+                    [--oppo-test-desc <text>] [--release-time <RFC3339>] [--listing <file>] [--fetch-header "Name: value"] [--dry-run | --sandbox]
                     [--progress-stream] [-t timeout]
 apkgo audit         [-s stores] (-f <apk> | -p <package>) [--watch] [--interval 30s]
 apkgo listing       [-s stores] (-f <apk> | -p <package>) [--out <dir>]

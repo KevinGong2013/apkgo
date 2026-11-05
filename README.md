@@ -85,6 +85,9 @@ apkgo upload -f app.apk --store huawei,xiaomi
 apkgo upload -f app.apk --notes "修复了登录问题"
 apkgo upload -f app.apk --notes-file CHANGELOG.md
 
+# OPPO 测试附加说明（test_desc）。不填则沿用商店里已有的说明，商店也没有则提交空字符串
+apkgo upload -f app.apk -s oppo --oppo-test-desc "测试账号 demo / 123456"
+
 # 分架构包
 apkgo upload -f app-arm32.apk --file64 app-arm64.apk
 
@@ -110,6 +113,7 @@ apkgo upload -f app-release.aab -s googleplay
 
 - `-f` 为 URL 时，huawei / honor / vivo 直接让商店从该地址拉包（honor 仅对 ≥ `url_push_min_mb`，默认 100MB 的文件；设为 0 则总是拉包），其他商店由 apkgo 下载后上传。
 - `--release-time` 支持 huawei、harmony、honor、xiaomi、oppo、vivo、samsung、tencent，其他商店立即发布。
+- `--oppo-test-desc` 只发给 OPPO，作为测试附加说明（`test_desc`，最多 400 字）。优先级：该参数（库调用对应 `Job.TestDesc`）> 配置 `stores.oppo.test_desc`（yaml、`APKGO_OPPO_TEST_DESC` 或 JSON 凭证）> 商店 app/info 里已有的 `test_desc` > 空字符串。不会从更新说明推导。
 - 文件类型：`.apk` 发往所有安卓商店；`.aab` 仅 googleplay；鸿蒙 `.app` 仅 harmony。
 
 #### 同步更新商店资料（`--listing`）
@@ -260,6 +264,7 @@ stores:
   oppo:
     client_id: "your-client-id"        # 19 位数字
     client_secret: "your-client-secret"
+    # test_desc: ""  # 可选，测试附加说明；--oppo-test-desc 优先。留空则沿用商店已有说明
 
   vivo:
     access_key: "your-access-key"
@@ -528,7 +533,7 @@ cmd.Wait()
 ```
 apkgo init          [-s store1,store2] [-c config.yaml]
 apkgo upload        -f <apk|aab|app|url> [--file64 <apk|url>] [-s stores] [-n notes] [--notes-file path]
-                    [--release-time <RFC3339>] [--listing <file>] [--fetch-header "Name: value"] [--dry-run | --sandbox]
+                    [--oppo-test-desc <text>] [--release-time <RFC3339>] [--listing <file>] [--fetch-header "Name: value"] [--dry-run | --sandbox]
                     [--progress-stream] [-t timeout]
 apkgo audit         [-s stores] (-f <apk> | -p <package>) [--watch] [--interval 30s]
 apkgo listing       [-s stores] (-f <apk> | -p <package>) [--out <dir>]

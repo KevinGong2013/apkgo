@@ -296,8 +296,11 @@ func TestUploadSendsThePackage(t *testing.T) {
 		if !slices.Equal(calls, wantCalls) {
 			t.Errorf("remote=%v: calls:\n got %v\nwant %v", remote, calls, wantCalls)
 		}
-		if got := upd.Get("test_desc"); got != req.ReleaseNotes || strings.Contains(got, "apkgo") {
-			t.Errorf("remote=%v: test_desc = %q, want the release notes %q", remote, got, req.ReleaseNotes)
+		if got, want := upd.Get("test_desc"), ""; got != want {
+			t.Errorf("remote=%v: test_desc = %q, want %q", remote, got, want)
+		}
+		if got, want := upd.Get("update_desc"), req.ReleaseNotes; got != want {
+			t.Errorf("remote=%v: update_desc = %q, want %q", remote, got, want)
 		}
 		var apks []apkInfo
 		if err := json.Unmarshal([]byte(upd.Get("apk_url")), &apks); err != nil {
@@ -545,14 +548,59 @@ func countOf(calls []string, call string) int {
 
 func TestTestDesc(t *testing.T) {
 	long := strings.Repeat("字", 450)
-	for _, tc := range []struct{ name, in, want string }{
-		{"release notes pass through", "修复若干问题", "修复若干问题"},
-		{"surrounding space trimmed", "  fix crash \n", "fix crash"},
-		{"empty stays empty", "", ""},
-		{"cut to 400 characters", long, strings.Repeat("字", 400)},
+	capped := strings.Repeat("字", 400)
+	for _, tc := range []struct{ name, supplied, existing, want string }{
+		{"caller wins over the value on the app", "请用测试号登录", "商店里已有的说明", "请用测试号登录"},
+		{"whitespace-only caller falls back to the app", "  \n", "商店里已有的说明", "商店里已有的说明"},
+		{"falls back to the app when the caller omits it", "", "  商店里已有的说明 \n", "商店里已有的说明"},
+		{"empty when neither is set", "", "", ""},
+		{"caller is trimmed", "  请用测试号登录 \n", "商店里已有的说明", "请用测试号登录"},
+		{"caller is cut to 400 characters", long, "商店里已有的说明", capped},
+		{"app value is cut to 400 characters", "", long, capped},
 	} {
-		if got := testDesc(tc.in); got != tc.want {
-			t.Errorf("%s: testDesc(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		if got := testDesc(tc.supplied, tc.existing); got != tc.want {
+			t.Errorf("%s: testDesc(%q, %q) = %q, want %q", tc.name, tc.supplied, tc.existing, got, tc.want)
 		}
+	}
+}
+
+// The three sources /app/upd may send, in priority order: the caller's
+// TestDesc, the test_desc app/info already has, or an empty string.
+// Release notes stay on update_desc and never fill test_desc.
+func TestPublishTestDesc(t *testing.T) {
+	long := strings.Repeat("字", 450)
+	capped := strings.Repeat("字", 400)
+	for _, tc := range []struct {
+		name, notes, supplied, onApp, want string
+	}{
+		{"caller-supplied", "修复若干问题", "  请用测试号登录 \n", "商店里已有的说明", "请用测试号登录"},
+		{"read back from app/info", "修复若干问题", "", "  商店里已有的说明 \n", "商店里已有的说明"},
+		{"empty when neither is set", "修复若干问题", "", "", ""},
+		{"caller truncated", "修复若干问题", long, "商店里已有的说明", capped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeOppo(t)
+			f.infoTestDesc = tc.onApp
+			req := &store.UploadRequest{
+				FilePath:     fixtureAPK,
+				PackageName:  "com.example.app",
+				VersionCode:  2,
+				ReleaseNotes: tc.notes,
+				TestDesc:     tc.supplied,
+			}
+			if res := f.store().Upload(context.Background(), req); !res.Success {
+				t.Fatalf("upload failed: %s", res.Error)
+			}
+			_, upd := f.seen()
+			if got := upd.Get("test_desc"); got != tc.want {
+				t.Errorf("test_desc = %q, want %q", got, tc.want)
+			}
+			if got := upd.Get("update_desc"); got != tc.notes {
+				t.Errorf("update_desc = %q, want %q", got, tc.notes)
+			}
+			if strings.Contains(upd.Get("test_desc"), "apkgo") {
+				t.Errorf("test_desc = %q, a tool-authored line", upd.Get("test_desc"))
+			}
+		})
 	}
 }

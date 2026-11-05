@@ -40,6 +40,7 @@ type fakeOppo struct {
 	// latest version /app/info reports, its review label, status code and
 	// refuse_reason
 	infoVersion, infoAudit, infoAuditCode, infoRefuse string
+	infoTestDesc                                      string // test_desc app/info returns (测试附加说明)
 	// laterInfo is how app/info calls after the first (the upload's own
 	// query) fail: "errno" answers an errno, "504" keeps timing out;
 	// "" = they work.
@@ -127,6 +128,7 @@ func newFakeOppo(t *testing.T) *fakeOppo {
 				"app_name":    "Test App",
 				"summary":     oldSummary,
 				"detail_desc": oldDesc,
+				"test_desc":   f.infoTestDesc,
 				"icon_url":    f.srv.URL + "/old/icon.png", // compliant unless staleIcon, so kept
 				"pic_url":     oldPicURL,
 
