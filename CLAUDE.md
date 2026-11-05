@@ -42,6 +42,7 @@ store reaches a terminal state (approved / rejected / withdrawn) or the global
 -s, --store        Comma-separated store names (default: all configured)
 -n, --notes        Release notes text
     --notes-file   Read release notes from file (overrides --notes)
+    --oppo-test-desc OPPO 测试附加说明 (test_desc)
     --release-time Schedule a timed release (定时发布) at an RFC3339 time, e.g. 2026-06-20T10:00:00+08:00
     --listing      Listing file (商店资料) to update together with this version
     --dry-run      Validate without uploading
@@ -70,6 +71,20 @@ schedule (googleplay, pgyer, fir, script) log a warning and release
 immediately. Each store maps the instant to its own field/format
 internally — epoch-based stores use the absolute instant; oppo/vivo/samsung
 render it in Beijing time (UTC+8).
+
+### OPPO 测试附加说明 (`--oppo-test-desc`)
+
+OPPO's `/app/upd` requires `test_desc` (测试附加说明, ≤400 characters).
+It is never copied from `--notes`. apkgo picks the first non-empty value:
+
+1. `--oppo-test-desc`, or `TestDesc` on `apkgo.Job` / `store.UploadRequest`
+   for library callers
+2. `stores.oppo.test_desc` in the config file, `APKGO_OPPO_TEST_DESC`, or
+   the same key in JSON credentials (`--creds-from`)
+3. the `test_desc` OPPO already returns from `/resource/v1/app/info`
+4. an empty string
+
+The chosen text is trimmed and cut to 400 characters before it is sent.
 
 ### Listing (`--listing`, 商店资料)
 

@@ -34,6 +34,7 @@ func init() {
 		Fields: []store.FieldSchema{
 			{Key: "client_id", Required: true, Desc: "OPPO open platform client ID"},
 			{Key: "client_secret", Required: true, Desc: "OPPO open platform client secret"},
+			{Key: "test_desc", Required: false, Desc: "测试附加说明 sent as test_desc (optional). Empty keeps the value already on the app; --oppo-test-desc overrides"},
 		},
 		Listing: listingSpec,
 	}, func(cfg map[string]string) (store.Store, error) {
@@ -591,10 +592,20 @@ func (s *Store) uploadFile(ctx context.Context, file store.PackageFile, fileType
 // maxTestDescRunes is OPPO's limit on test_desc (最多输入 400 个字符).
 const maxTestDescRunes = 400
 
-// testDesc derives the 审核补充说明 from the caller's release notes, cut to
+// testDesc chooses the 测试附加说明 sent as test_desc and caps it at
 // OPPO's 400-character limit.
-func testDesc(releaseNotes string) string {
-	r := []rune(strings.TrimSpace(releaseNotes))
+//
+// supplied (UploadRequest.TestDesc) wins when it is non-empty after
+// trimming. Otherwise the test_desc read back from app/info is echoed,
+// the same round-trip as the other detail fields. Both empty stays
+// empty. Release notes are never consulted, and the text is never
+// authored by the tool.
+func testDesc(supplied, existing string) string {
+	s := strings.TrimSpace(supplied)
+	if s == "" {
+		s = strings.TrimSpace(existing)
+	}
+	r := []rune(s)
 	if len(r) > maxTestDescRunes {
 		r = r[:maxTestDescRunes]
 	}
@@ -624,10 +635,11 @@ func (s *Store) publish(ctx context.Context, req *store.UploadRequest, app *appD
 		values.Set("online_type", "2")
 		values.Set("sche_online_time", store.BeijingLocalTime(*req.ReleaseTime))
 	}
-	// test_desc is the 审核补充说明 the OPPO reviewers read. The API marks it
-	// required, but what goes in it is the developer's to say — never a
-	// tool-authored line. Send the release notes the caller supplied.
-	values.Set("test_desc", testDesc(req.ReleaseNotes))
+	// test_desc (测试附加说明) is required by /app/upd (doc 10999). Prefer
+	// the caller's TestDesc; otherwise echo the value app/info (doc 11004)
+	// already has. Empty when neither is set — never release notes, never
+	// a tool-authored line.
+	values.Set("test_desc", testDesc(req.TestDesc, app.TestDesc))
 	// /app/upd validates 软件版权证明 from copyright_url. Accounts that uploaded
 	// an electronic copyright certificate (电子版权证书) get an empty copyright_url
 	// from /app/info with the URL only in electronic_cert_url, so fall back to it.
@@ -817,6 +829,7 @@ type appData struct {
 	ThirdCategoryID   string `json:"third_category_id"`
 	Summary           string `json:"summary"`
 	DetailDesc        string `json:"detail_desc"`
+	TestDesc          string `json:"test_desc"` // 测试附加说明; echoed on /app/upd when the caller doesn't supply one
 	PrivacySourceURL  string `json:"privacy_source_url"`
 	IconURL           string `json:"icon_url"`
 	PicURL            string `json:"pic_url"`

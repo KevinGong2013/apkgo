@@ -68,6 +68,13 @@ type Job struct {
 	// (trimmed) are used instead.
 	NotesFile string
 
+	// TestDesc is OPPO's 测试附加说明 (test_desc). Other stores ignore it.
+	// A non-empty value wins over stores.oppo.test_desc in Config (YAML,
+	// APKGO_OPPO_TEST_DESC, or JSON credentials). When both are empty the
+	// oppo store sends the test_desc already stored on the app, or an
+	// empty string when the app has none. Notes are never copied here.
+	TestDesc string
+
 	// ReleaseTime, when non-zero, schedules a timed release (定时发布) at
 	// that instant on stores that support it (huawei, honor, xiaomi,
 	// oppo, vivo, samsung, tencent). Stores that can't schedule
@@ -436,6 +443,7 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		VersionCode:  info.VersionCode,
 		VersionName:  info.VersionName,
 		ReleaseNotes: notes,
+		TestDesc:     oppoTestDesc(job),
 		ReleaseTime:  releaseTime,
 		SourceURL:    sourceURL,
 		Source64URL:  source64URL,
@@ -475,6 +483,20 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 
 	pm.Done(info, results)
 	return &Result{APK: info, Sandbox: job.Sandbox, Results: results}, nil
+}
+
+// oppoTestDesc is the caller-supplied 测试附加说明 for this run.
+// Job.TestDesc wins; otherwise stores.oppo.test_desc from config (YAML,
+// APKGO_OPPO_TEST_DESC, or JSON credentials). Empty lets the oppo store
+// echo the test_desc already on the app.
+func oppoTestDesc(job Job) string {
+	if v := strings.TrimSpace(job.TestDesc); v != "" {
+		return v
+	}
+	if job.Config == nil {
+		return ""
+	}
+	return strings.TrimSpace(job.Config.Stores["oppo"]["test_desc"])
 }
 
 // validateListings checks each named store's resolved listing against

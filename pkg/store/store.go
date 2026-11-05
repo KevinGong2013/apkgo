@@ -33,6 +33,13 @@ type UploadRequest struct {
 	VersionName  string
 	ReleaseNotes string
 
+	// TestDesc is OPPO's 测试附加说明 (test_desc on /app/upd). Only the
+	// oppo store reads it. Non-empty after trimming is sent, capped at
+	// 400 runes. Empty means the store echoes the test_desc already on
+	// the app (from app/info), or sends an empty string when the app has
+	// none. It is never derived from ReleaseNotes.
+	TestDesc string `json:",omitempty"`
+
 	// ReleaseTime, when non-nil, requests a scheduled (定时/timed) release
 	// at that instant instead of the default "go live immediately after
 	// review". It carries a timezone offset: epoch-based stores (xiaomi,
