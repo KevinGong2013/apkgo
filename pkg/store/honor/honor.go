@@ -61,22 +61,25 @@ func init() {
 	store.RegisterListingFetcher("honor", fetchListing)
 }
 
-// audit is registered with `apkgo audit`. get-app-current-release (the
-// original implementation here) is appId-only — it reports whatever Honor
-// considers the app's "current" release, with no way to pin it to a
-// specific submission. In practice that can report an unrelated task's
-// outcome: an app whose console showed a version already 审核通过 came back
-// 审核不通过 with detail "存在开发者同版本或高版本任务" because
-// get-app-current-release was reflecting a different, stale task.
+// audit is registered with `apkgo audit`. apkgo and Honor's own console are
+// two independent submission channels: q.ExternalID is the releaseId of the
+// submission apkgo made, but once the developer submits a new version from
+// the console, that releaseId is no longer what Honor considers current. The
+// stored one keeps returning its old terminal verdict (typically 审核不通过),
+// which is exactly the "console says 审核中, platform says 已驳回" mismatch.
 //
-// When q.ExternalID (honor's releaseId, captured from
-// UploadResult.ExternalID at submit-audit time) is available, we instead
-// call get-audit-result with that exact releaseId — it is scoped to one
-// submission and can't return another task's result. Without it (the
-// version wasn't submitted through apkgo, or predates ExternalID tracking)
-// there is no way to ask Honor "what happened to submission X", so rather
-// than risk the same current-release mismatch we only report the already-
-// live version (get-app-detail's releaseInfo), with no review-state claim.
+// So ask get-app-current-release first: it names the app's actual current
+// submission, whichever channel created it. Its releaseId is then fed to
+// get-audit-result so the verdict (and rejection detail) still comes from a
+// query pinned to one submission. VersionName/VersionCode are copied onto the
+// result so callers show the version actually under review, not the older one
+// they uploaded.
+//
+// get-app-current-release is only a fallback risk when it fails: if the call
+// errors, returns no releaseId, or omits the fields we need, fall back to the
+// upload-time q.ExternalID. With neither available there is still no way to
+// ask "what happened to submission X", so report only the already-live
+// version (get-app-detail's releaseInfo) and make no review-state claim.
 func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store.AuditResult {
 	res := store.AuditResult{Store: "honor"}
 	s, err := New(cfg)
@@ -92,12 +95,91 @@ func audit(ctx context.Context, cfg map[string]string, q store.AuditQuery) store
 			return res
 		}
 	}
+	return auditWithStore(ctx, s, appID, q)
+}
+
+// auditWithStore is audit's store-bound body, split out so tests can point
+// the resty client at an httptest server without going through New (which
+// fetches a token from Honor's fixed IAM host).
+func auditWithStore(ctx context.Context, s *Store, appID string, q store.AuditQuery) store.AuditResult {
+	res := store.AuditResult{Store: "honor"}
+
+	cur, err := fetchCurrentRelease(ctx, s, appID)
+	if err == nil {
+		res.VersionName = cur.versionName
+		res.VersionCode = cur.versionCode
+		auditByRelease(ctx, s, appID, cur.releaseID, &res)
+		// If the detail query failed but current-release already reported a
+		// verdict, keep that verdict instead of turning the whole snapshot
+		// into a query error. The rejection message is the only thing lost.
+		if res.Error != "" && cur.hasAuditResult {
+			res.State, res.Detail = mapHonorAudit(cur.auditResult, cur.auditMessage)
+			res.Error = ""
+		}
+		return res
+	}
 	if q.ExternalID != "" {
 		auditByRelease(ctx, s, appID, q.ExternalID, &res)
 		return res
 	}
 	auditLiveVersionOnly(ctx, s, appID, &res)
 	return res
+}
+
+// currentRelease is get-app-current-release's payload: Honor's current
+// submission for an app, including ones created outside apkgo. auditResult is
+// a pointer because 0 (审核中) is meaningful and must be distinguishable from
+// the field being absent.
+type currentRelease struct {
+	releaseID      string
+	auditResult    int
+	auditMessage   string
+	versionName    string
+	versionCode    int32
+	hasAuditResult bool
+}
+
+// fetchCurrentRelease reads the app's current submission. A missing releaseId
+// is an error: without it get-audit-result cannot be pinned to anything.
+func fetchCurrentRelease(ctx context.Context, s *Store, appID string) (currentRelease, error) {
+	var resp struct {
+		honorResp
+		Data struct {
+			ReleaseID    string `json:"releaseId"`
+			AuditResult  *int   `json:"auditResult"`
+			AuditMessage string `json:"auditMessage"`
+			VersionName  string `json:"versionName"`
+			VersionCode  int32  `json:"versionCode"`
+		} `json:"data"`
+	}
+	httpResp, err := s.client.R().
+		SetContext(ctx).
+		SetQueryParam("appId", appID).
+		SetResult(&resp).
+		Get("/openapi/v1/publish/get-app-current-release")
+	if err != nil {
+		return currentRelease{}, err
+	}
+	if httpResp.IsError() {
+		return currentRelease{}, fmt.Errorf("http %d: %s", httpResp.StatusCode(), truncateBody(httpResp.String()))
+	}
+	if resp.Code != 0 {
+		return currentRelease{}, fmt.Errorf("[%d] %s", resp.Code, resp.text())
+	}
+	if resp.Data.ReleaseID == "" {
+		return currentRelease{}, fmt.Errorf("get-app-current-release: empty releaseId")
+	}
+	cur := currentRelease{
+		releaseID:    resp.Data.ReleaseID,
+		auditMessage: resp.Data.AuditMessage,
+		versionName:  resp.Data.VersionName,
+		versionCode:  resp.Data.VersionCode,
+	}
+	if resp.Data.AuditResult != nil {
+		cur.auditResult = *resp.Data.AuditResult
+		cur.hasAuditResult = true
+	}
+	return cur, nil
 }
 
 // auditByRelease queries get-audit-result for one specific submission
